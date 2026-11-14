@@ -159,12 +159,50 @@ async def ask(body: AskBody):
                                    benchmark=body.benchmark)
 
 
+def _implausible_scale(a: dict, facts) -> Optional[dict]:
+    """A measurement that makes the typical room absurd is refused (a length typed in cm/mm instead of m makes
+    every area 10,000x / 1,000,000x too big). Returns {message, median_room_m2, suggestion} or None."""
+    try:
+        ppm = float(a["px_per_m"]) if "px_per_m" in a else float(a["px_length"]) / float(a["length_m"])
+    except (KeyError, ValueError, ZeroDivisionError, TypeError):
+        return {"message": "the measurement needs a pixel length and a length in metres"}
+    from shapely.geometry import Polygon
+    areas = []
+    for e in facts.elements:
+        if e.kind == "room" and len(e.polygon) >= 3 and "area_m2" not in e.attrs:
+            try:
+                areas.append(Polygon(e.polygon).area)
+            except Exception:  # noqa: BLE001
+                pass
+    if len(areas) < 2 or ppm <= 0:
+        return None                                      # nothing to check against
+    import statistics as _st
+    med_px = _st.median(areas)
+    med = med_px / ppm ** 2
+    if 2.0 <= med <= 120.0:
+        return None
+    sug = None
+    if "length_m" in a:
+        for f, unit in ((0.01, "cm"), (0.001, "mm"), (100.0, "m (you may have typed cm as m)")):
+            m2 = med_px / (float(a["px_length"]) / (float(a["length_m"]) * f)) ** 2
+            if 2.0 <= m2 <= 120.0:
+                sug = f"if you meant {a['length_m']} {unit.split()[0]}, the typical room would be {m2:.1f} m²"
+                break
+    return {"message": f"this measurement would make the typical room {med:,.0f} m², which is not plausible; "
+                       "check the length and its unit", "median_room_m2": round(med, 1), "suggestion": sug}
+
+
 @app.post("/api/scale", response_model=list[ProofObject])
 async def scale(body: ScaleBody):
     """User tap / line / typed scale -> stored as an anchor for this drawing -> recompute the given questions."""
     path = _resolve(body)
     eng = engine()
     sha = _sha(path)
+    facts = await asyncio.to_thread(eng.analyze, path, allow_siblings=body.allow_siblings)
+    for a in body.anchors:
+        bad = _implausible_scale(a, facts)
+        if bad:
+            raise HTTPException(422, bad)
     if hasattr(eng, "user_anchors"):
         for a in body.anchors:
             a.setdefault("kind", "user")

@@ -18,6 +18,18 @@ MAX_SIDE = 1400
 CNN_MAX_SIDE = 1600
 
 
+def _wall_like(c) -> bool:
+    """Walls are long and thin (any angle, also curved); furniture, fixtures and filled boxes are compact.
+    Thickness ~ 2*area/perimeter; a wall piece is at least ~3x longer than it is thick."""
+    area = cv2.contourArea(c)
+    per = cv2.arcLength(c, True)
+    if area <= 0 or per <= 0:
+        return False
+    thick = 2 * area / per
+    length = per / 2
+    return length >= 3.0 * thick
+
+
 def _trace(mask: np.ndarray, min_area: float, eps: float, to_orig=None) -> list[dict]:
     """mask -> [{outer: [[x,y]..], holes: [[[x,y]..]..]}]; holes keep enclosed rooms open (no solid blocks)."""
     cnts, hier = cv2.findContours(mask, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
@@ -44,39 +56,43 @@ def _trace(mask: np.ndarray, min_area: float, eps: float, to_orig=None) -> list[
                 if hp:
                     holes.append(hp)
             j = hier[j][0]
+        if not holes and not _wall_like(c):
+            continue                                    # compact solid blob = furniture/fixture/hatching, not a wall
         out.append({"outer": outer, "holes": holes})
     return out
 
 
 def _walls(img: np.ndarray) -> tuple[list, str]:
+    """Line-drawing wall reader (any angle, curves too). Archival plans draw walls as two thin parallel lines:
+    adaptive threshold (faint scans) -> close by the wall gap (double lines become one solid band) -> open (single
+    thin lines, hatching and dimension lines vanish) -> keep only the connected wall network (text and labels float
+    free) -> drop anything touching the sheet border -> keep long thin pieces only."""
     g = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if img.ndim == 3 else img
     h, w = g.shape
-    _, dark = cv2.threshold(g, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-    # stroke width: walls are the thickest consistent strokes on a plan
-    dist = cv2.distanceTransform(dark, cv2.DIST_L2, 3)
-    vals = dist[dist > 0]
-    if vals.size == 0:
-        return [], "no dark strokes found"
-    t = max(1.0, float(np.percentile(vals, 90)) * 0.6)
-    k = max(2, int(round(t * 2)))
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (k, k))
-    thick = cv2.morphologyEx(dark, cv2.MORPH_OPEN, kernel)
-    thick = cv2.morphologyEx(thick, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
-    out = _trace(thick, max((w * h) * 0.00004, k * k * 2), max(1.0, k * 0.35))
-    return out, f"walls traced from strokes >= {k}px thick (morphological opening), {len(out)} pieces"
-
-
-_LAST_ROOMS = None
-
-
-def _rooms_to_original(indoor: np.ndarray, v, w: int, h: int) -> np.ndarray:
-    """Indoor-room mask from the CNN's rendered variant back to original pixels (via the variant's mapping)."""
-    out = np.zeros((h, w), np.uint8)
-    cnts, _ = cv2.findContours(indoor * 255, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    for c in cnts:
-        pts = v.to_original([(float(p[0][0]), float(p[0][1])) for p in c])
-        cv2.fillPoly(out, [np.array(pts, np.int32)], 1)
-    return out
+    ink = cv2.adaptiveThreshold(g, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY_INV, 31, 12)
+    gap = max(3, int(round(max(h, w) / 230)))
+    solid = cv2.morphologyEx(ink, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (gap, gap)))
+    o = max(3, gap // 2 + 1)
+    solid = cv2.morphologyEx(solid, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (o, o)))
+    # the wall network: components (after bridging door gaps) that are a sizeable part of the biggest one
+    bridge = cv2.dilate(solid, np.ones((gap * 3, gap * 3), np.uint8))     # bridges door openings
+    n, lab, st, _ = cv2.connectedComponentsWithStats(bridge, connectivity=8)
+    keep = np.zeros_like(solid)
+    if n > 1:
+        m = 2 * gap
+        inner = [i for i in range(1, n)
+                 if not (st[i][0] <= m or st[i][1] <= m or st[i][0] + st[i][2] >= w - m or st[i][1] + st[i][3] >= h - m)]
+        if inner:
+            big = max(st[i][4] for i in inner)
+            for i in inner:
+                if st[i][4] >= 0.10 * big:
+                    keep[lab == i] = 255
+    solid = cv2.bitwise_and(solid, keep)
+    walls = _trace(solid, max((w * h) * 0.00004, gap * gap * 2), max(1.0, gap * 0.25))
+    L = max(h, w) * 0.025
+    walls = [wl for wl in walls
+             if wl["holes"] or cv2.arcLength(np.array(wl["outer"], np.float32).reshape(-1, 1, 2), True) / 2 >= L]
+    return walls, f"walls traced as line pairs (gap {gap}px), connected network only, {len(walls)} pieces"
 
 
 def cnn_walls(img_bgr: np.ndarray) -> Optional[tuple[list, str]]:

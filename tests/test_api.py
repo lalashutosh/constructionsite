@@ -57,3 +57,13 @@ def test_override_needs_engine_support(client):
     r = client.post("/api/override", json={"path": "data/cubicasa5k/x.png", "question": "How many doors?",
                                            "element_id": "d1", "polygon": [[0, 0], [1, 0], [1, 1]], "keep": True})
     assert r.status_code in (501, 404)       # stub engine has no overrides; missing file is 404
+
+
+def test_implausible_measurement_is_refused():
+    from contracts.proof import Element, Provenance, SheetFacts
+    sq = lambda x: [(x, 0.0), (x + 300, 0.0), (x + 300, 300), (x, 300)]       # 300 px square rooms
+    f = SheetFacts(provenance=Provenance(file="f"), elements=[
+        Element(id=f"r{i}", kind="room", polygon=sq(400 * i)) for i in range(3)])
+    assert M._implausible_scale({"px_length": 300, "length_m": 3}, f) is None            # 100 px/m -> 9 m2 rooms
+    bad = M._implausible_scale({"px_length": 300, "length_m": 248}, f)                   # 248 cm typed as metres
+    assert bad and "not plausible" in bad["message"] and "cm" in (bad["suggestion"] or "")
