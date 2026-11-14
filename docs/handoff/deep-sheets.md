@@ -83,6 +83,17 @@ print), outer walls (legend-zone union), wings, printed tables. What they want n
 - Open: shopping list merged with the checklist (today: Build plan tab has the materials, checklist has the counts);
   dorm doors (grey arcs); treadmills; per-type rename in the checklist.
 
+## Update 2026-11-15 ~02:00 — the bottleneck is NAMING
+- Detection finds and boxes far more than gets a good name. The Verda vision reviewers mis-name symbols (lounge set ->
+  bed, desk chair -> sink); offering size-plausible candidate lists made it worse ('bathtub' for everything, reverted).
+  Code's size check rejects impossible names (`rejected_names` in the cache json shows them).
+- Fixes in place: (1) user rename in the checklist (pencil on a row -> `POST /api/checklist/rename`; every copy follows,
+  same names merge, chatbot answers with it); (2) whole-symbol discovery (multi-stroke symbols) + short heavy outlines.
+- NEXT: put `GEMINI_API_KEY` in .env and run with `LLM_PROVIDER=gemini` (or Claude for the demo) — the same pipeline
+  with a stronger namer; template-match every NAMED type to catch copies touching walls (closets, TVs).
+- Dorm cache currently = the best read (v11 copied to v14): sinks 48 / toilets 48 / beds 46 / closets 29 / showers 23.
+- UI: right panel scrolls as a whole; element map collapsed by default; idle camera drift after 45 s at 1/4 speed.
+
 ## How to run / test
 API: `LLM_PROVIDER=verda .venv/bin/python -m uvicorn api.main:app --port 8001`; web: `cd web && VITE_ENGINE=http://localhost:8001/api npx vite`.
 Stress: `.venv/bin/python scripts/stress_big.py` (manifest `cache/stress/manifest.json`, 3 full-res Stoa sheets).
