@@ -1,7 +1,15 @@
 # Plumb: where we are
 
 Plain-language status. Updated after every milestone. Branch `p2-finish` on GitHub (`main` untouched).
-Last update: **16:05**
+Last update: **16:40**
+
+## 16:40 update: answers make sense now, UI redesign checkpoint
+
+- **LLMs verified working:** 84 real calls today (60 DeepSeek-V4.1-Flash, 24 Kimi-K3.1-Pro), $0.13 total, logged in `logs/verda_cost.jsonl`. The "$0.00" in the UI was rounding; now 4 decimals.
+- **Answers by type:** "bathroom area" on a scan now answers (7.0 m²; scale from a typical 0.9 m door, labelled, with *Set real size*); "more windows than doors?" answers **Yes/No** with the compared parts; "which room is largest?" answers a **name**.
+- **Confidence you can read:** every fixed answer carries a calibrated reliability ("84% reliable", from 600 DEV answers) instead of "needs a look · single check". Planner answers get no fake percentage: they show the query and its parts.
+- **Scan check:** a warning now needs both LLM reviewers to agree (one reviewer caused the false "mirrored" warning). The one-time cost of reading a file into 3D is reported (e.g. 21.7 s, 2 LLM reviews, $0.0020).
+- **UI checkpoint committed:** 3D model on a slab, overlay on/off, mirror bug fixed, Findings | Build plan with the materials checklist, dark/light themes. Next round in progress: small clean pins, continuous rotation + build-up/separation animations, answers by type, reliability bars, the *Set real size* measure tool.
 
 ## 16:05 update: the scan is now checked by several methods + LLMs
 
