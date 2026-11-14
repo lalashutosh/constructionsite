@@ -1,0 +1,218 @@
+{
+ "samples": [
+  {
+   "id": "tiny-scan",
+   "path": "data/cubicasa5k/colorful-11960.png",
+   "label": "Tiny scan, Finnish labels",
+   "tags": [
+    "tiny",
+    "finnish",
+    "no scale"
+   ],
+   "kind": "plan",
+   "credit": "CubiCasa5K, Copyright (c) 2019 CubiCasa, licensed under CC BY-NC-SA 4.0. Non-commercial use only.",
+   "thumb": "/samples/colorful-11960.png",
+   "fixture": "doors",
+   "questions": [
+    {
+     "label": "Doors",
+     "text": "How many doors are shown on this floor plan? Count doorways fitted with a door; open doorways without a door leaf do not count."
+    },
+    {
+     "label": "Ovet (fi)",
+     "text": "Kuinka monta ovea pohjapiirustuksessa on? Laske oviaukot, joissa on ovi; pelkkiä oviaukkoja ilman ovilehteä ei lasketa."
+    }
+   ]
+  },
+  {
+   "id": "rotated-text",
+   "path": "data/cubicasa5k/high_quality-729.png",
+   "label": "Upside-down labels",
+   "tags": [
+    "rotated",
+    "finnish"
+   ],
+   "kind": "plan",
+   "credit": "CubiCasa5K, Copyright (c) 2019 CubiCasa, licensed under CC BY-NC-SA 4.0. Non-commercial use only.",
+   "thumb": "/samples/high_quality-729.png",
+   "questions": [
+    {
+     "label": "Doors",
+     "text": "How many doors are shown on this floor plan? Count doorways fitted with a door; open doorways without a door leaf do not count."
+    }
+   ]
+  },
+  {
+   "id": "sideways",
+   "path": "data/cubicasa5k/high_quality_architectural-13040.png",
+   "label": "Sideways labels",
+   "tags": [
+    "rotated",
+    "finnish"
+   ],
+   "kind": "plan",
+   "credit": "CubiCasa5K, Copyright (c) 2019 CubiCasa, licensed under CC BY-NC-SA 4.0. Non-commercial use only.",
+   "thumb": "/samples/high_quality_architectural-13040.png",
+   "questions": [
+    {
+     "label": "Doors",
+     "text": "How many doors are shown on this floor plan? Count doorways fitted with a door; open doorways without a door leaf do not count."
+    }
+   ]
+  },
+  {
+   "id": "tall-terraced",
+   "path": "data/cubicasa5k/high_quality_architectural-247.png",
+   "label": "Tall row-house cut",
+   "tags": [
+    "tall",
+    "finnish",
+    "cropped"
+   ],
+   "kind": "plan",
+   "credit": "CubiCasa5K, Copyright (c) 2019 CubiCasa, licensed under CC BY-NC-SA 4.0. Non-commercial use only.",
+   "thumb": "/samples/high_quality_architectural-247.png",
+   "questions": [
+    {
+     "label": "Doors",
+     "text": "How many doors are shown on this floor plan? Count doorways fitted with a door; open doorways without a door leaf do not count."
+    }
+   ]
+  },
+  {
+   "id": "narrow-strip",
+   "path": "data/cubicasa5k/high_quality_architectural-5742.png",
+   "label": "Narrow strip, 200 px wide",
+   "tags": [
+    "tiny",
+    "cropped"
+   ],
+   "kind": "plan",
+   "credit": "CubiCasa5K, Copyright (c) 2019 CubiCasa, licensed under CC BY-NC-SA 4.0. Non-commercial use only.",
+   "thumb": "/samples/high_quality_architectural-5742.png",
+   "questions": [
+    {
+     "label": "Doors",
+     "text": "How many doors are shown on this floor plan? Count doorways fitted with a door; open doorways without a door leaf do not count."
+    }
+   ]
+  },
+  {
+   "id": "hand-marked",
+   "path": "data/cubicasa5k/colorful-2002.png",
+   "label": "Marked-up sales plan",
+   "tags": [
+    "annotations",
+    "finnish"
+   ],
+   "kind": "plan",
+   "credit": "CubiCasa5K, Copyright (c) 2019 CubiCasa, licensed under CC BY-NC-SA 4.0. Non-commercial use only.",
+   "thumb": "/samples/colorful-2002.png",
+   "questions": [
+    {
+     "label": "Doors",
+     "text": "How many doors are shown on this floor plan? Count doorways fitted with a door; open doorways without a door leaf do not count."
+    }
+   ]
+  },
+  {
+   "id": "two-floors",
+   "path": "data/cubicasa5k/high_quality_architectural-1967.png",
+   "label": "Faint two-floor scan",
+   "tags": [
+    "faint",
+    "multi view"
+   ],
+   "kind": "plan",
+   "credit": "CubiCasa5K, Copyright (c) 2019 CubiCasa, licensed under CC BY-NC-SA 4.0. Non-commercial use only.",
+   "thumb": "/samples/high_quality_architectural-1967.png",
+   "questions": [
+    {
+     "label": "Doors",
+     "text": "How many doors are shown on this floor plan? Count doorways fitted with a door; open doorways without a door leaf do not count."
+    }
+   ]
+  },
+  {
+   "id": "clean-bw",
+   "path": "data/cubicasa5k/high_quality-11553.png",
+   "label": "Clean black-and-white plan",
+   "tags": [
+    "easy",
+    "finnish"
+   ],
+   "kind": "plan",
+   "credit": "CubiCasa5K, Copyright (c) 2019 CubiCasa, licensed under CC BY-NC-SA 4.0. Non-commercial use only.",
+   "thumb": "/samples/high_quality-11553.png",
+   "questions": [
+    {
+     "label": "Doors",
+     "text": "How many doors are shown on this floor plan? Count doorways fitted with a door; open doorways without a door leaf do not count."
+    }
+   ]
+  },
+  {
+   "id": "swiss-vector",
+   "path": "data/swiss_dwellings/site157_bldg323_floor1313.pdf",
+   "label": "Vector plan (Swiss Dwellings)",
+   "tags": [
+    "vector",
+    "exact"
+   ],
+   "kind": "plan",
+   "credit": "Swiss Dwellings v3.0.0 by Matthias Standfest, Michael Franzen, Yvonne Schröder, Luis Gonzalez Medina, Yarilo Villanueva Hernandez, Jan Hendrik Buck, Yen-Ling Tan, Milena Niedzwiecka, Rachele Colmegna (Archilyse AG), doi:10.5281/zenodo.7788422, CC BY 4.0. Drawing rendered by us from the dataset geometry (derived work; labels, language and numbering added).",
+   "thumb": "",
+   "questions": [
+    {
+     "label": "Doors",
+     "text": "How many doors (interior doors and entrance doors together) are drawn on this floor plan?"
+    },
+    {
+     "label": "Windows",
+     "text": "How many windows are drawn on this floor plan?"
+    },
+    {
+     "label": "Indoor area",
+     "text": "What is the total net floor area in m² of all numbered indoor rooms on this floor (excluding balconies, loggias, terraces and other outdoor spaces, shafts and voids)?"
+    }
+   ]
+  },
+  {
+   "id": "elevation",
+   "path": "data/wikimedia/3561257.jpg",
+   "label": "Facade elevation (not a plan)",
+   "tags": [
+    "not a plan",
+    "refusal"
+   ],
+   "kind": "not_plan",
+   "credit": "Roland Bergmann Dipl. Ing. (FH) Architekt (de:Benutzer:Ronaldo), self-made; WP:DE, via Wikimedia Commons (CC BY-SA 3.0). Prostylos version 2.",
+   "thumb": "/samples/wikimedia-elevation.jpg",
+   "questions": [
+    {
+     "label": "Doors",
+     "text": "How many doors are shown on this floor plan?"
+    }
+   ]
+  },
+  {
+   "id": "thumbnail",
+   "path": "data/wikimedia/22959557.jpg",
+   "label": "Tiny photo thumbnail",
+   "tags": [
+    "not a plan",
+    "refusal",
+    "tiny"
+   ],
+   "kind": "not_plan",
+   "credit": "Unknown author (Alemannia Judaica), via Wikimedia Commons (Public domain). Flehingen Neue Synagoge 42.",
+   "thumb": "/samples/wikimedia-thumb.jpg",
+   "questions": [
+    {
+     "label": "Doors",
+     "text": "How many doors are shown on this floor plan?"
+    }
+   ]
+  }
+ ]
+}

@@ -4,41 +4,9 @@ import { EvidenceStack } from "./EvidenceStack";
 import { CostMeter } from "./CostMeter";
 import { TIER_ICON, TIER_WORD } from "../derive";
 
-/** Everything the hook screen can show; the timeline flips these fields. */
-export interface HookState {
-  scanVisible: boolean;
-  sweep: number | null;
-  trace: boolean;
-  explode: number;
-  chips: number;
-  flat: boolean;
-  caption: string;
-  big: boolean;
-  title: boolean;
-}
-
-const INIT: HookState = { scanVisible: false, sweep: null, trace: false, explode: 0, chips: 0, flat: true, caption: "", big: false, title: false };
-
-export interface HookStep {
-  t: number; // seconds from start
-  action: (s: HookState, ctx: { w: number }) => HookState;
-}
-
-/** Timing table from docs/DEMO_SCRIPT.md "First 10 seconds". Tune here only. */
-export function buildTimeline(chipCount: number): HookStep[] {
-  const steps: HookStep[] = [
-    { t: 0.0, action: (s, c) => ({ ...s, scanVisible: true, caption: `A ${c.w} px scan. Finnish labels. No scale.` }) },
-    { t: 1.0, action: (s) => ({ ...s, sweep: 0, trace: true, caption: "" }) },
-    { t: 1.1, action: (s) => ({ ...s, sweep: 1 }) },
-    { t: 2.5, action: (s) => ({ ...s, sweep: null, flat: false, explode: 1, caption: "Every number gets a receipt." }) },
-    { t: 6.5, action: (s) => ({ ...s, explode: 0, flat: true, caption: "", big: true }) },
-    { t: 8.0, action: (s) => ({ ...s, big: false, title: true }) },
-  ];
-  for (let i = 1; i <= chipCount; i++) {
-    steps.push({ t: 4.5 + (i - 1) * (2.0 / Math.max(chipCount, 1)), action: (s) => ({ ...s, chips: i }) });
-  }
-  return steps.sort((a, b) => a.t - b.t);
-}
+import { INIT, TIMING, buildTimeline } from "../timeline";
+import type { HookState } from "../timeline";
+import type { ScanImage } from "./EvidenceStack";
 
 export interface HookProps {
   proof: ProofObject;
@@ -48,9 +16,12 @@ export interface HookProps {
   onDone: () => void;
   /** Test hook: start the clock at this offset in seconds. */
   startAt?: number;
+  scan?: ScanImage | null;
+  /** First caption; "{w}" is replaced by the scan width in pixels. */
+  caption0?: string;
 }
 
-export function Hook({ proof, elements, size, answerIds, onDone, startAt = 0 }: HookProps) {
+export function Hook({ proof, elements, size, answerIds, onDone, startAt = 0, scan, caption0 = "A {w} px scan. Finnish labels. No scale." }: HookProps) {
   const [s, setS] = useState<HookState>(INIT);
   useEffect(() => {
     const steps = buildTimeline(answerIds.length);
@@ -62,12 +33,12 @@ export function Hook({ proof, elements, size, answerIds, onDone, startAt = 0 }: 
       const now = (performance.now() - t0) / 1000;
       let changed = false;
       while (i < steps.length && steps[i].t <= now) {
-        st = steps[i].action(st, { w: size?.w ?? 0 });
+        st = steps[i].action(st, { w: size?.w ?? 0, caption0 });
         i++;
         changed = true;
       }
       if (changed) setS(st);
-      if (now >= 10) onDone();
+      if (now >= TIMING.end) onDone();
       else raf = requestAnimationFrame(loop);
     };
     raf = requestAnimationFrame(loop);
@@ -77,13 +48,13 @@ export function Hook({ proof, elements, size, answerIds, onDone, startAt = 0 }: 
       cancelAnimationFrame(raf);
       window.removeEventListener("keydown", key);
     };
-  }, [answerIds.length, size, onDone, startAt]);
+  }, [answerIds.length, size, onDone, startAt, caption0]);
 
   const cost = { ...proof.cost, tokens_in: 0, tokens_out: 0, usd: 0 };
   const value = proof.voters[0]?.value ?? proof.value;
   return (
-    <div className="hook" role="presentation" data-testid="hook">
-      <span className="hook-skip">press any key to skip</span>
+    <div className="hook" role="presentation" data-testid="hook" onClick={onDone}>
+      <span className="hook-skip">press any key or click to skip</span>
       {s.scanVisible && (
         <div style={{ display: "contents", opacity: 1 }}>
           <EvidenceStack
@@ -104,6 +75,8 @@ export function Hook({ proof, elements, size, answerIds, onDone, startAt = 0 }: 
             trace={s.trace}
             sweep={s.sweep}
             showCredit
+            scan={scan}
+            trueSize={s.explode === 0 && s.chips === 0 && !s.big}
             onHover={() => {}}
             onPin={() => {}}
           />

@@ -6,12 +6,79 @@ import type { Decision, Element, ProofObject, Scalar, Tag, Tier } from "./types"
 
 export type Ruling = "yes" | "no" | null;
 
-/** Elements claimed by exactly one voter: the thing to look at first. */
+function bb(poly: [number, number][]) {
+  const xs = poly.map((q) => q[0]);
+  const ys = poly.map((q) => q[1]);
+  return { x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys) };
+}
+
+/** Intersection over union of the two bounding boxes (enough to tell "same element" from "different"). */
+export function iou(a: Element, b: Element): number {
+  if (!a.polygon.length || !b.polygon.length) return 0;
+  const p = bb(a.polygon);
+  const q = bb(b.polygon);
+  const w = Math.min(p.x1, q.x1) - Math.max(p.x0, q.x0);
+  const h = Math.min(p.y1, q.y1) - Math.max(p.y0, q.y0);
+  // degenerate (thin) boxes: pad by one unit so a line-like door still overlaps itself
+  const inter = Math.max(0, w + 1) * Math.max(0, h + 1);
+  const ua = (p.x1 - p.x0 + 1) * (p.y1 - p.y0 + 1) + (q.x1 - q.x0 + 1) * (q.y1 - q.y0 + 1) - inter;
+  return ua > 0 ? inter / ua : 0;
+}
+
+export const IOU_MATCH = 0.3;
+
+/** True when the two readers' elements live in one coordinate space (their overall boxes overlap). */
+export function readersShareSpace(p: ProofObject): boolean {
+  const r = duelReaders(p);
+  if (r.length < 2) return false;
+  const byId = new Map(p.evidence.map((e) => [e.id, e]));
+  const box = (ids: string[]) => {
+    const pts = ids.flatMap((id) => byId.get(id)?.polygon ?? []);
+    return pts.length ? bb(pts as [number, number][]) : null;
+  };
+  const a = box(r[0].ids);
+  const b = box(r[1].ids);
+  if (!a || !b) return true; // nothing to compare geometrically: trust the ids
+  const w = Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0);
+  const h = Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0);
+  if (w <= 0 || h <= 0) return false;
+  const inter = w * h;
+  const un = (a.x1 - a.x0) * (a.y1 - a.y0) + (b.x1 - b.x0) * (b.y1 - b.y0) - inter;
+  return un > 0 && inter / un >= IOU_MATCH;
+}
+
+/** The first two voters that point at elements: the two independent readers shown in the Skeptic Duel. */
+export function duelReaders(p: ProofObject): { name: string; value: Scalar | null | undefined; ids: string[] }[] {
+  return p.voters.filter((v) => v.element_ids.length > 0).slice(0, 2).map((v) => ({ name: v.name, value: v.value, ids: v.element_ids }));
+}
+
+/**
+ * Elements to look at first: claimed by only one reader, where "the same element" means a shared id or an
+ * overlap (IoU >= 0.3) with something the other reader found. If the two readers share no coordinates at
+ * all (for example a vector file and its PDF render) they cannot be compared element by element: none.
+ */
 export function disputedIds(p: ProofObject): string[] {
-  if (p.kind !== "count" || p.voters.length < 2) return [];
-  const sets = p.voters.map((v) => new Set(v.element_ids));
-  const all = new Set(p.voters.flatMap((v) => v.element_ids));
-  return [...all].filter((id) => sets.some((s) => !s.has(id)));
+  if (p.kind !== "count") return [];
+  const r = duelReaders(p);
+  if (r.length < 2) return [];
+  const byId = new Map(p.evidence.map((e) => [e.id, e]));
+  if (!readersShareSpace(p)) return [];
+  const [A, B] = r;
+  const setA = new Set(A.ids);
+  const setB = new Set(B.ids);
+  const side = (mine: string[], other: string[], otherSet: Set<string>) =>
+    mine.filter((id) => {
+      if (otherSet.has(id)) return false;
+      const e = byId.get(id);
+      if (!e) return true;
+      return !other.some((o) => {
+        const f = byId.get(o);
+        return f ? iou(e, f) >= IOU_MATCH : false;
+      });
+    });
+  const onlyA = side(A.ids, B.ids, setB);
+  const onlyB = side(B.ids, A.ids, setA);
+  return [...onlyA, ...onlyB];
 }
 
 export interface Effective {
@@ -41,7 +108,7 @@ export function effective(p: ProofObject, ruling: Ruling): Effective {
     };
   }
   if (dis.length > 0) {
-    const vs = p.voters.map((v) => `${v.name.replace(/_/g, " ")} ${v.value}`).join(" vs ");
+    const vs = duelReaders(p).map((v) => `${v.name.replace(/_/g, " ")} ${v.value}`).join(" vs ");
     return {
       value: p.value,
       tier: "amber",
@@ -195,3 +262,62 @@ export function querySentence(spec: Record<string, unknown>): string {
   }
   return bits.join(", ");
 }
+
+/** Plain-language reason + what would make the question answerable (grey tier). No numbers invented. */
+export function refusalWords(p: ProofObject, sheetType?: string | null): { reason: string; fix: string } {
+  const raw = (p.refusal ?? "").trim();
+  const low = raw.toLowerCase();
+  if (low.includes("tesseract") || low.includes("extraction failed")) {
+    return {
+      reason: "The reader could not run on this machine, so nothing was measured and nothing is guessed.",
+      fix: "Install the missing text reader on the server (tesseract) and ask again, or open a vector drawing.",
+    };
+  }
+  if (low.includes("elevation") || low.includes("section") || sheetType === "elevation" || sheetType === "section") {
+    return { reason: raw || "This is an elevation or section; floor-plan questions do not apply.", fix: "Upload the top-down floor plan of the same building." };
+  }
+  if (low.includes("tiny") || low.includes("thumbnail") || low.includes("too small") || low.includes("resolution")) {
+    return { reason: raw, fix: "Upload a larger scan of the same plan, so the linework is readable." };
+  }
+  if (low.includes("not a plan") || low.includes("not a floor") || sheetType === "not_a_plan") {
+    return { reason: raw || "This does not look like a floor plan.", fix: "Upload a floor plan: a top-down drawing with walls, doors and room labels." };
+  }
+  return { reason: raw || "No answer is available for this drawing.", fix: "Upload a clear, top-down floor plan, or rephrase the question." };
+}
+
+/** Calibration sentence from claims.json; null when the claims file has no number for this tier. */
+export function calibrationSentence(tier: Tier, claims: Record<string, unknown> | null): string | null {
+  if (!claims) return null;
+  const num = (k: string) => (typeof claims[k] === "number" ? (claims[k] as number) : null);
+  const acc = tier === "green" ? num("green_acc") : tier === "amber" ? num("amber_acc") : null;
+  if (acc == null) return null;
+  const holdout = num("headline_acc_holdout") != null;
+  const n = num("n_questions");
+  const d = num("n_drawings");
+  const where = holdout ? "held-out" : "development";
+  const sample = n != null ? ` (${n.toLocaleString("en")} questions${d != null ? `, ${d} drawings` : ""})` : "";
+  const word = tier === "green" ? "when the readers agree like this" : "when the readers disagree like this";
+  return `${word}, we were right ${(acc * 100).toFixed(1)}% of the time on ${where} drawings${sample}.`;
+}
+
+/** Weight of one scale anchor in the combined estimate: 1 / sigma^2 (same rule as engine/scale/anchors.py). */
+export function anchorWeight(relSigma: number): number {
+  return relSigma > 0 ? 1 / (relSigma * relSigma) : 0;
+}
+
+export function shortList(ids: string[], n = 3): string {
+  return ids.slice(0, n).join(", ") + (ids.length > n ? ` +${ids.length - n}` : "");
+}
+
+export function estimateSeconds(cpuPerDrawing: number, drawings: number): number {
+  return cpuPerDrawing * drawings;
+}
+
+export function humanDuration(sec: number): string {
+  if (sec < 90) return `${sec.toFixed(0)} s`;
+  if (sec < 5400) return `${(sec / 60).toFixed(0)} min`;
+  return `${(sec / 3600).toFixed(1)} h`;
+}
+
+/** The challenge corpus size used for the CPU-time estimate (from the brief, not measured here). */
+export const CORPUS_DRAWINGS = 14000;

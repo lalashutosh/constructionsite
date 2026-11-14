@@ -1,7 +1,8 @@
 """FastAPI service. Bodies and returns are contract types (ProofObject, SheetFacts, Decision, Cost totals).
 
 GET /health | POST /api/analyze | POST /api/ask | POST /api/scale | POST /api/decide | GET /api/cost
-POST|DELETE /api/override (user verdict on one element) | GET /api/image?path= (the drawing, for the Scan layer)
+POST|DELETE /api/override (user verdict on one element) | GET /api/image?path= (the drawing) |
+GET /api/geometry?path= (walls + elements for the 3D view, same pixel space as /api/image)
 GET /api/facts | GET /api/stream/{job} (SSE stage events) | POST /api/ask_async -> {job}
 """
 from __future__ import annotations
@@ -203,12 +204,9 @@ IMAGES = ROOT / "cache" / "images"
 RASTER_MIME = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}
 
 
-@app.get("/api/image")
-async def image(path: str, max_px: int = 2000):
-    """The drawing itself, for the Scan layer: raster as is, svg as is, pdf page 1 rendered to png (cached by
-    sha256), dxf/ifc via their same-stem pdf/png sibling (same drawing, README rule). Coordinates match the
-    drawing's own pixel/point space only for raster files; the response says which in X-Plumb-Coords."""
-    from fastapi.responses import FileResponse
+def _drawing_png(path: str, max_px: int = 2000) -> tuple[pathlib.Path, str, str]:
+    """(file to show, media type, coords) for a dataset path: raster as is, svg as is, pdf page 1 rendered to png
+    (cached by sha256), dxf/ifc via their same-stem png/pdf/svg sibling (same drawing, README rule)."""
     from engine.pipeline import _abs
     if ".." in pathlib.Path(path).parts:
         raise HTTPException(400, "bad path")
@@ -222,24 +220,59 @@ async def image(path: str, max_px: int = 2000):
         raise HTTPException(404, f"file not found: {path}")
     ext = src.suffix.lower()
     if ext in RASTER_MIME:
-        return FileResponse(src, media_type=RASTER_MIME[ext], headers={"X-Plumb-Coords": "pixels"})
+        return src, RASTER_MIME[ext], "pixels"
     if ext == ".svg":
-        return FileResponse(src, media_type="image/svg+xml", headers={"X-Plumb-Coords": "svg"})
+        return src, "image/svg+xml", "svg"
     if ext == ".pdf":
-        sha = facts_cache.sha256_file(str(src))
-        out = IMAGES / f"{sha}-{max_px}.png"
+        out = IMAGES / f"{facts_cache.sha256_file(str(src))}-{max_px}.png"
         if not out.exists():
-            def render():
-                import fitz
-                with fitz.open(str(src)) as doc:
-                    page = doc[0]
-                    zoom = min(4.0, max_px / max(page.rect.width, page.rect.height))
-                    pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
-                    IMAGES.mkdir(parents=True, exist_ok=True)
-                    pix.save(str(out))
-            await asyncio.to_thread(render)
-        return FileResponse(out, media_type="image/png", headers={"X-Plumb-Coords": "pdf-render"})
+            import fitz
+            with fitz.open(str(src)) as doc:
+                page = doc[0]
+                zoom = min(4.0, max_px / max(page.rect.width, page.rect.height))
+                pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
+                IMAGES.mkdir(parents=True, exist_ok=True)
+                pix.save(str(out))
+        return out, "image/png", "pdf-render"
     raise HTTPException(415, f"cannot render {ext}")
+
+
+@app.get("/api/image")
+async def image(path: str, max_px: int = 2000):
+    """The drawing itself, for the 3D view's floor. X-Plumb-Coords says whether evidence polygons share its pixels."""
+    from fastapi.responses import FileResponse
+    f, mime, coords = await asyncio.to_thread(_drawing_png, path, max_px)
+    return FileResponse(f, media_type=mime, headers={"X-Plumb-Coords": coords})
+
+
+GEOM = ROOT / "cache" / "geometry"
+
+
+@app.get("/api/geometry")
+async def geometry(path: str):
+    """3D model data in the SAME pixel space as /api/image: walls (with holes) to extrude, plus rooms, doors,
+    windows and fixtures from the readers when they share that space. Cached by sha256."""
+    f, mime, coords = await asyncio.to_thread(_drawing_png, path)
+    if coords == "svg":
+        raise HTTPException(415, "svg geometry not supported; ask for the pdf sibling")
+    sha = facts_cache.sha256_file(str(f))
+    out = GEOM / f"{sha}-{coords}.json"
+    if out.exists():
+        return json.loads(out.read_text())
+
+    def build():
+        import cv2
+        from engine import geometry3d
+        img = cv2.imread(str(f), cv2.IMREAD_COLOR)
+        if img is None:
+            raise HTTPException(415, "image could not be read")
+        facts = engine().analyze(path) if coords == "pixels" else None
+        g = geometry3d.model(img, facts, coords, use_cnn=(coords == "pixels"))
+        g.update(path=path, coords=coords, credit=(facts.provenance.credit if facts else None))
+        GEOM.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(g))
+        return g
+    return await asyncio.to_thread(build)
 
 
 @app.post("/api/decide")
