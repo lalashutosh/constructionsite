@@ -93,9 +93,11 @@
     "sum_attr",
     "argmax_area",
     "argmin_area",
-    "avg_area"
+    "avg_area",
+    "argmax_group",
+    "argmin_group"
    ],
-   "description": "argmax_area/argmin_area answer WHICH element (its label) is largest/smallest; avg_area is the mean area"
+   "description": "argmax_area/argmin_area answer WHICH element (its label) is largest/smallest; avg_area is the mean area; argmax_group/argmin_group need group_by and answer WHICH group has the most/fewest selected elements"
   },
   "attr": {
    "type": "string",

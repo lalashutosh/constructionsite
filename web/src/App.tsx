@@ -87,6 +87,13 @@ export default function App() {
     setDrawer(false);
   }, []);
 
+  // deep link: ?open=<dataset-relative or upload path>&name=<shown name> (demo + tests)
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search);
+    const path = q.get("open");
+    if (path) open([{ path, name: q.get("name") ?? path.split("/").pop() ?? path }]);
+  }, [open]);
+
   // geometry for every floor, one at a time (first call per file can take a while)
   const geoBusy = useRef(false);
   useEffect(() => {

@@ -53,6 +53,7 @@ export interface ScanView {
 export interface ScanCheck {
   views: ScanView[];
   warnings: string[];
+  floors?: SheetFloor[];
   reviewer?: { used?: boolean; models?: string[]; cost_usd?: number; notes?: string | null } | null;
 }
 
@@ -150,4 +151,15 @@ export async function buildProject(files: { path: string; name: string }[]): Pro
   if (!res.ok) throw new Error(`could not sort the folder (${res.status})`);
   const j = (await res.json()) as BuildingResult;
   return { ...j, floors: j.floors ?? [], alternatives: j.alternatives ?? [], other: j.other ?? [], groups: j.groups ?? {}, notes: j.notes ?? [] };
+}
+
+/** One floor plan on a sheet that holds several (from the scan check, engine/scancheck.py). */
+export interface SheetFloor {
+  view: number;
+  box: [number, number, number, number];
+  level?: number | null;
+  level_label?: string;
+  label: string;
+  wall_indices: number[];
+  level_source?: string;
 }

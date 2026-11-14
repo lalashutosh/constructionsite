@@ -107,6 +107,14 @@ class PipelineEngine:
         from engine.query import llm as llm_mod
         self.llm = llm if llm is not None else llm_mod.default_llm()
         self.classifier = TemplateClassifier(self.llm) if self.llm else None
+        # new questions are planned by the STRONG model with reasoning on (open-weight endpoints are cheap; the fast
+        # model with thinking off is kept for routing and as a fallback)
+        self.planner_llm = None
+        if self.llm is not None and hasattr(self.llm, "kind"):
+            from engine.query.llm import VerdaLLM
+            self.planner_llm = VerdaLLM(getattr(self.llm, "prov", "verda"), "strong")
+            self.planner_llm.no_think = False
+            self.planner_llm.plan_tokens = 6000
         self.user_anchors: dict[str, list[dict]] = {}
         self.choices: dict[str, dict] = {}
         # user verdicts on single elements, per (sha256, intent): [{"polygon": [[x,y],...], "keep": bool, "id": str}]
@@ -175,6 +183,12 @@ class PipelineEngine:
         stage = progress or (lambda s: None)
         rt = route_question(question, path, classifier=self.classifier)
         po = self._ask(path, question, rt, allow_siblings, benchmark, stage)
+        try:                                  # "... on floor 2" on a sheet with several floor plans
+            from engine import sheetfloor
+            on_floor = sheetfloor.restrict(po, question, po.provenance.sha256)
+        except Exception as e:  # noqa: BLE001
+            on_floor = None
+            po.notes.append(f"per-floor split skipped: {type(e).__name__}")
         if rt.layer == "regex-complex":       # LLM off and the question asks more than the matched template
             if po.tier == Tier.green:
                 po.tier = Tier.amber
@@ -186,6 +200,8 @@ class PipelineEngine:
         try:
             from engine.answer_text import sentence
             po.answer_text = sentence(po)
+            if on_floor:
+                po.answer_text = sheetfloor.name_floor(po.answer_text, on_floor)
         except Exception:  # noqa: BLE001  (the sentence is a convenience; never fail an answer over it)
             po.answer_text = None
         bad = invariants.check(po)
@@ -284,6 +300,7 @@ class PipelineEngine:
         stage("vote")
         results = self._vote(ctx, notes)
         if kind == "count":
+            self._label_vote(results, ctx, facts, notes)
             self._apply_overrides(results, sha, rt.intent, po, notes)
         planner_cost = Cost()
         if not results and self.llm is not None:      # no reader answered the matched type -> let the planner try
@@ -338,16 +355,26 @@ class PipelineEngine:
                 source=str(d.get("reason", "dev-median prior"))))
             notes.append(f"{rt.intent}: value is a prior (defaulted), not a detection")
 
-        # evidence
+        # evidence = the elements of the reading that gave the answer (6 windows -> pins 1..6). Other voters'
+        # candidates stay listed under their voter (element_ids) for 'Why?', but are not pinned as the answer.
+        def _same(v):
+            try:
+                return v is not None and value is not None and (
+                    int(v) == int(value) if kind == "count" else abs(float(v) - float(value)) <= 0.02 * max(abs(float(value)), 1e-9))
+            except (TypeError, ValueError):
+                return v == value
+        chosen = [r for r in results if _same(r.voter.value)] or results[:1]
+        if chosen and isinstance(value, (int, float)) and kind == "count":
+            chosen = chosen[:1]                    # one reading's elements, numbered 1..value
         seen: set[str] = set()
-        for r in results:
+        for r in chosen:
             for e in r.evidence:
                 if e.id not in seen and len(po.evidence) < 400 and len(e.polygon) >= 2:
                     seen.add(e.id)
                     po.evidence.append(e)
         if not po.evidence and results:
             by = {e.id: e for e in facts.elements}
-            for r in results:
+            for r in chosen:
                 for i in r.voter.element_ids[:400]:
                     if i in by and i not in seen and len(by[i].polygon) >= 2:
                         seen.add(i)
@@ -376,6 +403,48 @@ class PipelineEngine:
         return po
 
     # ------------------------------------------------------------------ helpers
+    # intents where the vision label reader beat the current reader on DEV (40 scans, 350 questions, cache/proto/
+    # labeleval.py): bedrooms 88% vs 71%, wc_rooms 91% vs 74%. Elsewhere it is a second opinion (tier only).
+    LABEL_PRIMARY = {"bedrooms", "wc_rooms"}
+
+    def _label_vote(self, results: list, ctx, facts: SheetFacts, notes: list[str]) -> None:
+        """Vision LLM transcribes the room labels; code maps them through engine/glossary.yaml and counts."""
+        from engine import label_reader as LR
+        if self.llm is None or not hasattr(self.llm, "complete_vision") or not ctx.abs_path.lower().endswith(
+                (".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff", ".bmp")):
+            return
+        if ctx.intent not in LR.glossary()["intent_room_types"]:
+            return
+        try:
+            import cv2
+            from engine.registry import VoterResult
+            img = cv2.imread(ctx.abs_path, cv2.IMREAD_COLOR)
+            labels = LR.read_labels(img, self.llm, facts_cache.sha256_file(ctx.abs_path))
+            got = LR.count(labels, ctx.intent)
+            if got is None:
+                return
+            n, hits = got
+            h, w = img.shape[:2]
+            ev = []
+            for i, l in enumerate(l for l in labels if l.get("text") in hits):
+                if isinstance(l.get("x"), (int, float)) and isinstance(l.get("y"), (int, float)):
+                    cx, cy, r = l["x"] / 100 * w, l["y"] / 100 * h, 0.025 * max(w, h)
+                    ev.append(Element(id=f"label_{i}", kind="label", label=l["text"],
+                                      polygon=[(cx - r, cy - r), (cx + r, cy - r), (cx + r, cy + r), (cx - r, cy + r)],
+                                      attrs={"read_by": "vision label reader"}))
+            primary = ctx.intent in self.LABEL_PRIMARY
+            if primary:
+                for r in results:                   # the measured-better reader decides; the others cross-check
+                    r.second_opinion = True
+            note = (f"AI read the room labels {', '.join(hits) or '(none of this type)'} -> {n} "
+                    f"(glossary: {', '.join(sorted({LR.norm_label(h) for h in hits})) or '-'})")
+            results.append(VoterResult(voter=Voter(name="label_reader", value=int(n), element_ids=[e.id for e in ev],
+                                                   runs=[int(n)], note=note),
+                                       evidence=ev, unit="count", second_opinion=not primary))
+            notes.append("labels read by a vision model, counted by code" + (" (decides this answer)" if primary else ""))
+        except Exception as e:  # noqa: BLE001  (the label reader is optional)
+            notes.append(f"label reader unavailable: {type(e).__name__}")
+
     READER_Q = {"window": "How many windows are shown on this floor plan?",
                 "door": "How many doors are shown on this floor plan? Count doorways fitted with a door; open doorways without a door leaf do not count.",
                 "toilet": "How many toilet bowls (WC seats) are drawn on this floor plan?",
@@ -572,7 +641,13 @@ class PipelineEngine:
                 not any(e.kind == "wall" for e in facts.elements) and "vector" not in facts.extras:
             facts = self._with_walls(facts, ctx, po, notes)
         try:
-            plan = planner.plan(question, facts, self.llm)
+            try:
+                plan = planner.plan(question, facts, self.planner_llm or self.llm)
+            except Exception as e:  # noqa: BLE001  (strong model failed / empty: fall back to the fast one)
+                if self.planner_llm is None:
+                    raise
+                notes.append(f"strong planner failed ({type(e).__name__}); fast planner used")
+                plan = planner.plan(question, facts, self.llm)
             cost = plan.cost
             px = ctx.params.get("_px_per_m")
             res = query.execute_plan(plan.specs, plan.combine, facts, px)

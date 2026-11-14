@@ -12,10 +12,14 @@ export interface FloorInput {
   label: string;
   geo: Geometry;
   imgUrl: string;
+  /** part of the image this floor shows (one of several plans on one sheet), in drawing pixels */
+  crop?: [number, number, number, number];
 }
 export interface PinInput {
   idx: number;
   polygon: Ring;
+  /** floor the pin sits on when it differs from setPins' floorKey (several plans on one sheet) */
+  floor?: string;
 }
 interface Callbacks {
   onHoverPin: (idx: number | null) => void;
@@ -622,7 +626,9 @@ export class PlumbViewer {
   }
 
   /** Scale mode: straight top-down view, the drawing at near full opacity. Off eases back to where the camera was. */
+  private topDown = false;
   setTopDown(on: boolean) {
+    this.topDown = on;
     const planes = [...this.floorGroups.values()].map((f) => f.plane.material as THREE.MeshBasicMaterial);
     if (on) {
       this.beforeScale = { pos: this.camera.position.clone(), target: this.controls.target.clone() };
@@ -893,6 +899,11 @@ export class PlumbViewer {
       this.flyTo(homePos, homeTarget, 2600);
     }
     this.controls.autoRotate = !this.reduce;
+    if (this.topDown) {                       // floors rebuilt while measuring: stay looking straight down
+      this.controls.autoRotate = false;
+      this.beforeScale = { pos: homePos.clone(), target: homeTarget.clone() };
+      this.flyTo(homeTarget.clone().add(new THREE.Vector3(0, homePos.distanceTo(homeTarget) * 1.02, 0.001)), homeTarget, 900);
+    }
     this.controls.update();
   }
 
@@ -1070,7 +1081,9 @@ export class PlumbViewer {
       const blob = await res.blob();
       const long = Math.max(f.geo.width, f.geo.height);
       const scale = Math.min(1, 2048 / long);
-      const bmp = await createImageBitmap(blob, { resizeWidth: Math.round(f.geo.width * scale), resizeHeight: Math.round(f.geo.height * scale), resizeQuality: "high", imageOrientation: "flipY" });
+      const opts: ImageBitmapOptions = { resizeWidth: Math.round(f.geo.width * scale), resizeHeight: Math.round(f.geo.height * scale), resizeQuality: "high", imageOrientation: "flipY" };
+      const c = f.crop;
+      const bmp = c ? await createImageBitmap(blob, c[0], c[1], c[2] - c[0], c[3] - c[1], opts) : await createImageBitmap(blob, { resizeWidth: Math.round(f.geo.width * scale), resizeHeight: Math.round(f.geo.height * scale), resizeQuality: "high", imageOrientation: "flipY" });
       if (token !== this.token || this.disposed) return;
       const t = new THREE.Texture(bmp);
       t.colorSpace = THREE.SRGBColorSpace;
@@ -1080,7 +1093,7 @@ export class PlumbViewer {
       const m = plane.material as THREE.MeshBasicMaterial;
       m.map = t;
       m.color.set(this.T.imgColor);
-      m.opacity = this.T.imgOpacity;
+      m.opacity = this.topDown ? 0.95 : this.T.imgOpacity;
       m.needsUpdate = true;
     } catch {
       /* image stays a plain slab */
@@ -1096,12 +1109,14 @@ export class PlumbViewer {
   setPins(floorKey: string | null, pins: PinInput[]) {
     this.clearPins();
     this.lastInteract = performance.now();
-    const fl = floorKey ? this.floorGroups.get(floorKey) : undefined;
-    if (!fl || !pins.length) return;
-    const { group, w, h, H, s } = fl;
-    const lift = H * 2.0 * s;
+    const fl0 = floorKey ? this.floorGroups.get(floorKey) : undefined;
+    if (!pins.length) return;
     const lineMat = new THREE.LineBasicMaterial({ color: this.T.pin, transparent: true, opacity: 0.85 });
     for (const p of pins) {
+      const fl = p.floor ? this.floorGroups.get(p.floor) : fl0;
+      if (!fl) continue;
+      const { group, w, h, H, s } = fl;
+      const lift = H * 2.0 * s;
       const poly = p.polygon;
       if (!poly.length) continue;
       let cx = 0;

@@ -530,6 +530,51 @@ async def building(body: BuildingBody):
     return await asyncio.to_thread(organise, body.files, geo, None, img, abs_of, thinker)
 
 
+_FINDING_QS: dict = {}
+
+
+def _finding_questions() -> dict:
+    """{source: [(intent, question)]}: every measurable question type the dataset asks for that kind of drawing, in
+    the dataset's most common English wording; templates that need a specific room/apartment/storey are skipped."""
+    global _FINDING_QS
+    if _FINDING_QS:
+        return _FINDING_QS
+    import collections
+    import re as _re
+    from evalkit.data import load_questions
+    cnt: dict = collections.defaultdict(collections.Counter)
+    for q in load_questions():
+        if q.type not in ("count", "area") or (q.lang or "en") != "en" or q.intent in (None, "unknown"):
+            continue
+        if _re.search(r"['\"‘“]|\b(apartment|room) [A-Z0-9]|\d", q.question):
+            continue
+        cnt[(q.source, q.intent)][q.question] += 1
+    out: dict = collections.defaultdict(list)
+    for (src, intent), c in sorted(cnt.items()):
+        out[src].append((intent, c.most_common(1)[0][0]))
+    _FINDING_QS = dict(out)
+    return _FINDING_QS
+
+
+@app.get("/api/findings")
+async def findings(path: str):
+    """Every standard question for this kind of drawing, answered (same readers as /api/ask). Sources are the
+    dataset folders; uploads of images count as scanned plans."""
+    p = _resolve(PathRef(path=path))
+    from evalkit.intents import source_of
+    src = source_of(p) or "cubicasa5k"
+    qs = _finding_questions().get(src) or _finding_questions().get("cubicasa5k", [])
+    eng = engine()
+
+    def run():
+        rows = []
+        for intent, q in qs:
+            po = eng.ask(p, q, benchmark=False)
+            rows.append({"intent": intent, "question": q, "proof": json.loads(po.model_dump_json())})
+        return rows
+    return {"source": src, "findings": await asyncio.to_thread(run)}
+
+
 @app.post("/api/decide")
 async def decide(body: DecideBody):
     """Apply a choice -> recompute. engine.decide.quote may not exist yet: 501 with a clear message."""

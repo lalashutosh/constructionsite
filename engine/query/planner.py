@@ -19,7 +19,8 @@ SYSTEM = (
     "doors?'; difference/ratio = part1 minus/over part2 for 'how many more'). "
     "For 'what share / percentage / fraction of X is Y' use two parts with combine ratio (part1 = Y, part2 = X, "
     "e.g. sum_area of bathrooms over sum_area of all rooms). "
-    "Use aggregate argmax_area/argmin_area for 'which room is largest/smallest', avg_area for averages; for sum_attr "
+    "Use aggregate argmax_area/argmin_area for 'which room is largest/smallest', argmax_group/argmin_group with group_by "
+    "for 'which apartment/storey has the most/fewest X', avg_area for averages; for sum_attr "
     "use an attr listed under numeric_attrs for that kind (e.g. volume_m3). If the question needs something the schema "
     "cannot express (direction, facing, orientation, adjacency to the entrance, cost, time), reply "
     "{\"unsupported\": \"<short reason>\"} instead of a spec. "
@@ -67,10 +68,11 @@ def plan(question: str, facts: SheetFacts, llm: LLM) -> Plan:
     from engine.label_reader import glossary_text
     user = (f"Question: {question}\nSchema: {json.dumps(SCHEMA)}\nThis drawing: {json.dumps(vocab)}\n"
             f"Plan abbreviations (label -> room type): {glossary_text()}")
-    reply = llm.complete(SYSTEM, user, max_tokens=500)
+    budget = getattr(llm, "plan_tokens", 500)        # reasoning models need room to think before the JSON
+    reply = llm.complete(SYSTEM, user, max_tokens=budget)
     cost = Cost(tokens_in=reply.tokens_in, tokens_out=reply.tokens_out, usd=reply.usd, llm_calls=1, planner_calls=1)
     if not re.search(r"\{.*\}", reply.text or "", re.S):        # empty / prose reply: one stricter retry
-        reply = llm.complete(SYSTEM + " Output ONLY the JSON object, starting with '{'.", user, max_tokens=500)
+        reply = llm.complete(SYSTEM + " Output ONLY the JSON object, starting with '{'.", user, max_tokens=budget)
         cost = Cost(tokens_in=cost.tokens_in + reply.tokens_in, tokens_out=cost.tokens_out + reply.tokens_out,
                     usd=cost.usd + reply.usd, llm_calls=2, planner_calls=1)
     try:

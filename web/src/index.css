@@ -387,5 +387,30 @@ body { font-size: 15px; }
 .viewer::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 132px; z-index: 1; pointer-events: none;
   background: linear-gradient(to bottom, var(--bg) 0%, var(--bg) 72%, transparent 100%); }
 .viewer > .vtitle, .viewer > .narr, .viewer > .scalecta, .viewer > .floorpills, .viewer > .dtoggle, .viewer > .drawtoggle { z-index: 2; }
+.viewer > .measure, .viewer > .banner { z-index: 7; }   /* the measuring prompt must sit above the header band */
+.measure { top: 132px; box-shadow: 0 6px 24px rgba(0,0,0,.35); }
 .narr .warnline { display: flex; align-items: center; gap: 6px; max-width: 60%; }
 .prog { background: var(--bg); padding-bottom: 6px; }   /* covers the drawing toggle while loading (no overlap) */
+
+/* proof view */
+.pv { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.pv-pic { margin: 0 0 6px; border: 1px solid var(--rule); border-radius: var(--r, 4px); background: var(--bg); overflow: hidden; }
+.pv-pic svg { display: block; width: 100%; height: auto; max-height: 420px; background: #fff; }
+.pv-pic figcaption { padding: 6px 8px; border-top: 1px solid var(--rule); background: var(--panel); display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; }
+.pv-wait { padding: 24px 8px; text-align: center; }
+.pv-credit { flex-basis: 100%; font-size: 11px; opacity: .85; }
+.pv-mark { cursor: default; }
+.pv-ring { fill: none; stroke: var(--accent); }
+.pv-mark.side .pv-ring { stroke: var(--muted); }
+.pv-mark.hot .pv-ring { fill: var(--tint); }
+.pv-tag { fill: var(--accent); }
+.pv-mark.side .pv-tag { fill: var(--muted); }
+.pv-num { fill: var(--on-accent, #fff); font-family: var(--mono, monospace); font-weight: 600; pointer-events: none; }
+.pv-lbl { fill: #1a1012; stroke: #fff; paint-order: stroke; font-family: var(--mono, monospace); font-weight: 600; pointer-events: none; }
+.pv-key { display: inline-block; width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--accent); vertical-align: -2px; }
+.pv-key.dash { border: 2px dashed var(--muted); }
+.pv-voters { list-style: none; margin: 0; padding: 0; }
+.steps .pv-voters li, .pv-voters li { display: block; padding: 4px 0 6px; border-top: 1px solid var(--rule); }
+.pv-voters li.dec p:first-child { color: var(--text); }
+.pv-badge { display: inline-block; margin-left: 4px; padding: 0 6px; font-size: 11px; border-radius: 9px; border: 1px solid var(--accent); color: var(--accent-text, var(--accent)); }
+.pv-verdict { padding-top: 6px; border-top: 1px solid var(--rule); }

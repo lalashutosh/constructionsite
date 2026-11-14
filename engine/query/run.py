@@ -267,7 +267,8 @@ def run(spec: dict, facts: SheetFacts, px_per_m: Optional[float] = None) -> Resu
     rules = list(spec.get("rules") or [])
     els = select(spec, facts)
     unit = {"sum_area": "m2", "max_area": "m2", "avg_area": "m2", "sum_length": "m",
-            "argmax_area": "label", "argmin_area": "label"}.get(spec["aggregate"], "count")
+            "argmax_area": "label", "argmin_area": "label", "argmax_group": "label",
+            "argmin_group": "label"}.get(spec["aggregate"], "count")
     if spec["aggregate"] == "sum_attr":
         unit = next((u for suf, u in (("_m3", "m3"), ("_m2", "m2"), ("_m", "m")) if spec["attr"].endswith(suf)), "count")
     res = Result(unit=unit)
@@ -307,6 +308,25 @@ def run(spec: dict, facts: SheetFacts, px_per_m: Optional[float] = None) -> Resu
         res.notes.append(f"{len(scored)} candidates compared by area; chosen {a:.2f} {unit_word}")
         res.groups = {"area": round(a, 2)}
         res.evidence_ids = [e.id]
+        return res
+    if spec["aggregate"] in ("argmax_group", "argmin_group") and spec.get("group_by"):
+        from engine.query.graph import apartment_of
+        amap = apartment_of(facts) if spec["group_by"] == "apartment" else {}
+        buckets: dict[str, list[Element]] = {}
+        for e in els:
+            k = _group_key(e, spec["group_by"], amap)
+            if k:
+                buckets.setdefault(k, []).append(e)
+        if not buckets:
+            res.value = None
+            res.notes.append(f"no {spec['group_by']} groups found")
+            return res
+        pick = (max if spec["aggregate"] == "argmax_group" else min)(buckets, key=lambda k: len(buckets[k]))
+        res.groups = {k: len(v) for k, v in sorted(buckets.items())}
+        res.value = f"{spec['group_by']} {pick} ({len(buckets[pick])} {spec['select'] if isinstance(spec['select'], str) else 'items'}s)"
+        res.unit = "label"
+        res.evidence_ids = [e.id for e in buckets[pick]]
+        res.notes.append("per group: " + ", ".join(f"{k}={v}" for k, v in res.groups.items()))
         return res
     if spec.get("group_by"):
         from engine.query.graph import apartment_of
