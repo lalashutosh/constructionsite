@@ -27,7 +27,7 @@ import numpy as np
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 CACHE = ROOT / "cache" / "symbols"
-VERSION = "v11"
+VERSION = "v12"
 NAMES = ["bed", "side table", "desk", "chair", "sofa", "lounge chair", "table", "closet", "wardrobe", "toilet", "sink",
          "shower", "bathtub", "door", "window", "stair", "tv", "kitchen counter", "fridge", "gym equipment", "washer",
          "plant", "column", "other"]
@@ -77,17 +77,25 @@ def _components(g: np.ndarray, mask: np.ndarray, words: list[dict], ppm: float):
         a, b, c, d = [int(v) for v in w["box"]]
         ink[max(0, b - 1):d + 2, max(0, a - 1):c + 2] = 0
     thick = cv2.morphologyEx(ink, cv2.MORPH_OPEN, np.ones((5, 5), np.uint8))
+    L = max(15, int(1.2 * ppm))                          # walls are LONG heavy strokes; a treadmill's heavy outline is short
+    walls = cv2.morphologyEx(thick, cv2.MORPH_OPEN, np.ones((1, L), np.uint8)) | \
+        cv2.morphologyEx(thick, cv2.MORPH_OPEN, np.ones((L, 1), np.uint8))
+    walls = cv2.dilate(walls, np.ones((7, 7), np.uint8))
     thin = ink & (1 - cv2.dilate(thick, np.ones((3, 3), np.uint8)))
+    thin = thin | (thick & (1 - walls))                  # heavy, short strokes are symbol outlines too
     n, lab, st, _ = cv2.connectedComponentsWithStats(thin, 8)
     lo, hi = max(8, int(0.25 * ppm)), int(3.0 * ppm)
     keep = [i for i in range(1, n) if lo <= max(st[i][2], st[i][3]) <= hi and min(st[i][2], st[i][3]) >= 0.12 * ppm
             and st[i][4] >= 20]
-    return lab, st, keep
+    return lab, st, keep, thin
 
 
-def _desc(lab, st, i, S: int = 24):
+def _desc(lab, st, i, S: int = 24, ink=None):
     x, y, w, h = st[i][:4]
-    m = (lab[y:y + h, x:x + w] == i).astype(np.uint8) * 255
+    m = (lab[y:y + h, x:x + w] == i)
+    if ink is not None:
+        m = m & (ink[y:y + h, x:x + w] > 0)
+    m = m.astype(np.uint8) * 255
     side = max(w, h)
     pad = np.zeros((side, side), np.uint8)
     pad[(side - h) // 2:(side - h) // 2 + h, (side - w) // 2:(side - w) // 2 + w] = m
@@ -99,10 +107,10 @@ def _v8(d):
     return [np.rot90(d, k) for k in range(4)] + [np.rot90(np.fliplr(d), k) for k in range(4)]
 
 
-def _cluster(lab, st, keep) -> list[dict]:
+def _cluster(lab, st, keep, ink=None, cap: int = 36) -> list[dict]:
     reps: list[dict] = []
     for i in keep:
-        d, dims = _desc(lab, st, i)
+        d, dims = _desc(lab, st, i, ink=ink)
         best = None
         for r in reps:
             if abs(r["dims"][0] - dims[0]) > 0.12 * dims[0] + 2 or abs(r["dims"][1] - dims[1]) > 0.15 * dims[1] + 2:
@@ -113,10 +121,30 @@ def _cluster(lab, st, keep) -> list[dict]:
         if best:
             best[1]["members"].append(i)
         else:
-            reps.append({"d": d, "dims": dims, "members": [i]})
+            reps.append({"d": d, "dims": dims, "members": [i], "st": st})
     reps = [r for r in reps if len(r["members"]) >= 3]   # gym machines, sofas: a few per sheet
     reps.sort(key=lambda r: -len(r["members"]))
-    return reps[:36]
+    return reps[:cap]
+
+
+def _whole_symbols(thin: np.ndarray, lab_raw: np.ndarray, ppm: float) -> list[dict]:
+    """Second discovery level: strokes within a few px grouped into ONE symbol (a treadmill, an elliptical, a bench and
+    a lounge set are drawn from several separate strokes). Only groups made of >= 2 strokes; clustered like strokes."""
+    grp = cv2.dilate(thin, np.ones((5, 5), np.uint8))
+    n, lab, st, _ = cv2.connectedComponentsWithStats(grp, 8)
+    lo, hi = int(0.4 * ppm), int(3.0 * ppm)
+    keep = []
+    for i in range(1, n):
+        x, y, w, h, a = st[i]
+        if not (lo <= max(w, h) <= hi and min(w, h) >= 0.25 * ppm):
+            continue
+        sub = lab_raw[y:y + h, x:x + w][(lab[y:y + h, x:x + w] == i)]
+        if len(np.unique(sub[sub > 0])) >= 2:
+            keep.append(i)
+    reps = _cluster(lab, st, keep, ink=thin, cap=14)
+    for r in reps:
+        r["grouped"] = True
+    return reps
 
 
 def _ncc_hits(g: np.ndarray, mask: np.ndarray, box: list[int]) -> Optional[list[tuple[float, float]]]:
@@ -223,7 +251,7 @@ def _contact_sheet(g: np.ndarray, st, reps: list[dict], ppm: float) -> bytes:
     cells = []
     H, W = g.shape
     for k, r in enumerate(reps):
-        x, y, w, h = [int(v) for v in st[r["members"][0]][:4]]
+        x, y, w, h = [int(v) for v in r["st"][r["members"][0]][:4]]
         m = int(1.2 * max(w, h))
         a, b, c, d = max(0, x - m), max(0, y - m), min(W, x + w + m), min(H, y + h + m)
         crop = cv2.cvtColor(g[b:d, a:c], cv2.COLOR_GRAY2BGR)
@@ -342,8 +370,9 @@ def _checklist(abs_path: str, sha: str, facts, llm) -> dict:
     mask = np.zeros(g.shape, np.uint8)
     cv2.fillPoly(mask, [np.array(fp.polygon, np.int32)], 1)
     words = T.words(abs_path, sha)
-    lab, st, keep = _components(g, mask, words, ppm)
+    lab, st, keep, thin = _components(g, mask, words, ppm)
     reps = _cluster(lab, st, keep)
+    reps += _whole_symbols(thin, lab, ppm)            # multi-stroke symbols: gym machines, lounge sets, sofas
     names, usd, agree_n = (_name_types(_contact_sheet(g, st, reps, ppm), len(reps), llm) if reps else ({}, 0.0, {}))
     out["naming"] = {str(k): v for k, v in agree_n.items()}
     unnamed = [k for k in range(len(reps)) if not names.get(k + 1)][:8]
@@ -363,7 +392,7 @@ def _checklist(abs_path: str, sha: str, facts, llm) -> dict:
     for k, r in enumerate(reps):                    # code verifies each name against the measured size
         nm = names.get(k + 1)
         if nm:
-            x, y, w, h = [int(v) for v in st[r["members"][0]][:4]]
+            x, y, w, h = [int(v) for v in r["st"][r["members"][0]][:4]]
             if not plausible(nm, max(w, h) / ppm, min(w, h) / ppm) or agree_n.get(k + 1, "").startswith("reviewers differ") and \
                     not plausible(nm, max(w, h) / ppm, min(w, h) / ppm):
                 rejected.append(f"type {k + 1} named '{nm}' but measures {max(w, h) / ppm:.1f}x{min(w, h) / ppm:.1f} m")
@@ -377,7 +406,7 @@ def _checklist(abs_path: str, sha: str, facts, llm) -> dict:
         nm = names.get(k + 1) or f"symbol type {k + 1}"
         if nm == "other":
             continue
-        x, y, w, h = [int(v) for v in st[r["members"][0]][:4]]
+        x, y, w, h = [int(v) for v in r["st"][r["members"][0]][:4]]
         hits = _ncc_hits(g, mask, [x, y, w, h])
         if hits:                                     # every template hit must ALSO have the exemplar's shape
             hits = [hc for hc in hits if _same_shape(g, mask, r["d"], hc, w, h)]
@@ -401,7 +430,8 @@ def _checklist(abs_path: str, sha: str, facts, llm) -> dict:
         else:
             best = max(cands, key=lambda c: c["n"])
             agree = False
-            boxes = [[float(st[i][0]), float(st[i][1]), float(st[i][0] + st[i][2]), float(st[i][1] + st[i][3])]
+            S_ = best["rep"]["st"]
+            boxes = [[float(S_[i][0]), float(S_[i][1]), float(S_[i][0] + S_[i][2]), float(S_[i][1] + S_[i][3])]
                      for i in best["rep"]["members"]]
             note = f"{len(boxes)} identical shapes found by clustering (template matching not usable for this symbol)"
         ids = []

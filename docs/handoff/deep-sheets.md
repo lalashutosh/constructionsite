@@ -63,6 +63,26 @@ print), outer walls (legend-zone union), wings, printed tables. What they want n
   extruded alone); per-wing totals (bottom-left / bottom-right / middle / top) in the checklist; electrical layer has no
   sheet in the stress set; browser QA of the new UI (built + type-checked only, not clicked through).
 
+## Update 2026-11-15 ~01:30
+- Deep read is the NORMAL read: the checklist panel starts it on open for every drawing (cached per sha); a sheet that
+  is big says so with an ETA. The chatbot answers counts from it first (`symbols.answer` in `PipelineEngine.ask`):
+  "how many beds" -> 46 with per-wing split; class words sum types ("valves" = control + check valves).
+- Universal deep read (`engine/symbols.py` v12): stroke-level symbols + WHOLE symbols (strokes grouped: lounge sets,
+  desk chairs, exercise bikes) + short heavy outlines (gym machines) + tagged equipment (FP/CV/FSCV via sheet defs /
+  glossary / ISA-5.1) + printed tables + a code-built sheet summary ("Second Floor Plan ... Scale 1"=40'-0" ...").
+  Names: 2 reviewers on a context contact sheet with sizes, size-checked by code, second pass for unnamed (direct, fast).
+  Dorm: sinks 48 / toilets 48 / beds 46 / closets 29 / showers 23 ... (v11); treadmills still not grouped.
+- Build plan: per-element units (`px_per_m` on elements; was 962790 m3 concrete), sheet's verified scale and deep-read
+  counts for construction sheets; list layout fixed (`.flist .crow`).
+- UI: themed view cube, layer bar bottom-left (+ room boundary lines), scale badge "Scale read from the drawing ·
+  Where?" by the measuring button, findings hide refusals / zeros ("Not found on this sheet" collapsed), thumbnails
+  in the checklist, selection chip -> `selected_id`.
+- Gemini: `LLM_PROVIDER=gemini` + `GEMINI_API_KEY` (or GOOGLE_API_KEY) in .env, models GEMINI_MODEL_FAST/STRONG
+  (default gemini-2.5-flash / -pro) via the OpenAI-compatible endpoint (`engine/query/llm.py`). NOT TESTED: no key in .env.
+- Pitch notes: docs/PITCH_POINTERS.md.
+- Open: shopping list merged with the checklist (today: Build plan tab has the materials, checklist has the counts);
+  dorm doors (grey arcs); treadmills; per-type rename in the checklist.
+
 ## How to run / test
 API: `LLM_PROVIDER=verda .venv/bin/python -m uvicorn api.main:app --port 8001`; web: `cd web && VITE_ENGINE=http://localhost:8001/api npx vite`.
 Stress: `.venv/bin/python scripts/stress_big.py` (manifest `cache/stress/manifest.json`, 3 full-res Stoa sheets).
