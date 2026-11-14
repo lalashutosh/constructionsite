@@ -353,6 +353,33 @@ def _reviewers():
     return out
 
 
+def _name_geo_rooms(g: dict, img, llm, sha: str) -> None:
+    """3D room tags from the printed labels: the vision label reader reads them (cached per drawing), code puts each
+    label in the room polygon that contains it and maps it through engine/glossary.yaml."""
+    try:
+        from shapely.geometry import Point, Polygon
+        from engine import label_reader as LR
+        labels = LR.read_labels(img, llm, sha)
+        h, w = img.shape[:2]
+        named = 0
+        for r in g.get("rooms") or []:
+            if len(r.get("polygon") or []) < 3:
+                continue
+            P = Polygon(r["polygon"])
+            hit = [l for l in labels if l.get("room_type") and isinstance(l.get("x"), (int, float))
+                   and isinstance(l.get("y"), (int, float)) and P.contains(Point(l["x"] / 100 * w, l["y"] / 100 * h))]
+            if hit:
+                t = hit[0]["room_type"]
+                r["label"], r["subtype"] = hit[0]["text"], {"living_room": "living"}.get(t, t)
+                r["named_by"] = "printed label (AI read, code matched)"
+                named += 1
+        g.setdefault("check", {}) and g["check"].setdefault("warnings", [])
+        if named:
+            g["room_note"] = f"{named} rooms named from their printed labels"
+    except Exception:  # noqa: BLE001  (naming is optional)
+        pass
+
+
 @app.get("/api/geometry")
 async def geometry(path: str):
     """3D model data in the SAME pixel space as /api/image: walls (with holes) to extrude, plus rooms, doors,
@@ -412,10 +439,15 @@ async def geometry(path: str):
         import time as _t
         t0, cpu0 = _t.perf_counter(), _t.process_time()
         facts = engine().analyze(path) if coords == "pixels" else None
-        g = geometry3d.model(img, facts, coords, use_cnn=(coords == "pixels"), scan_check=True, llm=_reviewers())
+        revs = _reviewers()
+        g = geometry3d.model(img, facts, coords, use_cnn=(coords == "pixels"), scan_check=True, llm=revs)
+        if coords == "pixels" and revs:
+            _name_geo_rooms(g, img, revs[-1], sha)
         rv = (g.get("check") or {}).get("reviewer") or {}
+        au = (g.get("check") or {}).get("audit") or {}
         g["cost"] = {"ms": round((_t.perf_counter() - t0) * 1000), "cpu_s": round(_t.process_time() - cpu0, 1),
-                     "llm_calls": rv.get("asked", 0) if rv.get("used") else 0, "usd": rv.get("cost_usd", 0.0),
+                     "llm_calls": (rv.get("asked", 0) if rv.get("used") else 0) + (len(revs or []) if au.get("used") else 0),
+                     "usd": round(rv.get("cost_usd", 0.0) + au.get("cost_usd", 0.0), 5),
                      "note": "reading the drawing + 3D walls + scan check, paid once per file (cached by sha256)"}
         g.update(path=path, coords=coords, credit=(facts.provenance.credit if facts else None))
         GEOM.mkdir(parents=True, exist_ok=True)

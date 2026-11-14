@@ -191,8 +191,21 @@ def _checked(img, facts, coords, use_cnn, llm) -> dict:
     got = cnn_walls(img) if use_cnn else None
     wa = got[0] if got else []
     wb, _ = _trace_full(img)
-    chk = scancheck.check(img, wa, wb, _LAST_ROOMS, llm)
     out = model(img, facts, coords, use_cnn=False)          # elements + shape; walls replaced below
+    aud = None
+    try:                                                    # AI audit of the built rooms; code verifies each action
+        from engine import room_audit
+        aud = room_audit.audit(img, out["rooms"], llm if isinstance(llm, (list, tuple)) else [llm])
+        if aud["drop"] or aud["add"]:
+            out["rooms"] = [r for r in out["rooms"] if r["id"] not in set(aud["drop"])] + aud["add"]
+    except Exception:  # noqa: BLE001  (the audit is optional)
+        aud = None
+    chk = scancheck.check(img, wa, wb, _LAST_ROOMS, llm, cuts=(aud or {}).get("cuts"),
+                          plan_labels=(aud or {}).get("plan_labels"))
+    if aud:
+        chk["audit"] = {k: aud[k] for k in ("used", "answered", "cost_usd", "drop", "actions", "issues")}
+        chk["audit"]["added"] = [r["id"] for r in aud["add"]]
+        chk["warnings"] += [f"AI audit: {a}" for a in aud["actions"]]
     out["walls"] = chk.pop("walls")
     out["wall_note"] = "walls chosen per view by the scan check (two readers + reviewer)"
     out["check"] = chk

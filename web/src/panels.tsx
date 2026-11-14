@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ChevronDown, ChevronRight, CircleCheck, CircleMinus, FolderUp, BookOpen, FolderTree, LayoutGrid, Moon, Play, Ruler, Square, Sun, TriangleAlert, Upload, X } from "lucide-react";
 import { imageUrl, type BuildPlan, type Geometry, type Sample, type ScanCheck } from "./api";
 import { fmtCost, fmtNum, reliabilityWord, sentenceOf, tierSentence, verdict, type FindingSpec } from "./logic";
-import ProofView from "./proofview";
+import ProofView, { ProofCard, SeeProof, verdictLine } from "./proofview";
 import type { ProofObject } from "./types";
 import { PlumbViewer, THEMES, type FloorInput, type Phase } from "./viewer3d";
 import { floorOf, sheetFloors, splitSheet } from "./sheetfloors";
@@ -428,7 +428,8 @@ export function Ask(p: { active: unknown; chips: string[]; selected: ProofObject
           <p className="ameta">
             <span className={`status ${v.tier}`}><TierIcon tier={v.tier} />{reliabilityWord(pr)}</span>
             <span className="cost mono">{fmtCost(pr)}</span>
-            <button className="linkbtn" onClick={p.onWhy}>Why?</button>
+            <SeeProof onClick={p.onWhy} />
+            <span className="pv-gist">{verdictLine(pr).text}.</span>
           </p>
         </div>
       ) : (
@@ -465,6 +466,9 @@ export function Findings(p: {
   seg: ReactNode;
   flat: { path: string; typeWord: string; title: string; why: string | null; sheet: string | null; isSchedule: boolean } | null;
   onAskSchedule: () => void;
+  hoverIdx?: number | null;
+  onHover?: (i: number | null) => void;
+  imgUrl?: string;
 }) {
   const settledP = p.specs.map((s) => p.states[s.key]).filter((x) => x && (x.proof || x.err));
   const allGrey = p.specs.length >= 3 && settledP.length === p.specs.length && settledP.every((x) => x.proof && x.proof.tier === "grey");
@@ -513,7 +517,10 @@ export function Findings(p: {
                   <small>{reliabilityWord(pr)}{perFloor(p.active, pr)}</small>
                 </span>
               </button>
-              <button className="linkbtn why" onClick={() => p.onWhy(pr)}>Why?</button>
+              <SeeProof onClick={() => p.onWhy(pr)} />
+              {pr.id === p.selectedId && (
+                <ProofCard proof={pr} src={p.imgUrl ?? ""} coords={p.active?.geo?.coords} hover={p.hoverIdx ?? null} onHover={p.onHover ?? (() => {})} onFull={() => p.onWhy(pr)} />
+              )}
             </li>
           );
         })}

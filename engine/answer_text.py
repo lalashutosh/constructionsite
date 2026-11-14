@@ -58,6 +58,19 @@ def sentence(po) -> Optional[str]:
         parts = re.findall(r"part\d+=([^,]+)", " ".join(n for n in po.notes if n.startswith("query parts")))
         names = [_what(s)[1] for s in spec["parts"][:2]]
         if len(parts) >= 2 and len(names) == 2:
+            q = po.question.lower()
+            if re.search(r"\b(more|fewer|less)\b.*\bor\b|\bor\s+(more|fewer|less)\b|\bvs\b|versus|which", q):
+                try:                                   # either/or question: name the winner, not yes/no
+                    x, y = float(parts[0]), float(parts[1])
+                    if x == y:
+                        return f"The same: {parts[0].strip()} {names[0]} and {parts[1].strip()} {names[1]}."
+                    win, lose = ((names[0], names[1]) if x > y else (names[1], names[0]))
+                    word = "fewer" if re.search(r"\b(fewer|less)\b", q) else "more"
+                    if word == "fewer":
+                        win, lose = lose, win
+                    return f"There are {word} {win}: {parts[0].strip()} {names[0]} vs {parts[1].strip()} {names[1]}."
+                except ValueError:
+                    pass
             return f"{v}: {parts[0].strip()} {names[0]} vs {parts[1].strip()} {names[1]}."
         return f"{v}."
     if spec and "parts" in spec and spec.get("combine") == "ratio" and isinstance(v, (int, float)):

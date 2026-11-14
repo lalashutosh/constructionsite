@@ -414,3 +414,18 @@ body { font-size: 15px; }
 .pv-voters li.dec p:first-child { color: var(--text); }
 .pv-badge { display: inline-block; margin-left: 4px; padding: 0 6px; font-size: 11px; border-radius: 9px; border: 1px solid var(--accent); color: var(--accent-text, var(--accent)); }
 .pv-verdict { padding-top: 6px; border-top: 1px solid var(--rule); }
+.pv-pic.sm svg { max-height: 280px; }
+.pv-pic.sm.pv-wait { padding: 16px 8px; }
+.pv-see { display: inline-flex; align-items: center; gap: 4px; flex: none; padding: 2px 8px; border: 1px solid var(--accent); border-radius: 999px; background: var(--tint); color: var(--accent-text, var(--accent)); font-size: 12px; line-height: 18px; cursor: pointer; white-space: nowrap; }
+.pv-see:hover { background: var(--accent); color: var(--on-accent, #fff); }
+.frow.sel { flex-wrap: wrap; }
+.frow .pv-see { margin-top: 10px; }
+.pv-card { flex-basis: 100%; min-width: 0; display: flex; flex-direction: column; gap: 6px; padding: 0 0 12px var(--s3); align-items: flex-start; }
+.pv-card .pv-pic { width: 100%; margin: 0; }
+.pv-mini { list-style: none; margin: 0; padding: 0; font-size: 13px; display: flex; flex-direction: column; gap: 2px; }
+.pv-mini li { padding-left: 10px; position: relative; color: var(--muted); }
+.pv-mini li::before { content: ""; position: absolute; left: 0; top: 0.6em; width: 4px; height: 4px; border-radius: 50%; background: var(--muted); }
+.pv-mini li.dec { color: var(--text); }
+.pv-mini li.dec::before { background: var(--accent); }
+.pv-card .pv-verdict { font-size: 13px; padding-top: 0; border-top: 0; }
+.ameta .pv-gist { flex-basis: 100%; font-size: 13px; color: var(--text); }

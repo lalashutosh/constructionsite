@@ -6,6 +6,7 @@
  */
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type { Element, ProofObject, Voter } from "./types";
+import { ScanSearch } from "lucide-react";
 import { fmtNum, verdict, voterWord } from "./logic";
 
 const WHO: Record<string, string> = {
@@ -70,12 +71,13 @@ function Picture(p: {
   counted: Set<string>;
   hover: number | null;
   onHover: (i: number | null) => void;
+  compact?: boolean;
 }) {
   const ev = p.proof.evidence;
   const [dims, setDims] = useState<{ w: number; h: number } | null>(null);
   const [failed, setFailed] = useState(false);
   const [boxW, setBoxW] = useState(340);
-  const wrap = useRef<HTMLDivElement>(null);
+  const wrap = useRef<HTMLElement>(null);
 
   useEffect(() => {
     setDims(null);
@@ -100,7 +102,7 @@ function Picture(p: {
   }, [dims]);
 
   if (failed || !p.src) return null;
-  if (!dims) return <div className="pv-pic pv-wait muted">Loading the drawing…</div>;
+  if (!dims) return <div className={`pv-pic pv-wait muted${p.compact ? " sm" : ""}`}>Loading the drawing…</div>;
 
   const boxes = ev.map((e) => bbox(e.polygon as [number, number][]));
   const all = boxes.reduce((a, b) => ({ x0: Math.min(a.x0, b.x0), y0: Math.min(a.y0, b.y0), x1: Math.max(a.x1, b.x1), y1: Math.max(a.y1, b.y1) }));
@@ -120,7 +122,7 @@ function Picture(p: {
   const mixed = p.counted.size > 0 && ev.some((e) => !p.counted.has(e.id));
 
   return (
-    <figure className="pv-pic" ref={wrap}>
+    <figure className={`pv-pic${p.compact ? " sm" : ""}`} ref={wrap}>
       <svg viewBox={`${x} ${y} ${w} ${h}`} preserveAspectRatio="xMidYMid meet" role="img" aria-label={`Drawing with ${ev.length} numbered elements circled`}>
         <image href={p.src} x={0} y={0} width={dims.w} height={dims.h} />
         {ev.map((e, i) => {
@@ -145,7 +147,9 @@ function Picture(p: {
         })}
       </svg>
       <figcaption className="muted sm">
-        {mixed ? (
+        {p.compact ? (
+          <>Circled: {ev.length} element{ev.length === 1 ? "" : "s"} the answer rests on{mixed ? " (dashed: another check's)" : ""}.</>
+        ) : mixed ? (
           <>
             <span className="pv-key solid" /> counted by the check the answer follows · <span className="pv-key dash" /> found by another check
           </>
@@ -166,40 +170,78 @@ function sentence(p: ProofObject, vt: Voter, byId: Map<string, Element>): string
   return `${w} found ${amount(p, vt.value)}.`;
 }
 
-function Verdict({ p, dec, valued }: { p: ProofObject; dec: Voter[]; valued: Voter[] }) {
+/** The verdict as plain text: did the checks agree, which one the answer follows, and the tier word. */
+export function verdictLine(p: ProofObject): { text: string; word: string; rel: string | null } {
+  const { valued, dec } = deciders(p);
   const v = verdict(p);
-  if (p.tier === "grey") return <p className="pv-verdict">No answer: {p.refusal ?? "no reason given"}.</p>;
-  if (!valued.length) return <p className="pv-verdict">No check produced a number. <b>{v.word}</b>.</p>;
-  const rel = v.rel !== null ? `${Math.round(v.rel * 100)}%` : null;
-  const relLine = p.reliability_note ? `Answers like this: ${p.reliability_note}.` : rel ? `Measured reliability ${rel}.` : null;
-  const decidesNote = p.notes.some((n) => n.includes("decides this answer"));
-  let line: ReactNode;
-  if (valued.length === 1) {
-    line = <>Only one check ran, so nothing cross-checks it → <b>{v.word}</b>.</>;
-  } else {
-    const distinct = [...new Set(valued.map((x) => fmtNum(x.value)))];
-    if (distinct.length === 1) {
-      line = <>All {valued.length} checks agreed on {amount(p, valued[0].value)} → <b>{v.word}</b>.</>;
-    } else {
-      const diff = valued.every((x) => typeof x.value === "number")
-        ? Math.max(...valued.map((x) => x.value as number)) - Math.min(...valued.map((x) => x.value as number))
-        : null;
-      const how = diff !== null && valued.length === 2 ? `disagreed by ${fmtNum(diff)}` : `disagreed (${distinct.join(" vs ")})`;
-      line = dec.length ? (
-        <>
-          Checks {how}; the answer follows the {dec.map((d) => who(d.name).replace(/^./, (c) => c.toLowerCase())).join(" and ")}
-          {decidesNote && dec.some((d) => d.name === "label_reader") ? ", which the engine marks as deciding this answer" : ""} → <b>{v.word}</b>.
-        </>
-      ) : (
-        <>Checks {how}, and the answer {fmtNum(p.value)} is not any single check's value → <b>{v.word}</b>.</>
-      );
-    }
-  }
+  const rel = p.reliability_note ? `Answers like this: ${p.reliability_note}.` : v.rel !== null ? `Measured reliability ${Math.round(v.rel * 100)}%.` : null;
+  if (p.tier === "grey") return { text: `No answer: ${p.refusal ?? "no reason given"}`, word: v.word, rel: null };
+  if (!valued.length) return { text: "No check produced a number", word: v.word, rel };
+  if (valued.length === 1) return { text: `Only one check (${lc(who(valued[0].name))}) ran, nothing cross-checks it`, word: v.word, rel };
+  const distinct = [...new Set(valued.map((x) => fmtNum(x.value)))];
+  if (distinct.length === 1) return { text: `All ${valued.length} checks agree on ${amount(p, valued[0].value)}`, word: v.word, rel };
+  const nums = valued.every((x) => typeof x.value === "number") ? valued.map((x) => x.value as number) : null;
+  const how = nums && valued.length === 2 ? `Checks disagree by ${fmtNum(Math.max(...nums) - Math.min(...nums))}` : `Checks disagree (${distinct.join(" vs ")})`;
+  if (!dec.length) return { text: `${how}; the answer ${fmtNum(p.value)} is not any single check's value`, word: v.word, rel };
+  const decides = p.notes.some((n) => n.includes("decides this answer")) && dec.some((d) => d.name === "label_reader");
+  return { text: `${how}; the answer follows the ${dec.map((d) => lc(who(d.name))).join(" and ")}${decides ? ", which the engine marks as deciding" : ""}`, word: v.word, rel };
+}
+const lc = (s: string) => s.replace(/^./, (c) => c.toLowerCase());
+
+function Verdict({ p }: { p: ProofObject }) {
+  const l = verdictLine(p);
   return (
     <>
-      <p className="pv-verdict">{line}</p>
-      {relLine && <p className="muted">{relLine}</p>}
+      <p className="pv-verdict">{l.text} → <b>{l.word}</b>.</p>
+      {l.rel && <p className="muted">{l.rel}</p>}
     </>
+  );
+}
+
+/** Whether the evidence can be drawn on the image (raster pixel coordinates). */
+function drawable(pr: ProofObject, coords?: string | null) {
+  const file = pr.provenance.file ?? "";
+  const pixels = coords ? coords === "pixels" : RASTER.test(file) && !pr.provenance.resolved_from;
+  return pixels && pr.evidence.length > 0 && pr.evidence.every((e) => e.polygon && e.polygon.length > 0);
+}
+
+/** The drawing cropped to the evidence with numbered circles (null when the coords are not image pixels). */
+export function ProofCrop(p: { proof: ProofObject; src: string; coords?: string | null; hover: number | null; onHover: (i: number | null) => void; compact?: boolean }) {
+  if (!drawable(p.proof, p.coords)) return null;
+  return <Picture proof={p.proof} src={p.src} counted={deciders(p.proof).counted} hover={p.hover} onHover={p.onHover} compact={p.compact} />;
+}
+
+/** Small action chip that opens the full reasoning. */
+export function SeeProof({ onClick, label = "See proof" }: { onClick: () => void; label?: string }) {
+  return (
+    <button type="button" className="pv-see" onClick={onClick}>
+      <ScanSearch size={13} strokeWidth={1.75} aria-hidden="true" />
+      {label}
+    </button>
+  );
+}
+
+/** Inline proof under a selected finding: crop, up to 3 "who said what" lines, the verdict, a link to the full sheet. */
+export function ProofCard(p: { proof: ProofObject; src: string; coords?: string | null; hover: number | null; onHover: (i: number | null) => void; onFull: () => void }) {
+  const pr = p.proof;
+  const { valued, dec } = deciders(pr);
+  const byId = new Map(pr.evidence.map((e) => [e.id, e]));
+  const l = verdictLine(pr);
+  const shown = pr.voters.slice(0, 3);
+  return (
+    <div className="pv-card">
+      <ProofCrop proof={pr} src={p.src} coords={p.coords} hover={p.hover} onHover={p.onHover} compact />
+      {shown.length > 0 && (
+        <ul className="pv-mini">
+          {shown.map((vt) => (
+            <li key={vt.name} className={dec.includes(vt) && valued.length > 1 ? "dec" : ""}>{sentence(pr, vt, byId)}</li>
+          ))}
+          {pr.voters.length > shown.length && <li className="muted">+{pr.voters.length - shown.length} more</li>}
+        </ul>
+      )}
+      <p className="pv-verdict">{l.text} → <b>{l.word}</b>.</p>
+      <SeeProof onClick={p.onFull} label="Full reasoning" />
+    </div>
   );
 }
 
@@ -215,15 +257,12 @@ export default function ProofView(p: {
   chips?: (ids: string[]) => ReactNode;
 }) {
   const pr = p.proof;
-  const { valued, dec, counted } = deciders(pr);
+  const { valued, dec } = deciders(pr);
   const byId = new Map(pr.evidence.map((e) => [e.id, e]));
-  const file = pr.provenance.file ?? "";
-  const pixels = p.coords ? p.coords === "pixels" : RASTER.test(file) && !pr.provenance.resolved_from;
-  const showPic = pixels && pr.evidence.length > 0 && pr.evidence.every((e) => e.polygon && e.polygon.length > 0);
 
   return (
     <div className="pv">
-      {showPic && <Picture proof={pr} src={p.src} counted={counted} hover={p.hover} onHover={p.onHover} />}
+      <ProofCrop proof={pr} src={p.src} coords={p.coords} hover={p.hover} onHover={p.onHover} />
       <b>Who said what</b>
       {pr.voters.length === 0 ? (
         <p className="muted">No separate checks were recorded for this answer.</p>
@@ -245,7 +284,7 @@ export default function ProofView(p: {
           })}
         </ul>
       )}
-      <Verdict p={pr} dec={dec} valued={valued} />
+      <Verdict p={pr} />
     </div>
   );
 }

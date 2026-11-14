@@ -458,6 +458,7 @@ class PipelineEngine:
             sha = facts_cache.sha256_file(ctx.abs_path)
             labels = LR.read_labels(img, self.llm, sha)
             h, w = img.shape[:2]
+            facts = self._audited(facts, sha, notes)
             out = LR.name_rooms(facts, labels, w, h, sheetfloor.sheet_floors(sha))
             n = sum(1 for e in out.elements if e.attrs.get("named_by"))
             if n:
@@ -466,6 +467,31 @@ class PipelineEngine:
         except Exception as e:  # noqa: BLE001
             notes.append(f"room naming skipped: {type(e).__name__}")
             return facts
+
+    @staticmethod
+    def _audited(facts: SheetFacts, sha: str, notes: list[str]) -> SheetFacts:
+        """Apply the 3D build's AI audit (engine/room_audit.py): rooms both reviewers placed on text/legend/outside are
+        dropped, verified missing rooms (e.g. a balcony) are added. Read from the cached geometry of this drawing."""
+        f = pathlib.Path(__file__).resolve().parents[1] / "cache" / "geometry" / f"{sha}-pixels.json"
+        if not f.exists():
+            return facts
+        try:
+            g = json.loads(f.read_text())
+        except (OSError, json.JSONDecodeError):
+            return facts
+        aud = (g.get("check") or {}).get("audit") or {}
+        drop, added = set(aud.get("drop") or []), set(aud.get("added") or [])
+        if not drop and not added:
+            return facts
+        out = facts.model_copy(deep=True)
+        out.elements = [e for e in out.elements if e.id not in drop]
+        for r in g.get("rooms") or []:
+            if r.get("id") in added:
+                out.elements.append(Element(id=r["id"], kind="room", subtype=r.get("subtype"), label=r.get("label"),
+                                            polygon=[tuple(p) for p in r["polygon"]],
+                                            attrs={"added_by": "AI audit, region verified by code"}))
+        notes.append(f"AI audit applied: {len(drop)} non-rooms removed, {len(added)} labelled rooms added")
+        return out
 
     READER_Q = {"window": "How many windows are shown on this floor plan?",
                 "door": "How many doors are shown on this floor plan? Count doorways fitted with a door; open doorways without a door leaf do not count.",

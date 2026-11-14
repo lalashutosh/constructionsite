@@ -543,6 +543,9 @@ export default function App() {
               activeKey={activeKey}
               onPickFloor={setActiveKey}
               selectedId={selected?.proof.id ?? null}
+              hoverIdx={hoverIdx}
+              onHover={setHoverIdx}
+              imgUrl={active ? imageUrl(active.path) : ""}
               onSelect={(p) => active && setSelected({ path: active.path, proof: p })}
               onWhy={(p) => {
                 if (active) setSelected({ path: active.path, proof: p });

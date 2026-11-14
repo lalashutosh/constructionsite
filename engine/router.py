@@ -267,6 +267,8 @@ COMPLEX = re.compile(
     r"\b(average|mean|median|per\s+(room|apartment|floor)|each|which|largest|biggest|smallest|widest|longest|"
     r"facing|front|back\s+of|north|south|east|west|left|right|next\s+to|near(est)?|beside|opposite|adjacent|"
     r"more\s+(\w+\s+)?than|fewer\s+(\w+\s+)?than|less\s+(\w+\s+)?than|compared?|minus|difference|ratio|percent|%|"
+    r"(more|fewer|less)\s+(\w+\s+){0,2}or|or\s+(more|fewer|less)|vs\.?|versus|as\s+many\s+\w+(\s+\w+)?\s+as|"
+    r"enemmän|vähemmän|"
     r"share|proportion|fraction|how\s+much\s+of|"
     r"contain(s|ing)?|with\s+(a|an|no|at\s+least)|without\s+(a|an|any)|that\s+have|ha(ve|s)\s+(no|a|an|at\s+least|more|fewer)|"
     r"and\s+(the\s+)?\w+\s+(in\s+total|together|combined)|in\s+total|combined|"
