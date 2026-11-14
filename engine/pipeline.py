@@ -270,7 +270,9 @@ class PipelineEngine:
         if kind == "count":
             self._apply_overrides(results, sha, rt.intent, po, notes)
         planner_cost = Cost()
-        if not results and self.llm is not None and rt.intent == "unknown":
+        if not results and self.llm is not None:      # no reader answered the matched type -> let the planner try
+            if rt.intent != "unknown":
+                notes.append(f"no reader answers '{rt.intent}' on this drawing; trying the planner")
             results, planner_cost = self._plan_vote(ctx, question, facts, po, notes)
             kind = po.kind                      # the planner decides the answer's kind (count / area / text)
         for r in results:

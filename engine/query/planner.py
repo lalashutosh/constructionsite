@@ -58,6 +58,10 @@ def plan(question: str, facts: SheetFacts, llm: LLM) -> Plan:
     user = f"Question: {question}\nSchema: {json.dumps(SCHEMA)}\nThis drawing: {json.dumps(vocab)}"
     reply = llm.complete(SYSTEM, user, max_tokens=500)
     cost = Cost(tokens_in=reply.tokens_in, tokens_out=reply.tokens_out, usd=reply.usd, llm_calls=1, planner_calls=1)
+    if not re.search(r"\{.*\}", reply.text or "", re.S):        # empty / prose reply: one stricter retry
+        reply = llm.complete(SYSTEM + " Output ONLY the JSON object, starting with '{'.", user, max_tokens=500)
+        cost = Cost(tokens_in=cost.tokens_in + reply.tokens_in, tokens_out=cost.tokens_out + reply.tokens_out,
+                    usd=cost.usd + reply.usd, llm_calls=2, planner_calls=1)
     try:
         obj = _parse_json(reply.text)
         if "parts" in obj:

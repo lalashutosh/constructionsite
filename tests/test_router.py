@@ -66,3 +66,11 @@ def test_complex_questions_are_not_hijacked_by_simple_intents():
     assert is_complex("Which room is the largest?")
     assert not is_complex("How many windows are drawn on this floor plan?")   # dataset template
     assert not is_complex("How big is apartment B in square metres, without balconies?")
+
+
+def test_kind_clash_and_have_a_go_to_the_planner():
+    from engine.router import is_complex
+    assert is_complex("How many rooms have a window?")
+    # area wording on a count-only intent is not that intent (no LLM here -> flagged fallback or unknown)
+    r = route("What is the total area of all bedrooms?", "data/cubicasa5k/x.png")
+    assert r.layer in ("complex", "regex-complex") or r.intent == "unknown"

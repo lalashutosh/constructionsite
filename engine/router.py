@@ -259,7 +259,7 @@ class TemplateClassifier:
 COMPLEX = re.compile(
     r"\b(average|mean|median|per\s+(room|apartment|floor)|each|which|largest|biggest|smallest|widest|longest|"
     r"more\s+(\w+\s+)?than|fewer\s+(\w+\s+)?than|less\s+(\w+\s+)?than|compared?|minus|difference|ratio|percent|%|"
-    r"contain(s|ing)?|with\s+(a|an|no|at\s+least)|without\s+(a|an|any)|that\s+have|have\s+no|has\s+no|"
+    r"contain(s|ing)?|with\s+(a|an|no|at\s+least)|without\s+(a|an|any)|that\s+have|ha(ve|s)\s+(no|a|an|at\s+least|more|fewer)|"
     r"and\s+(the\s+)?\w+\s+(in\s+total|together|combined)|in\s+total|combined|"
     r"durchschnitt|welche[rs]?|größte|grösste|mehr\s+als|moyenne|quel(le)?s?|plus\s+grand|plus\s+de|"
     r"media|quale|più\s+grande|keskimäär\w*|mikä|suurin)\b", re.I)
@@ -282,7 +282,11 @@ def route(question: str, path: str, *, classifier: Optional[TemplateClassifier] 
     from evalkit import intents as I
 
     r = I.classify(question, path)
-    if is_complex(question):
+    lex = _lexicon()
+    cue = lex.explicit_kind(normalise(question)) if lex is not None else None
+    kind_clash = (r.name != "unknown" and cue is not None and cue != kind_of(r.name)
+                  and not _known_template(question))      # "total AREA of bedrooms" is not the bedroom COUNT
+    if is_complex(question) or kind_clash:
         if classifier is not None:
             return Route("unknown", {}, "count", r.lang, "complex")      # planner drafts a query for it
         if r.name == "unknown":

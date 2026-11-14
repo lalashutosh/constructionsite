@@ -98,5 +98,7 @@ def default_llm() -> Optional[LLM]:
     """None when LLM_PROVIDER=none. `anthropic` is reserved for the live demo and not wired here."""
     p = provider()
     if p in ("verda", "featherless"):
-        return VerdaLLM(p)
+        llm = VerdaLLM(p)
+        llm.no_think = True          # planner/classifier want short JSON, not hidden reasoning that eats the budget
+        return llm
     return None

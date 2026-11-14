@@ -137,6 +137,7 @@ def _filter_has(els, has, facts):
         p = _poly(e)
         if p is None:
             continue
+        p = p.buffer(0.08 * (p.area ** 0.5))      # windows/doors sit ON the room outline, not strictly inside
         n = 0
         for ie, ip in inner:
             c = ip.centroid if ip is not None else (Point(ie.polygon[0]) if ie.polygon else None)
