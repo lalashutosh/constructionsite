@@ -1,19 +1,19 @@
 {
  "headline_acc_holdout": null,
  "headline_ci": [
-  0.7770350612324223,
-  0.8079055631430121
+  0.7390616992400987,
+  0.7606282863786428
  ],
- "green_acc": 1,
- "green_coverage": 0.24153498871331827,
- "amber_acc": 0.7222222222222222,
+ "green_acc": 0.987460815047022,
+ "green_coverage": 0.3044377286464132,
+ "amber_acc": 0.6297736107935056,
  "grey_share": 0,
- "mean_ms": 67.23791548532311,
+ "mean_ms": 2955.097671756609,
  "tokens_total": 0,
  "usd_total": 0,
  "llm_calls": 0,
- "n_questions": 2658,
- "n_drawings": 51,
+ "n_questions": 6287,
+ "n_drawings": 252,
  "split_sizes": {
   "cubicasa5k": {
    "dev": 3546,
@@ -47,7 +47,7 @@
  "hard_n_holdout": 0,
  "planner_calls": 0,
  "llm_mode": "none",
- "cpu_per_drawing_s": 0.4780823251959173,
+ "cpu_per_drawing_s": 17.90907812168656,
  "router_lolo": 0.8511,
  "clean_acc": 0.6296296296296297,
  "n_dev_rows": 600,

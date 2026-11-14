@@ -1,0 +1,24 @@
+{
+  "building": { "type": "house", "label": "Sample plan shape (engine plan not connected)", "confidence": "low", "evidence": ["Local stand-in with the same structure as GET /api/plan; no numbers here come from your drawing."] },
+  "vibe": "standard",
+  "vibes": [
+    { "id": "budget", "label": "Budget", "blurb": "Fewest materials that meet the basics" },
+    { "id": "standard", "label": "Standard", "blurb": "Typical practice" },
+    { "id": "premium", "label": "Premium", "blurb": "Higher-grade finishes" }
+  ],
+  "basis": {},
+  "checklist": [
+    { "id": "m1", "group": "Openings", "item": "Doors", "qty": 0, "unit": "pcs", "tag": "open", "basis": "Sample row: the engine fills this from the counted doors", "step": "s5" },
+    { "id": "m2", "group": "Openings", "item": "Windows", "qty": 0, "unit": "pcs", "tag": "open", "basis": "Sample row: the engine fills this from the counted windows", "step": "s5" }
+  ],
+  "steps": [
+    { "n": 1, "id": "s1", "title": "Prepare the site", "why": "Nothing can be set out until the ground is ready.", "needs": [], "phase": "site" },
+    { "n": 2, "id": "s2", "title": "Pour the foundation slab", "why": "Everything above rests on it.", "needs": ["s1"], "phase": "foundation" },
+    { "n": 3, "id": "s3", "title": "Lay the floor", "why": "Rooms are set out on the slab.", "needs": ["s2"], "phase": "floor" },
+    { "n": 4, "id": "s4", "title": "Raise the walls", "why": "Walls carry the roof and frame the openings.", "needs": ["s3"], "phase": "walls" },
+    { "n": 5, "id": "s5", "title": "Fit doors and windows", "why": "Openings close the shell.", "needs": ["s4"], "phase": "openings" },
+    { "n": 6, "id": "s6", "title": "Run the services", "why": "Pipes and cables go in before finishes.", "needs": ["s4"], "phase": "services" },
+    { "n": 7, "id": "s7", "title": "Finish the rooms", "why": "Finishes come last inside.", "needs": ["s6"], "phase": "finishes" },
+    { "n": 8, "id": "s8", "title": "Close with the roof", "why": "Keeps the weather out.", "needs": ["s5"], "phase": "roof" }
+  ]
+}
