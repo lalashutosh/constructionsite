@@ -30,16 +30,21 @@ MERGE_TOL = 3.5          # px, at least: both edges of one pen stroke (LSD sees 
 READER = "tread-line detector"
 
 
-def _ink(img: np.ndarray) -> np.ndarray:
-    """Thin, dark, unsaturated ink (uint8 0/255); thick strokes (walls, fills) removed."""
+def _ink(img: np.ndarray, faint: bool = False) -> np.ndarray:
+    """Thin, dark, unsaturated ink (uint8 0/255); thick strokes (walls, fills) removed. faint=True: ink is what is
+    clearly darker than its own neighbourhood (light pencil / faded scans, where a global threshold loses the treads)."""
     if img.ndim == 2:
         gray, sat = img, np.zeros_like(img)
     else:
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         sat = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)[:, :, 1]
-    t, _ = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    t = min(float(t), 170.0) if t > 40 else 128.0   # pure black/white renders: Otsu returns ~0
-    dark = ((gray < t) & ((sat < 90) | (gray < 60))).astype(np.uint8) * 255
+    if faint:
+        bg = cv2.dilate(gray, np.ones((9, 9), np.uint8))           # local paper brightness
+        dark = (((bg.astype(np.int16) - gray) > 18) & (sat < 90)).astype(np.uint8) * 255
+    else:
+        t, _ = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        t = min(float(t), 170.0) if t > 40 else 128.0   # pure black/white renders: Otsu returns ~0
+        dark = ((gray < t) & ((sat < 90) | (gray < 60))).astype(np.uint8) * 255
     k = max(3, int(round(min(gray.shape) / 220)) | 1) + 2   # wider than a pen stroke
     thick = cv2.morphologyEx(dark, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (k, k)))
     thick = cv2.dilate(thick, np.ones((3, 3), np.uint8))
@@ -257,12 +262,75 @@ def detect(image_bgr: np.ndarray, rooms=None, walls=None) -> list[dict]:
     """Stair flights as oriented boxes in image pixels.
 
     walls (list of {"outer": [[x,y],...]}), when given, mask out treads lying on wall bodies; rooms is
-    accepted for API symmetry. Deterministic, no network."""
+    accepted for API symmetry. Deterministic, no network. A faint-ink pass runs only when the normal one finds nothing."""
+    got = _detect(image_bgr, walls, faint=False)
+    if not got and image_bgr is not None and image_bgr.size:
+        got = _detect(image_bgr, walls, faint=True)
+        for f in got:
+            f["attrs"]["reader"] = READER + " (faint-ink pass)"
+    if not got and image_bgr is not None and image_bgr.size:
+        got = _rungs(image_bgr)
+    return got
+
+
+def _rungs(image_bgr: np.ndarray) -> list[dict]:
+    """Second stair test (fallback): a window crossed by >= 6 evenly spaced, near-full-width parallel lines (treads).
+    Text rows are not continuous lines; a single hatch does not span the window. Faint ink, both orientations."""
+    thin = _ink(image_bgr, True) > 0
+    h, w = thin.shape
+    out: list[dict] = []
+    for frac in (0.22, 0.16, 0.12):
+        win = int(frac * min(h, w))
+        step = max(4, win // 3)
+        for y0 in range(0, h - win + 1, step):
+            for x0 in range(0, w - win + 1, step):
+                sub = thin[y0:y0 + win, x0:x0 + win]
+                for axis in (1, 0):                 # axis 1: horizontal treads (rows), 0: vertical treads (columns)
+                    cov = sub.mean(axis=axis)
+                    rows = np.where(cov >= 0.55)[0]
+                    if len(rows) < 6:
+                        continue
+                    groups = np.split(rows, np.where(np.diff(rows) > 2)[0] + 1)
+                    cen = np.array([g.mean() for g in groups])
+                    if len(cen) < 6:
+                        continue
+                    gaps = np.diff(cen)
+                    if gaps.mean() < 4 or gaps.std() / gaps.mean() > 0.3 or len(cen) * 2 > win / 3:
+                        continue
+                    a, b = cen.min(), cen.max()
+                    lens = []                        # full length of each line (beyond the window): slats run on
+                    for c0 in cen[:: max(1, len(cen) // 4)]:
+                        if axis == 1:
+                            row, mid = thin[int(y0 + c0)], x0 + win // 2
+                        else:
+                            row, mid = thin[:, int(x0 + c0)], y0 + win // 2
+                        lo, hi, miss = mid, mid, 0
+                        while lo > 0 and miss <= 3:
+                            lo -= 1; miss = 0 if row[lo] else miss + 1
+                        miss = 0
+                        while hi < len(row) - 1 and miss <= 3:
+                            hi += 1; miss = 0 if row[hi] else miss + 1
+                        lens.append(hi - lo)
+                    if float(np.median(lens)) / gaps.mean() > MAX_RATIO:
+                        continue                     # deck slats / hatching: far longer than their spacing
+                    if axis == 1:
+                        poly = [[x0, y0 + a], [x0 + win, y0 + a], [x0 + win, y0 + b], [x0, y0 + b]]
+                    else:
+                        poly = [[x0 + a, y0], [x0 + b, y0], [x0 + b, y0 + win], [x0 + a, y0 + win]]
+                    out.append({"kind": "stairs", "polygon": [[float(x), float(y)] for x, y in poly],
+                                "conf": round(min(0.8, 0.35 + 0.04 * len(cen)), 3),
+                                "attrs": {"treads": int(len(cen)), "spacing_px": round(float(gaps.mean()), 1),
+                                          "tread_px": float(win), "turn_deg": 0,
+                                          "reader": "evenly spaced parallel treads (fallback window test)"}})
+    return _dedupe(out)
+
+
+def _detect(image_bgr: np.ndarray, walls, faint: bool) -> list[dict]:
     if image_bgr is None or image_bgr.size == 0:
         return []
     h, w = image_bgr.shape[:2]
     diag = math.hypot(w, h)
-    thin = _ink(image_bgr)
+    thin = _ink(image_bgr, faint)
     if walls:
         wm = np.zeros((h, w), np.uint8)
         for wl in walls:
@@ -270,7 +338,7 @@ def detect(image_bgr: np.ndarray, rooms=None, walls=None) -> list[dict]:
             if len(P) >= 3:
                 cv2.fillPoly(wm, [P], 255)
         thin = cv2.bitwise_and(thin, cv2.bitwise_not(wm))
-    lmin, lmax = max(10.0, 0.015 * diag), 0.07 * diag   # treads ~0.8-1.2 m on a 10-30 m sheet
+    lmin, lmax = max(10.0, 0.015 * diag), 0.12 * diag   # treads ~0.8-1.2 m on a 7-30 m sheet (zoomed scans: larger)
     gmin, gmax = max(4.0, 0.004 * diag), 0.03 * diag
     tol = max(MERGE_TOL, _stroke(thin) + 1.5)
     ink_s = cv2.dilate(thin, np.ones((3, 3), np.uint8))

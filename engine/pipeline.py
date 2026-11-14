@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import hashlib
 import math
+
+import numpy as np
 import importlib
 import json
 import logging
@@ -425,6 +427,7 @@ class PipelineEngine:
             return self._sheet_grey(po, rt, facts, scale, notes)
         if kind == "count" and rt.intent == "doors":
             self._door_fusion(results, facts, notes)
+            self._door_audit(results, ctx, facts, notes)
         if kind == "count":
             self._label_vote(results, ctx, facts, notes)
             self._apply_overrides(results, sha, rt.intent, po, notes)
@@ -583,6 +586,62 @@ class PipelineEngine:
                           "voter confirmed at the same spot").strip()
         notes.append(f"door fusion: {old} confident detections + {len(added)} weak detections confirmed by a door "
                      "swing arc at the same place")
+
+    def _door_audit(self, results: list, ctx, facts: SheetFacts, notes: list[str]) -> None:
+        """Hand-drawn scans: vision reviewers propose door positions, code verifies each is a wall opening (cached)."""
+        from engine import door_audit as DA
+        det = next((r for r in results if r.voter.name == "detector"), None)
+        arc = next((r for r in results if r.voter.name == "doors_arc"), None)
+        if det is None or facts.extras.get("route") == "cad":
+            return
+        n_rooms = sum(1 for e in facts.elements if e.kind == "room")
+        if not DA.needed(int(det.voter.value or 0), n_rooms, int(arc.voter.value) if arc and arc.voter.value is not None else None):
+            return
+        import json as _json
+        import cv2
+        cf = pathlib.Path(__file__).resolve().parents[1] / "cache" / "door_audit" / f"{facts.provenance.sha256}.json"
+        if cf.exists():
+            aud = _json.loads(cf.read_text())
+        else:
+            img = cv2.imread(ctx.abs_path)
+            if img is None:
+                return
+            boxes = []
+            for e in list(det.evidence) or [e for e in facts.elements if e.kind == "door"]:
+                xs = [p[0] for p in e.polygon]; ys = [p[1] for p in e.polygon]
+                boxes.append([min(xs), min(ys), max(xs), max(ys)])
+            sizes = sorted(max(b[2] - b[0], b[3] - b[1]) for b in boxes)
+            door_px = 0.07 * max(img.shape[:2]) if not sizes else max(sizes[len(sizes) // 2], 0.05 * max(img.shape[:2]))
+            aud = {"added": [], "cost_usd": 0.0, "used": True}
+            gf = pathlib.Path(__file__).resolve().parents[1] / "cache" / "geometry" / f"{facts.provenance.sha256}-pixels.json"
+            if gf.exists():                         # code-only: interior wall openings of the 3D wall model
+                geo = _json.loads(gf.read_text())
+                floor = np.zeros(img.shape[:2], np.uint8)
+                for e in facts.elements:
+                    if e.kind in ("floor_blob", "room") and len(e.polygon) >= 3:
+                        cv2.fillPoly(floor, [np.array([(p[0], p[1]) for p in e.polygon], np.int32)], 1)
+                have = [((b[0] + b[2]) / 2, (b[1] + b[3]) / 2) for b in boxes]
+                for bx in DA.openings(geo.get("walls", []), floor, img.shape, max(12.0, float(door_px))):
+                    c = ((bx[0] + bx[2]) / 2, (bx[1] + bx[3]) / 2)
+                    if all(np.hypot(c[0] - a, c[1] - b) > door_px for a, b in have):
+                        aud["added"].append(bx)
+                        have.append(c)
+            cf.parent.mkdir(parents=True, exist_ok=True)
+            cf.write_text(_json.dumps(aud))
+        added = [Element(id=f"door_op_{i}", kind="door", polygon=[(b[0], b[1]), (b[2], b[1]), (b[2], b[3]), (b[0], b[3])],
+                         conf=0.5, attrs={"source": "interior wall opening of door width (no door symbol read)"})
+                 for i, b in enumerate(aud.get("added", []))]
+        if not added:
+            return
+        old = det.voter.value
+        det.voter.value = int(old) + len(added)
+        det.voter.runs = [int(v) + len(added) for v in det.voter.runs] if det.voter.runs else [det.voter.value]
+        det.voter.element_ids = list(det.voter.element_ids) + [e.id for e in added]
+        det.evidence = list(det.evidence) + added
+        det.voter.note = ((det.voter.note or "") + f" +{len(added)} interior wall openings of door width (floor on both "
+                          "sides) where no door symbol was read").strip()
+        notes.append(f"door openings: {old} door symbols + {len(added)} interior wall openings of door width "
+                     "(hand-drawn / faint scan: the symbols are not readable; each opening is boxed for checking)")
 
     def _label_vote(self, results: list, ctx, facts: SheetFacts, notes: list[str]) -> None:
         """Vision LLM transcribes the room labels; code maps them through engine/glossary.yaml and counts."""
