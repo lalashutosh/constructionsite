@@ -327,6 +327,8 @@ class PipelineEngine:
                         seen.add(i)
                         po.evidence.append(by[i])
 
+        for e in po.evidence:                 # voters may leak numpy scalars into attrs (JSON can't encode them)
+            e.attrs = _native(e.attrs)
         unit = next((r.unit for r in results if r.unit), None)
         po.unit = unit or {"area": "m2", "length": "m", "volume": "m3", "count": "count"}.get(kind)
         po.value = value
@@ -500,6 +502,17 @@ class PipelineEngine:
             return (0 if kind == "count" else None), "no prior available"
         v = int(round(v)) if kind == "count" else float(v)
         return v, f"benchmark best guess: per-{'intent' if intent in p['intent'] else 'source/type'} dev-median prior"
+
+
+def _native(x):
+    """numpy scalars/arrays -> plain Python, recursively."""
+    if isinstance(x, dict):
+        return {k: _native(v) for k, v in x.items()}
+    if isinstance(x, (list, tuple)):
+        return [_native(v) for v in x]
+    if hasattr(x, "item") and type(x).__module__ == "numpy":
+        return x.tolist() if getattr(x, "ndim", 0) else x.item()
+    return x
 
 
 def _load_priors() -> dict:

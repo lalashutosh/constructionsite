@@ -72,7 +72,10 @@ def extract(path: str, *, allow_siblings: bool = True) -> SheetFacts:
     cache_file = CACHE_DIR / f"{sha}.json"
     if cache_file.exists():
         try:
-            return SheetFacts.model_validate_json(cache_file.read_text())
+            cached = SheetFacts.model_validate_json(cache_file.read_text())
+            # a route-B (no CNN) result cached before the weights existed must not outlive them
+            if not (cached.extras.get("route") == "B" and cc_model.available()):
+                return cached
         except Exception:
             pass  # corrupt cache entry: fall through and recompute
 

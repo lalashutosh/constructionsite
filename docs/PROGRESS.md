@@ -1,68 +1,60 @@
-# Progress report
+# Plumb: where we are
 
-Running log of what the lead session is doing, newest on top. Updated after every milestone.
-Branch: `p2-finish` (off `main` at `a1b7642`). Nothing pushed. Detailed checklist: `docs/STATE.md`.
+Plain-language status. Updated after every milestone. Branch `p2-finish` on GitHub (`main` untouched).
+Last update: **14:35**
 
-## 14:20 update
+## What it does
 
-- **Tesseract solved:** native arm64 tesseract 5.5.4 (eng+fin) via micromamba/conda-forge in `cache/tools/tess-env` (you approved). `make check`: RESULT OK. Homebrew build stopped.
-- **Pushed** branch `p2-finish` to GitHub (6 commits). `main` untouched. `web/` changes stay uncommitted until the UI subagent finishes and the build passes.
-- **Running now:** triage eval with OCR (false-refusal gate), full DEV pipeline run (all sources, with siblings), UI subagent (P3 core beats).
-- **Estimate:** G2 gate in ~1.5–2 h if cubicasa holds up (+ up to 2 fix rounds if NO-GO); through P4 (ready for the holdout run) ~3–4 h of work. Hard-set verification, the holdout run and shipping are human steps.
+You give it a floor plan and a question ("how many doors?", "net area of apartment B?"). It answers with:
+- **a number**, plus **pins on the drawing** showing exactly which elements produced it
+- **two or more independent "readers"** that each count on their own: **green** = they agree, **amber** = look here first
+- **cost**: 0 tokens, $0. No LLM involved in the number.
 
-## 14:08 update
+## Run it yourself
 
-- **Vector sources end to end:** pipeline DEV **97.9%** (n=2,646). Green covers 70.5% at **100%** accuracy, amber 91.3%, **0 invariant violations** (was 302). Without siblings: 79.3%.
-- Fixed: the takeoff `query_engine` voter counted 0 on files with no extracted elements, which kept every vector answer amber.
-- New API: `POST/DELETE /api/override` (user says "this is / isn't a door": voters corrected, tier recomputed) and `GET /api/image` (the real drawing for the Scan layer). 147 tests.
-- **P3 started in parallel:** a ui-builder subagent is building core demo beats 1, 2, 3, 4, 8, 9, 10, 12 in `web/` only.
-- **Tesseract:** still compiling under Rosetta (Intel Homebrew on an M1, no bottles), maybe hours. Faster option needs your OK (see chat).
+```bash
+.venv/bin/python -m uvicorn api.main:app --port 8000
+```
+```bash
+cd web && VITE_API=live npm run dev
+```
+Open http://localhost:5173/?hook=0 and click the sample thumbnails along the top.
 
-## Where we are (13:59)
+## What works (checked in the browser at 14:35)
 
-| Phase | State |
-|---|---|
-| Setup on this Mac | done except **tesseract** (still compiling under Intel Homebrew, 9/38 deps) |
-| P2 vector | **done**, handoff written |
-| P2 skeptic | measured without OCR; voters weak, triage blocked on tesseract |
-| P2 integrator | 3 real bugs found and fixed; 2 new API endpoints in progress |
-| Integration pass + G2 gate | waiting on tesseract (cubicasa = 3,546 of 6,287 DEV questions needs OCR) |
-| P3 demo, P4 pre-ship | not started |
+| Drawing type | Share of dataset | Status |
+|---|---|---|
+| Swiss apartment plans (PDF/DXF) | 30% | ✅ **Works.** 99.3% correct on DEV. Example: 78 doors, green, 3 readers agree |
+| IFC building models | 13% | ✅ **Works.** 96.6% correct on DEV (98.0% with the related-model option) |
+| Door schedules (PDF) | 1% | 🟡 Door schedules work; the room-area schedule isn't parsed yet |
+| CubiCasa scans (PNG, Finnish labels) | 53% | 🟡 **Working since 14:30.** Example: 5 doors (correct). Full accuracy run in progress |
+| Text questions (ifc_bench) | 3% | ⏸️ Out of scope for now (free text, not in the score) |
 
-**Blocker:** tesseract. Without it, raster extraction and the triage OCR veto can't run, so no cubicasa numbers yet.
+Combined for swiss + IFC + schedules: **97.9% correct**. Every "green" answer was right (1,874 of 1,874).
 
-## Measured numbers so far (DEV split, from commands run here)
+## What was broken and is now fixed
 
-- Tests: **144 passed**, 1 skipped (was 139 at start).
-- Pipeline on vector sources (swiss + ifc + opening_design): **97.8%** [97.2, 98.3], n=2,646, every intent at or above prior.
-- Vector devcheck with siblings: swiss **99.3%** (n=1,622), IFC **96.6%** (n=995; 98.0% with `--related`), opening_design 55.2% (n=29).
-- Without siblings: swiss 66.8% (the PDF alone can't give areas or windows), IFC 96.0%.
-- Router: leave-one-language-out **0.8085 → 0.8511**; paraphrases not in the dataset **6/16 → 23/24**.
-- Skeptic voters on DEV150 (no OCR): doors_arc 12%, windows_lines 3%, toilets 18%, sinks 2%, all far below raster.
-- Triage false refusals on cubicasa plans: 1.66% (gate needs < 1%). All 4 cases are OCR-veto misses, expected to clear once tesseract is in.
+1. **CubiCasa scans counted 0 doors and 0 windows.** The neural-net weights were never pushed to GitHub. Downloaded them from the authors' official link.
+2. **OCR (tesseract) missing.** Installed a native version in minutes; Homebrew was compiling for hours.
+3. **Exact drawings (DXF/IFC) were refused in the app.** Missing connector between the vector reader and the pipeline.
+4. **"How many doors are there?" was answered as windows.** The question router now knows object words in 8 languages.
+5. **A weak reader could override a strong one.** Weak readers now only affect green/amber, never the number.
+6. **App crashed on some answers** (numpy number in the JSON).
+7. **Old cached results hid the fix.** Stale fallback results are now ignored once the model is available.
 
-## Fixed so far
+## In progress right now
 
-1. **Vector answers were never green, and refused in the API.** The pipeline wanted `engine.vector.plugin.extract()`, which didn't exist, so DXF/IFC fell through to the raster extractor. Added it, with per-file licence and credit read from the dataset's `LICENSE.md`.
-2. **Router misrouted simple paraphrases.** "How many doors are there on this floor plan?" went to *windows*. Added a hand-written multilingual object-noun lexicon plus kind cues (area vs count). Dataset routing is unchanged.
-3. **A weak voter could override a strong one.** With two voters, the 12%-accurate doors_arc won the tie against the 57%-accurate detector. Skeptic voters are now "second opinions": they affect the tier, never the number.
-4. **Invariant contradicted the 2% rule.** Green areas agreeing within 0.03% were flagged as violations. Accepted the change request: non-count kinds agree within 2%.
+- Full accuracy run on all 6,287 DEV questions, with and without sibling files (~15 min). That gives the real headline number.
+- A UI helper (subagent) polishing the demo screens (intro animation, reader duel, scale question, refusal screen).
 
-## Decisions I made (you said I decide)
+## Known rough edges (finetuning list)
 
-- Work on branch `p2-finish`, commit per milestone, never push.
-- Left swiss unnamed-room net-area rule alone (a fix would gain 8 and break 18).
-- `--related` IFC resolver stays opt-in and reported separately, as the spec requires.
-- Hard set (`evalkit/hard_questions.jsonl`, 0/10 verified) stays a **human TODO**: it's the test set, so I don't check it myself.
-- Records: `docs/decisions/second-opinion-voters.md`, `docs/decisions/contract-invariants-area-tolerance.md`.
+- CubiCasa window counts run high (example: 8 vs 6).
+- Swiss plan: pins stack in one spot (DXF coordinates not mapped onto the rendered PDF yet).
+- "triage: triage:" printed twice on the answer card.
+- 12 swiss net-area questions are about 6% off (unnamed shaft rooms).
 
-## Next
+## Needs a human
 
-1. Finish `/api/override` (Skeptic Duel "Is this a door?") and `/api/image` (real scan layer), with tests.
-2. When tesseract lands: triage eval, skeptic devcheck with OCR, full DEV run with and without siblings, then the G2 gate.
-3. P3 core demo beats.
-
-## Things for you
-
-- Four stray venv folders in the repo root (`#if/`, `nenv/`, `not/`, `created/`) came from `python3 -m venv .venv #if nenv not created`; zsh doesn't treat `#` as a comment. They're not committed. Safe to delete.
-- `DATASET_ROOT` in `.env` now points at `~/Downloads/junction-dataset-preview` (only that line changed).
+- Check the 10 hand-written hard questions (`evalkit/hard_questions.jsonl`). It's the test set, so I don't grade it myself.
+- The final holdout run and the submission.
