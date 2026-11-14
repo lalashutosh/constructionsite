@@ -11,16 +11,16 @@ Deep link: `http://localhost:5173/?open=data/cubicasa5k/colorful-11400.png`.
 
 | # | Problem (user report) | Status | Where / next step |
 |---|---|---|---|
-| 1 | Duplicate door pins (two detections on one swing, "4th should not exist") | OPEN | `engine/count/rules.py` `_icon_count`: merge doors whose box centres are closer than ~0.45 x door length; measure on DEV doors before/after (cached facts), keep only if not worse |
-| 2 | CRACI egress-proof job red: example.com reachable with `network: {}` | OPEN | `.github/workflows/ci.yml`: switch to explicit `network: \| default: deny / presets: [pypi, npm, github, ubuntu, debian]`; if still reachable, say so in README (do not claim the lock) |
-| 3 | Stairs on scans + link between floors | DONE (uncommitted -> committed now) | `engine/raster/stairs.py` (tread-line detector, ~70% precision on 40 hand-checked), filtered by walls (`geometry3d._drop_stairs_in_walls`) and by the AI audit (`S1..` boxes, both reviewers must reject). Viewer draws a dashed link between stairs on stacked floors (`viewer3d.linkStairs`). Next: verify in browser on colorful-13685 |
+| 1 | Duplicate door pins (two detections on one swing, "4th should not exist") | DONE (c8a3aa6): collinear door fragments merged; 11553: 11 -> 9 = key; DEV exact 63 -> 64 of 147 | `engine/count/rules.py` `_icon_count`: merge doors whose box centres are closer than ~0.45 x door length; measure on DEV doors before/after (cached facts), keep only if not worse |
+| 2 | CRACI egress-proof job red: example.com reachable with `network: {}` | PUSHED a fix (ec73507), check the run | `.github/workflows/ci.yml`: switch to explicit `network: \| default: deny / presets: [pypi, npm, github, ubuntu, debian]`; if still reachable, say so in README (do not claim the lock) |
+| 3 | Stairs on scans + link between floors | DONE (uncommitted -> committed now) | `engine/raster/stairs.py` (tread-line detector, ~70% precision on 40 hand-checked), filtered by walls (`geometry3d._drop_stairs_in_walls`) and by the AI audit (`S1..` boxes, both reviewers must reject). Viewer draws a dashed link between stairs on stacked floors (`viewer3d.linkStairs`). Verified in browser on colorful-13685 (2 flights + ghost steps between floors). Wall filter bug (holes) fixed |
 | 4 | "size of both the bedrooms respectively" answered with the bedroom COUNT | DONE | `engine/router.py` COUNT_CUE: count answers only for counting wording; `each_area` aggregate lists each room's m² |
 | 5 | "more doors or more windows" answered as the windows count | DONE | router COMPLEX + answer_text names the winner |
 | 6 | 117.7 m² living room on the faint scan (wrong scale) | DONE | printed room areas in labels (MH 10.5) are a scale anchor (`scale/anchors._label_area_anchor`); a hand measurement >30% off printed sizes is refused with "Use 2.94 m" |
 | 7 | Three rooms all named K (overlapping outlines) | DONE | one label names one room (smallest outline) |
 | 8 | Fake rooms on legend/logo/text, missing balcony | DONE | `engine/room_audit.py` (2 reviewers, code verifies) |
 | 9 | Two plans side by side not split (colorful-11400) | DONE | reviewer proposes a cut, `scancheck.verify_cut` checks the gutter |
-| 10 | "Use better models, build is too cheap" | DONE | strong reviewer now THINKS (8-9k tokens, 1800 px images) in scan check + audit; fast reviewer stays as the independent 2nd opinion. Watch build time (~20-40 s first open) |
+| 10 | "Use better models, build is too cheap" | DONE | strong reviewer now THINKS (8-9k tokens, 1800 px images) in scan check + audit; fast reviewer stays as the independent 2nd opinion. Build reviewers run in parallel; only the audit thinks: 47 s / $0.063 first open on the two-floor sheet (was 141 s / $0.155) |
 | 11 | Proof not prominent | DONE | inline proof card under the selected finding (`web/src/proofview.tsx`) |
 | 12 | Windows 14 vs 16, sinks 3 vs 4 on CubiCasa | OPEN (model limit) | CNN icon classes; no quick fix. Do not let an LLM produce counts |
 | 13 | Measured accuracy after today's changes not re-run | OPEN | run the DEV eval (`evalkit`) before claiming numbers in README |
