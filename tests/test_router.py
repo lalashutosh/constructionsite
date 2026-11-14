@@ -1,3 +1,4 @@
+import pytest
 import json
 import pathlib
 
@@ -27,6 +28,8 @@ def test_unknown_without_llm():
     assert r.intent == "unknown" and r.layer == "none"
 
 
+@pytest.mark.skipif(not __import__("engine.router", fromlist=["LABELS"]).LABELS.exists(),
+                    reason="intent labels are generated from the dataset (evalkit.build_localized); absent on CI")
 def test_leave_one_language_out_report():
     res = lolo_accuracy()
     assert res["n_templates"] > 100 and res["overall"] > 0.6
