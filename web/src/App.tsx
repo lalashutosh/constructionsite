@@ -1,10 +1,23 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ask, fetchPlan, fetchSamples, setScale, ScaleError, geometry, imageUrl, upload, type Geometry, type Sample, type BuildPlan } from "./api";
+import { ask, buildProject, fetchPlan, fetchSamples, setScale, ScaleError, geometry, imageUrl, upload, type Geometry, type Sample, type BuildPlan, type BuildingResult } from "./api";
 import { chipsFor, findingSpecs } from "./logic";
 import type { ProofObject } from "./types";
 import { HowPage } from "./how";
-import { Ask, BuildPanel, Findings, Know, Rail, Drawer, Seg, ViewerPane, type BannerItem, type ScaleState, type ThemeName, type Floor, type FindingState, type Upload } from "./panels";
+import { ProjectDrawer, flattenProject, noFloorsNote, typeWord, type FileStatus, type ProjFile } from "./project";
+import { Ask, BuildPanel, Findings, Know, Rail, Drawer, Seg, ViewerPane, type BannerItem, type ProgressInfo, type ScaleState, type ThemeName, type Floor, type FindingState, type Upload } from "./panels";
 
+interface ProjectState {
+  names: string[];
+  result: BuildingResult | null;
+  stage: "upload" | "title" | "sort" | "build" | "done";
+  upI: number;
+  upN: number;
+  since: number;
+  error: string | null;
+  skipped: string;
+}
+const FOLDER_STAGES = ["Uploading", "Reading title blocks", "AI sorting the sheets", "Building floors"];
+const SINGLE_STAGES = ["Uploading", "Reading the drawing", "Checking with 2 AI reviewers", "Building in 3D", "Counting"];
 const EXTS = ["png", "jpg", "jpeg", "pdf", "dxf", "ifc", "svg"];
 const extOf = (n: string) => n.toLowerCase().split(".").pop() ?? "";
 
@@ -20,7 +33,7 @@ export default function App() {
   const [showPins, setShowPins] = useState(true);
   const [drawer, setDrawer] = useState(false);
   const [uploads, setUploads] = useState<Upload[]>([]);
-  const [busy, setBusy] = useState<string | null>(null);
+  const [busy] = useState<string | null>(null);
   const [mode, setMode] = useState<"findings" | "plan">("findings");
   const [vibe, setVibe] = useState("standard");
   const [plans, setPlans] = useState<Record<string, BuildPlan>>({});
@@ -40,8 +53,17 @@ export default function App() {
   const [banner, setBanner] = useState<BannerItem[] | null>(null);
   const [flash, setFlash] = useState<string[]>([]);
   const [why, setWhy] = useState(false);
+  const [proj, setProj] = useState<ProjectState | null>(null);
+  const [projDrawer, setProjDrawer] = useState(false);
+  const [flat, setFlat] = useState<{ path: string; typeWord: string; title: string; why: string | null; sheet: string | null; isSchedule: boolean } | null>(null);
+  const [upl, setUpl] = useState<{ since: number } | null>(null);
+  const [, setTick] = useState(0);
+  const retryRef = useRef<(() => void) | null>(null);
+  const doneAt = useRef<Record<string, number>>({});
+  const needTick = useRef(false);
   const [scaleIssue, setScaleIssue] = useState<{ message: string; label: string | null; lengthM: number | null } | null>(null);
   const [page, setPage] = useState<"work" | "how">("work");
+  const [measureTyped, setMeasureTyped] = useState<string | null>(null);
   const [measuredPx, setMeasuredPx] = useState<number | null>(null);
   const [planExtra, setPlanExtra] = useState<Record<string, number>>({});
   const fileRef = useRef<HTMLInputElement>(null);
@@ -72,8 +94,9 @@ export default function App() {
     const next = [...floors].sort((a, b) => (a.key === activeKey ? -1 : b.key === activeKey ? 1 : 0)).find((f) => !f.geo && !f.geoErr);
     if (!next) return;
     geoBusy.current = true;
+    setFloors((fs) => fs.map((f) => (f.key === next.key ? { ...f, geoStart: Date.now() } : f)));
     geometry(next.path)
-      .then((g: Geometry) => setFloors((fs) => fs.map((f) => (f.key === next.key ? { ...f, geo: g } : f))))
+      .then((g: Geometry) => setFloors((fs) => fs.map((f) => (f.key === next.key ? { ...f, geo: g, geoDone: Date.now() } : f))))
       .catch((e: Error) => setFloors((fs) => fs.map((f) => (f.key === next.key ? { ...f, geoErr: e.message } : f))))
       .finally(() => {
         geoBusy.current = false;
@@ -106,13 +129,14 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active?.path, specs.length, epoch]);
 
+  const askPath = flat?.path ?? active?.path ?? null;
   const submit = async (q: string) => {
-    if (!active || !q.trim()) return;
+    if (!askPath || !q.trim()) return;
     setAsking(true);
     setAskErr(null);
     try {
-      const p = await ask(active.path, q.trim());
-      setSelected({ path: active.path, proof: p });
+      const p = await ask(askPath, q.trim());
+      setSelected({ path: askPath, proof: p });
     } catch (e) {
       setAskErr((e as Error).message);
     } finally {
@@ -120,21 +144,71 @@ export default function App() {
     }
   };
 
+  const flatName = (f: File) => (f as File & { webkitRelativePath?: string }).webkitRelativePath || f.name;
+  const levelName = (f: { level?: number | null; level_label?: string | null; sheet?: string | null; display_label?: string | null }) =>
+    f.display_label || f.level_label || (f.level != null ? `Level ${f.level}` : (f.sheet ?? "Plan"));
+
+  const runBuild = async (done: { path: string; name: string }[], skipped: string) => {
+    setProj((p) => (p ? { ...p, stage: "title", since: Date.now(), error: null } : p));
+    const timer = window.setTimeout(() => setProj((p) => (p && p.stage === "title" ? { ...p, stage: "sort", since: Date.now() } : p)), 6000);
+    try {
+      const result = await buildProject(done);
+      window.clearTimeout(timer);
+      const floorsSorted = [...result.floors].sort((x, y) => x.stack_index - y.stack_index);
+      open(floorsSorted.map((f) => ({ path: f.path, name: levelName(f) })));
+      setFlat(null);
+      setProj((p) => (p ? { ...p, result, stage: floorsSorted.length ? "build" : "done", since: Date.now(), skipped } : p));
+      setProjDrawer(true);
+    } catch (e) {
+      window.clearTimeout(timer);
+      retryRef.current = () => void runBuild(done, skipped);
+      setProj((p) => (p ? { ...p, error: (e as Error).message } : p));
+    }
+  };
+
   const doUpload = async (files: File[], folder: boolean) => {
-    const ok = files.filter((f) => EXTS.includes(extOf(f.name))).slice(0, 12);
+    const visible = files.filter((f) => !flatName(f).split("/").some((s) => s.startsWith(".")));
+    if (folder && visible.length > 1) {
+      const ok = visible.slice(0, 80).sort((x, y) => flatName(x).localeCompare(flatName(y), undefined, { numeric: true }));
+      setPage("work");
+      setDrawer(false);
+      setProjDrawer(true);
+      setProj({ names: ok.map(flatName), result: null, stage: "upload", upI: 0, upN: ok.length, since: Date.now(), error: null, skipped: "" });
+      const done: { path: string; name: string }[] = [];
+      const skipExt: Record<string, number> = {};
+      for (let k = 0; k < ok.length; k++) {
+        try {
+          done.push({ path: await upload(ok[k]), name: flatName(ok[k]) });
+        } catch {
+          const e = `.${extOf(ok[k].name)}`;
+          skipExt[e] = (skipExt[e] ?? 0) + 1;
+        }
+        setProj((p) => (p ? { ...p, upI: k + 1 } : p));
+      }
+      if (!done.length) {
+        retryRef.current = () => void doUpload(files, folder);
+        setProj((p) => (p ? { ...p, error: "None of the files could be uploaded" } : p));
+        return;
+      }
+      const nSkip = Object.values(skipExt).reduce((s, n) => s + n, 0);
+      await runBuild(done, nSkip ? `${nSkip} file${nSkip > 1 ? "s" : ""} not uploaded (type not supported): ${Object.entries(skipExt).map(([e, n]) => `${n} ${e}`).join(", ")}` : "");
+      return;
+    }
+    const ok = visible.filter((f) => EXTS.includes(extOf(f.name))).slice(0, 12);
     if (!ok.length) return;
-    ok.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
-    setBusy(`Uploading ${ok.length} file${ok.length > 1 ? "s" : ""}…`);
+    ok.sort((x, y) => x.name.localeCompare(y.name, undefined, { numeric: true }));
+    setProj(null);
+    setUpl({ since: Date.now() });
     try {
       const done: Upload[] = [];
       for (const f of ok) done.push({ path: await upload(f), name: f.name });
       setUploads((u) => [...done, ...u]);
       open(done.map((d) => ({ ...d, credit: undefined })));
-      void folder;
+      setFlat(null);
     } catch (e) {
       setAskErr((e as Error).message);
     } finally {
-      setBusy(null);
+      setUpl(null);
     }
   };
 
@@ -189,6 +263,7 @@ export default function App() {
       const after = await fetchPlan(path, vibe, planExtra);
       setPlans({ [planKey]: after });
       setPpmByPath((x) => ({ ...x, [path]: measuredPx / m }));
+      setMeasureTyped(`${typed ? `${typed.v} ${typed.unit}` : `${m} m`}`);
       const want: [string, string][] = [["floor_area_m2", "floor area"], ["wall_length_m", "wall length"], ["paint_l", "paint"], ["dry_area_m2", "flooring"], ["wet_tiles", "wet-floor tiles"]];
       const items: BannerItem[] = [];
       for (const [k, label] of want) {
@@ -232,21 +307,96 @@ export default function App() {
   const scaleTag = active && ppmByPath[active.path] ? "chosen" : (scaleAsm?.tag ?? planBasis?.tag ?? "defaulted");
   const scaleSrc = scaleAsm?.source ?? planBasis?.source ?? null;
   const scaleKind: "defaulted" | "specified" | "chosen" = scaleTag === "specified" ? "specified" : scaleTag === "chosen" ? "chosen" : "defaulted";
+  const settled = (path: string) => specs.filter((s) => findings[path]?.[s.key]?.proof || findings[path]?.[s.key]?.err).length;
+  const nowMs = Date.now();
+  let progress: ProgressInfo | null = null;
+  if (proj && proj.error) {
+    progress = { stages: FOLDER_STAGES, idx: proj.stage === "upload" ? 0 : 2, frac: null, since: proj.since, label: "", error: proj.error, onRetry: () => retryRef.current?.() };
+  } else if (proj && proj.stage !== "done") {
+    if (proj.stage === "upload") progress = { stages: FOLDER_STAGES, idx: 0, frac: proj.upI / Math.max(1, proj.upN), since: proj.since, label: `Uploading ${proj.upI}/${proj.upN} files` };
+    else if (proj.stage === "title") progress = { stages: FOLDER_STAGES, idx: 1, frac: null, since: proj.since, label: "Reading title blocks" };
+    else if (proj.stage === "sort") progress = { stages: FOLDER_STAGES, idx: 2, frac: null, since: proj.since, label: "AI sorting the sheets" };
+    else {
+      const K = floors.length;
+      const k = floors.filter((f) => f.geo || f.geoErr).length;
+      progress = { stages: FOLDER_STAGES, idx: 3, frac: K ? k / K : 1, since: proj.since, label: `Building floor ${Math.min(k + 1, K)}/${K}` };
+    }
+  } else if (upl) {
+    progress = { stages: SINGLE_STAGES, idx: 0, frac: null, since: upl.since, label: "Uploading" };
+  } else if (active && active.geoErr) {
+    progress = { stages: SINGLE_STAGES, idx: 1, frac: null, since: active.geoStart ?? nowMs, label: "", error: active.geoErr, onRetry: () => setFloors((fs) => fs.map((f) => (f.key === active.key ? { ...f, geoErr: null } : f))) };
+  } else if (active && !active.geo) {
+    const since = active.geoStart ?? nowMs;
+    const el = (nowMs - since) / 1000;
+    progress = { stages: SINGLE_STAGES, idx: el > 6 ? 2 : 1, frac: null, since, label: el > 6 ? "Checking with 2 AI reviewers" : "Reading the drawing" };
+  } else if (active && active.geo && nowMs - (active.geoDone ?? 0) < 2700) {
+    const ck = active.geo.check;
+    const plans = ck ? ck.views.filter((v) => v.type === "floor_plan").length : 0;
+    progress = { stages: SINGLE_STAGES, idx: 3, frac: Math.min(1, (nowMs - (active.geoDone ?? nowMs)) / 2700), since: active.geoDone ?? nowMs, label: `Building in 3D${plans ? ` · found ${plans} floor plan${plans === 1 ? "" : "s"}` : ""}` };
+  } else if (active && specs.length && settled(active.path) < specs.length) {
+    progress = { stages: SINGLE_STAGES, idx: 4, frac: settled(active.path) / specs.length, since: active.geoDone ?? nowMs, label: `Counting · ${settled(active.path)}/${specs.length} questions` };
+  } else if (active && active.geo) {
+    const t = (doneAt.current[active.key] ??= nowMs);
+    if (nowMs - t < 1500) progress = { stages: SINGLE_STAGES, idx: 5, frac: 1, since: t, label: "Done" };
+  }
+  needTick.current = progress !== null;
+  useEffect(() => {
+    const t = window.setInterval(() => needTick.current && setTick((x) => x + 1), 500);
+    return () => window.clearInterval(t);
+  }, []);
+  useEffect(() => {
+    if (proj && proj.stage === "build" && floors.length && floors.every((f) => f.geo || f.geoErr)) setProj((p) => (p ? { ...p, stage: "done" } : p));
+  }, [floors, proj]);
+
+  const projFiles: ProjFile[] = proj?.result
+    ? flattenProject(proj.result)
+    : (proj?.names ?? []).map((n) => ({ path: "", name: n, docType: "pending", sheet: null, title: null, why: null, isFloor: false, levelLabel: null }));
+  const statusOf = (f: ProjFile): FileStatus => {
+    if (!proj?.result) return proj && proj.names.indexOf(f.name) < proj.upI ? "reading" : "queued";
+    if (!f.isFloor) return "not a plan";
+    if (f.altOf !== undefined) return "queued";
+    const fl = floors.find((x) => x.path === f.path);
+    if (fl?.geo || fl?.geoErr) return "done";
+    const firstPending = floors.find((x) => !x.geo && !x.geoErr);
+    return firstPending?.path === f.path ? "reading" : "queued";
+  };
+  const openProjFile = (f: ProjFile) => {
+    if (!f.path) return;
+    if (f.isFloor && f.altOf === undefined) {
+      setFlat(null);
+      setActiveKey(f.path);
+    } else if (f.isFloor && f.altOf !== undefined) {
+      // another version of a storey: swap it into the stack in place of the shown plan, never stack both
+      const of = f.altOf;
+      setFlat(null);
+      setFloors((fs) => {
+        if (fs.some((x) => x.path === f.path)) return fs;
+        const base = fs.find((x) => x.path === of) ?? fs[fs.length - 1];
+        return fs.map((x) => (x === base ? { key: f.path, path: f.path, name: `${f.label || base.name} (version)`, credit: null, geo: null, geoErr: null } : x));
+      });
+      setActiveKey(f.path);
+    } else {
+      setFlat({ path: f.path, typeWord: typeWord(f.docType), title: f.label || [f.sheet, f.title].filter(Boolean).join(" · ") || f.name.split("/").pop() || f.name, why: f.why, sheet: f.sheet, isSchedule: /sched/i.test(f.docType) });
+    }
+  };
+  const projectNote = proj?.result && proj.result.floors.length === 0 && proj.stage === "done" ? noFloorsNote(projFiles) : null;
   const seg = <Seg mode={mode} onMode={setMode} />;
 
   const selFloor = selected ? floors.find((f) => f.key === selected.path) : undefined;
 
   return (
-    <div className="app">
+    <div className={`app ${projDrawer && proj ? "pd" : ""}`}>
       <Rail
         onImage={() => fileRef.current?.click()}
         onFolder={() => dirRef.current?.click()}
-        onDrawings={() => setDrawer((d) => !d)}
+        onDrawings={() => { setProjDrawer(false); setDrawer((d) => !d); }}
         drawerOpen={drawer}
         theme={theme}
         onTheme={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
         howOn={page === "how"}
         onHow={() => setPage((p) => (p === "how" ? "work" : "how"))}
+        hasProject={!!proj}
+        onProject={() => { setDrawer(false); setProjDrawer((d) => !d); }}
       />
       <input
         ref={fileRef}
@@ -276,6 +426,19 @@ export default function App() {
           uploads={uploads}
           onPick={(p, n, c) => open([{ path: p, name: n, credit: c }])}
           onClose={() => setDrawer(false)}
+        />
+      )}
+      {projDrawer && proj && (
+        <ProjectDrawer
+          result={proj.result}
+          pending={proj.names}
+          statusOf={statusOf}
+          files={projFiles}
+          activePath={activeKey}
+          flatPath={flat?.path ?? null}
+          onOpen={openProjFile}
+          onClose={() => setProjDrawer(false)}
+          skipped={proj.skipped}
         />
       )}
       {page === "how" ? (
@@ -313,15 +476,21 @@ export default function App() {
               setScaleState("enter");
             }}
             onApplyLength={(m, typed) => void applyLength(m, typed)}
+            progress={progress}
+            measureTyped={measureTyped}
+            flat={flat}
+            onCloseFlat={() => setFlat(null)}
+            projectNote={projectNote}
+            onRetryGeo={() => setFloors((fs) => fs.map((f) => (f.key === activeKey ? { ...f, geoErr: null } : f)))}
             onWhyRead={() => {
               setSelected(null);
               setWhy(true);
             }}
           />
           <Ask
-            active={active}
-            chips={active ? chipsFor(active.path) : []}
-            selected={selected && active && selected.path === active.path ? selected.proof : null}
+            active={askPath}
+            chips={askPath ? (flat ? chipsFor(flat.path).slice(0, 2) : chipsFor(askPath)) : []}
+            selected={selected && askPath && selected.path === askPath ? selected.proof : null}
             asking={asking}
             err={askErr}
             onAsk={(q) => void submit(q)}
@@ -358,6 +527,8 @@ export default function App() {
           ) : (
             <Findings
               seg={seg}
+              flat={flat}
+              onAskSchedule={() => document.querySelector<HTMLInputElement>(".askform input")?.focus()}
               active={active}
               specs={specs}
               states={active ? (findings[active.path] ?? {}) : {}}

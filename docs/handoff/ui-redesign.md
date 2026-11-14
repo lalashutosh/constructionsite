@@ -42,3 +42,10 @@ Drawings icon -> pick sample -> findings fill in -> click a finding -> pins appe
 - How it works: rail book icon, 4 steps with SVG figures, numbers strip read only from `/claims.json`.
 - `web/public/claims.json` changed schema during this round (flat single-run keys, no with/without siblings, no per-source accuracy). The page handles both the old nested and the flat schema; per-source and with/without numbers appear only if the file carries them again.
 - `scripts/shot.mjs` drives the measure flow with raw pointerdown/pointerup events (no pointermove). `scripts/shot-how.mjs` re-shoots only the how page.
+
+## Round 5: projects, objects, progress, hover
+- Folder upload = project (POST /api/building): explorer drawer (rail icon), type words, sheet + title, AI `why` on hover/selection, filter chips, per-file status, skipped types named (".dwg"). Stack shows only `floors` (display_label tags); alternatives are tagged "version" and swap in when opened; non-plan files open flat with type + why, schedules get "Ask about this schedule". All-identical refusals collapse to one line.
+- Progress bar under the title with named stages and elapsed seconds (single file and folder), flat drawing + scan line while geometry loads, inline errors with Retry.
+- 3D objects (`src/objects3d.ts`): doors with leaf and swing arc, glazed windows, toilet, sink, bath, shower, sauna bench, appliance, closet, stairs, merged per material; room tint by type, room name labels.
+- Hover on a size label shows how it was measured (room: outline, min-area box, two dimension lines, tooltip; wall: outline, centre line, thickness; set-size line: pixels and typed length).
+- Not done: alternatives are tagged in the tree but not nested under their storey; hover info for the Set-real-size line is untested by screenshot.

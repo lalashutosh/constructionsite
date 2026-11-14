@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { ChevronDown, ChevronRight, CircleCheck, CircleMinus, FolderUp, BookOpen, LayoutGrid, Moon, Play, Ruler, Square, Sun, TriangleAlert, Upload, X } from "lucide-react";
+import { ChevronDown, ChevronRight, CircleCheck, CircleMinus, FolderUp, BookOpen, FolderTree, LayoutGrid, Moon, Play, Ruler, Square, Sun, TriangleAlert, Upload, X } from "lucide-react";
 import { imageUrl, type BuildPlan, type Geometry, type Sample, type ScanCheck } from "./api";
 import { fmtCost, fmtNum, reliabilityWord, sentenceOf, tierSentence, verdict, voterWord, type FindingSpec } from "./logic";
 import type { ProofObject } from "./types";
@@ -14,6 +14,8 @@ export interface Floor {
   credit: string | null;
   geo: Geometry | null;
   geoErr: string | null;
+  geoStart?: number;
+  geoDone?: number;
 }
 export interface FindingState {
   loading?: boolean;
@@ -31,7 +33,7 @@ export const TierIcon = ({ tier }: { tier: "green" | "amber" | "grey" }) =>
   tier === "green" ? <CircleCheck {...ic} /> : tier === "amber" ? <TriangleAlert {...ic} /> : <CircleMinus {...ic} />;
 
 /* ---------- left rail ---------- */
-export function Rail(p: { onImage: () => void; onFolder: () => void; onDrawings: () => void; drawerOpen: boolean; theme: ThemeName; onTheme: () => void; howOn: boolean; onHow: () => void }) {
+export function Rail(p: { onImage: () => void; onFolder: () => void; onDrawings: () => void; drawerOpen: boolean; theme: ThemeName; onTheme: () => void; howOn: boolean; onHow: () => void; hasProject: boolean; onProject: () => void }) {
   return (
     <nav className="rail" aria-label="Tools">
       <div className="mark" title="Plumb">P</div>
@@ -39,6 +41,7 @@ export function Rail(p: { onImage: () => void; onFolder: () => void; onDrawings:
       <button className="rbtn" data-tip="Upload folder: files become stacked floors" aria-label="Upload folder" onClick={p.onFolder}><FolderUp {...ic} /></button>
       <button className={`rbtn ${p.drawerOpen ? "on" : ""}`} data-tip="Drawings: samples and your uploads" aria-label="Drawings" onClick={p.onDrawings}><LayoutGrid {...ic} /></button>
       <button className={`rbtn ${p.howOn ? "on" : ""}`} data-tip="How it works" aria-label="How it works" onClick={p.onHow}><BookOpen {...ic} /></button>
+      {p.hasProject && <button className="rbtn" data-tip="Project: files in the folder" aria-label="Project" onClick={p.onProject}><FolderTree {...ic} /></button>}
       <div className="grow" />
       <button className="rbtn" data-tip={p.theme === "dark" ? "Switch to light theme" : "Switch to dark theme"} aria-label="Toggle theme" onClick={p.onTheme}>
         {p.theme === "dark" ? <Sun {...ic} /> : <Moon {...ic} />}
@@ -103,6 +106,45 @@ function CountUp({ to, delay }: { to: number; delay: number }) {
   return <span className="mono">{v.toFixed(to >= 100 ? 0 : 1)}</span>;
 }
 
+/* ---------- progress ---------- */
+export interface ProgressInfo {
+  /** stage names in order; idx === stages.length means done */
+  stages: string[];
+  idx: number;
+  /** determinate fill inside the current stage, or null for a slow eased fill that never completes */
+  frac: number | null;
+  since: number;
+  label: string;
+  /** after this many seconds show altLabel instead of label (same request, later part of the work) */
+  altAfter?: number;
+  altLabel?: string;
+  error?: string | null;
+  onRetry?: () => void;
+}
+function ProgressBar({ pi }: { pi: ProgressInfo }) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const t = window.setInterval(() => setNow(Date.now()), 250);
+    return () => window.clearInterval(t);
+  }, []);
+  const el = Math.max(0, (now - pi.since) / 1000);
+  const done = pi.idx >= pi.stages.length;
+  const within = pi.frac ?? Math.min(0.9, 1 - Math.exp(-el / 12));
+  const total = done ? 1 : (pi.idx + within) / pi.stages.length;
+  const label = pi.altAfter !== undefined && el > pi.altAfter && pi.altLabel ? pi.altLabel : pi.label;
+  return (
+    <div className="prog" role="status" aria-live="polite">
+      <div className="plabel">
+        <span>{pi.error ? pi.error : done ? "Done" : label}</span>
+        {!pi.error && !done && <span className="mono muted">{pi.frac === null && el > 4 ? `still working · ${Math.round(el)} s` : `${Math.round(el)} s`}</span>}
+        {pi.error && pi.onRetry && <button className="linkbtn" onClick={pi.onRetry}>Retry</button>}
+      </div>
+      <div className={`pbar ${pi.error ? "err" : ""}`}><i style={{ width: `${Math.round(total * 100)}%` }} /></div>
+      {!pi.error && !done && <small className="muted">Step {Math.min(pi.idx + 1, pi.stages.length)} of {pi.stages.length}</small>}
+    </div>
+  );
+}
+
 /* ---------- 3D viewer ---------- */
 export type ScaleState = "off" | "pick" | "enter" | "payoff";
 export function ViewerPane(p: {
@@ -133,7 +175,14 @@ export function ViewerPane(p: {
   onMeasured: (px: [number, number][]) => void;
   onApplyLength: (m: number, typed?: { v: number; unit: string }) => void;
   onWhyRead: () => void;
+  progress: ProgressInfo | null;
+  measureTyped: string | null;
+  flat: { path: string; typeWord: string; title: string; why: string | null } | null;
+  onCloseFlat: () => void;
+  projectNote: string | null;
+  onRetryGeo: () => void;
 }) {
+  const [tip, setTip] = useState<{ text: string; x: number; y: number } | null>(null);
   const [len, setLen] = useState("");
   const [unit, setUnit] = useState<"m" | "cm" | "mm">("m");
   const [narr, setNarr] = useState<"reading" | "found" | "built">("reading");
@@ -145,7 +194,7 @@ export function ViewerPane(p: {
   measCb.current = p.onMeasured;
 
   useEffect(() => {
-    const v = new PlumbViewer(host.current!, { onHoverPin: (i) => hoverCb.current(i) }, THEMES[p.theme]);
+    const v = new PlumbViewer(host.current!, { onHoverPin: (i) => hoverCb.current(i), onDimInfo: (t) => setTip(t) }, THEMES[p.theme]);
     viewer.current = v;
     return () => {
       v.dispose();
@@ -186,14 +235,18 @@ export function ViewerPane(p: {
   const measuring = p.scale === "pick" || p.scale === "enter";
   const mFloor = a?.key ?? null;
   useEffect(() => {
-    viewer.current?.setMeasure(measuring ? mFloor : null, (px) => measCb.current(px));
-  }, [measuring, mFloor]);
+    viewer.current?.setMeasure(measuring ? mFloor : null, (px) => measCb.current(px), p.scale === "payoff");
+  }, [measuring, mFloor]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (p.scale === "off") viewer.current?.setMeasure(null, null);
+  }, [p.scale]);
+  useEffect(() => viewer.current?.setMeasureInfo(p.measureTyped), [p.measureTyped]);
   useEffect(() => {
     if (p.scale === "pick") setLen("");
   }, [p.scale]);
   const topDown = p.scale !== "off";
   useEffect(() => viewer.current?.setTopDown(topDown), [topDown]);
-  useEffect(() => viewer.current?.setDimensions(p.ppm ? mFloor : null, p.ppm), [p.ppm, mFloor, sig, p.theme]);
+  useEffect(() => viewer.current?.setDimensions(mFloor, p.ppm, p.scaleKind === "specified" ? "printed on the drawing" : p.scaleKind === "chosen" ? "your measurement" : "typical 0.9 m door"), [p.ppm, mFloor, sig, p.theme, p.scaleKind]);
 
   const loading = a && !a.geo && !a.geoErr;
   const credit = a?.geo?.credit || p.selected?.proof.provenance.credit || a?.credit || (a ? "Uploaded by you; no licence text supplied." : "");
@@ -214,7 +267,14 @@ export function ViewerPane(p: {
         <span className="vname">{a ? a.name : "No drawing open"}</span>
         {p.floors.length > 1 && <span className="pill">{p.floors.length} floors</span>}
       </div>
-      {a && (
+      {a && !a.geo && !a.geoErr && !p.flat && (
+        <div className="prescan" aria-hidden="true">
+          <img src={imageUrl(a.path)} alt="" />
+          <i />
+        </div>
+      )}
+      {p.progress && <ProgressBar pi={p.progress} />}
+      {a && !p.progress && (
         <div className="narr" role="status">
           <span key={narrText}>{narrText}</span>
           {narr === "built" && ck && <button className="linkbtn" onClick={p.onWhyRead}>Why?</button>}
@@ -273,8 +333,23 @@ export function ViewerPane(p: {
           </span>
         </label>
       )}
+      {tip && <div className="dimtip" style={{ left: Math.min(tip.x + 14, 9999), top: tip.y + 14 }}>{tip.text}</div>}
       {p.stageLabel && <div className="stagecap">{p.stageLabel}</div>}
-      {!a && (
+      {p.flat && (
+        <div className="flatview">
+          <img src={imageUrl(p.flat.path)} alt={p.flat.title} onError={(e) => ((e.target as HTMLImageElement).style.display = "none")} />
+          <div className="flatcap">
+            <span className="lbl">{p.flat.typeWord}</span>
+            <b>{p.flat.title}</b>
+            {p.flat.why && <small className="muted">{p.flat.why}</small>}
+            <button className="linkbtn" onClick={p.onCloseFlat}>Back to 3D</button>
+          </div>
+        </div>
+      )}
+      {!a && p.projectNote && !p.flat && (
+        <div className="empty"><h1>No floor plans</h1><p>{p.projectNote}</p></div>
+      )}
+      {!a && !p.projectNote && (
         <div className="empty">
           <h1>Open a drawing</h1>
           <p>Upload a plan or pick a sample. Plumb builds it in 3D and answers with receipts.</p>
@@ -282,10 +357,7 @@ export function ViewerPane(p: {
         </div>
       )}
       {(loading || p.busy) && !p.busy && null}
-      {p.busy && (
-        <div className="loading" role="status"><span className="spin" /><div><b>{p.busy}</b></div></div>
-      )}
-      {a?.geoErr && <div className="loading err" role="alert"><div><b>Could not build the 3D view</b><small>{a.geoErr}</small></div></div>}
+      {a?.geoErr && <div className="loading err" role="alert"><div><b>Could not build the 3D view</b><small>{a.geoErr}</small><button className="linkbtn" onClick={p.onRetryGeo}>Retry</button></div></div>}
       {a?.geo && a.geo.walls.length === 0 && <div className="note-tl">No walls could be read from this file.</div>}
       {notMapped && <div className="note-tr">exact file read: pins not mapped to this view</div>}
       {a?.geo?.cost && <div className="readcost mono">Read once in {(a.geo.cost.ms / 1000).toFixed(1)} s{a.geo.cost.llm_calls > 0 ? ` · ${a.geo.cost.llm_calls} LLM review${a.geo.cost.llm_calls > 1 ? "s" : ""}` : ""} · ${a.geo.cost.usd.toFixed(4)}</div>}
@@ -295,7 +367,7 @@ export function ViewerPane(p: {
 }
 
 /* ---------- ask bar ---------- */
-export function Ask(p: { active: Floor | null; chips: string[]; selected: ProofObject | null; asking: boolean; err: string | null; onAsk: (q: string) => void; onWhy: () => void }) {
+export function Ask(p: { active: unknown; chips: string[]; selected: ProofObject | null; asking: boolean; err: string | null; onAsk: (q: string) => void; onWhy: () => void }) {
   const [q, setQ] = useState("");
   const send = (t: string) => {
     setQ(t);
@@ -344,7 +416,26 @@ export function Findings(p: {
   onSelect: (p: ProofObject) => void;
   onWhy: (p: ProofObject) => void;
   seg: ReactNode;
+  flat: { path: string; typeWord: string; title: string; why: string | null; sheet: string | null; isSchedule: boolean } | null;
+  onAskSchedule: () => void;
 }) {
+  const settledP = p.specs.map((s) => p.states[s.key]).filter((x) => x && (x.proof || x.err));
+  const allGrey = p.specs.length >= 3 && settledP.length === p.specs.length && settledP.every((x) => x.proof && x.proof.tier === "grey");
+  const sameRefusal = allGrey && new Set(settledP.map((x) => x.proof!.refusal ?? "")).size === 1;
+  if (p.flat) {
+    return (
+      <div className="findings panel">
+        {p.seg}
+        <div className="phead"><h2 className="ttl">{p.flat.title}</h2></div>
+        <div className="pad flatinfo">
+          <span className="lbl">{p.flat.typeWord}{p.flat.sheet ? ` · ${p.flat.sheet}` : ""}</span>
+          {p.flat.why && <p>{p.flat.why}</p>}
+          <p className="muted">Opened flat: this kind of sheet has no 3D model and no standard questions.</p>
+          {p.flat.isSchedule && <button className="primary" onClick={p.onAskSchedule}>Ask about this schedule</button>}
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="findings panel">
       {p.seg}
@@ -358,7 +449,8 @@ export function Findings(p: {
       )}
       <ul className="flist">
         {!p.active && <li className="muted pad">Findings appear here once a drawing is open.</li>}
-        {p.specs.map((s) => {
+        {sameRefusal && <li className="pad muted">Plumb's counters don't cover this kind of sheet yet. Ask a question below, or open a schedule/plan from the project.</li>}
+        {!sameRefusal && p.specs.map((s) => {
           const st = p.states[s.key];
           if (!st) return null;
           if (st.loading) return <li key={s.key} className="frow wait"><span className="ficon"><span className="spin sm" /></span><span className="ftext"><span className="fsent muted">Counting {s.noun}…</span></span></li>;

@@ -138,3 +138,16 @@ export class ScaleError extends Error {
     this.issue = issue;
   }
 }
+
+/* ---------- project (folder) ---------- */
+export interface BuildingFloor { path: string; name: string; doc_type: string; sheet?: string | null; title?: string | null; level?: number | null; level_label?: string | null; level_source?: string | null; why?: string | null; stack_index: number; display_label?: string | null }
+export interface BuildingOther { path: string; name: string; doc_type: string; discipline?: string | null; sheet?: string | null; title?: string | null; why?: string | null; scan_check?: unknown; display_label?: string | null }
+export interface BuildingAlt extends BuildingOther { alternative_of?: string | null; level_label?: string | null; stack_index?: number }
+export interface BuildingResult { building: string; method: string; floors: BuildingFloor[]; alternatives: BuildingAlt[]; other: BuildingOther[]; groups: Record<string, string[]>; notes: string[] }
+
+export async function buildProject(files: { path: string; name: string }[]): Promise<BuildingResult> {
+  const res = await fetch(`${BASE}/building`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ files }) });
+  if (!res.ok) throw new Error(`could not sort the folder (${res.status})`);
+  const j = (await res.json()) as BuildingResult;
+  return { ...j, floors: j.floors ?? [], alternatives: j.alternatives ?? [], other: j.other ?? [], groups: j.groups ?? {}, notes: j.notes ?? [] };
+}

@@ -3,6 +3,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import type { Geometry, Ring } from "./api";
+import { buildObjects, obb } from "./objects3d";
 
 const viewName = (t: string) => { const w = t.replace(/_/g, " "); return w.charAt(0).toUpperCase() + w.slice(1); };
 
@@ -18,6 +19,7 @@ export interface PinInput {
 }
 interface Callbacks {
   onHoverPin: (idx: number | null) => void;
+  onDimInfo?: (tip: { text: string; x: number; y: number } | null) => void;
 }
 
 export type Phase = "site" | "foundation" | "floor" | "walls" | "openings" | "services" | "finishes" | "roof";
@@ -62,19 +64,24 @@ export interface Theme {
   tintB: number;
   labelBg: string;
   labelText: string;
+  glass: number;
+  body: number;
+  bodyOp: number;
+  wet: number;
+  warm: number;
 }
 export const THEMES: Record<"dark" | "light", Theme> = {
   dark: {
     name: "dark", bg: 0x0a1828, accent: 0x178582, edge: 0x1fa8a3, pin: 0xbfa181, pinCss: "#bfa181", pinHot: "#e8d3b4", pinInk: "#0a1828",
     slab: 0x1b3550, tile: 0x2a4766, tileLine: 0x3a5a7c, door: 0xe6e2d8, win: 0x8a97a6, fix: 0x3a5a7c, planeBase: 0x12263d,
     imgColor: 0xd7dde6, imgOpacity: 0.35, grid: 0x2a4766, gridOp: 0.5, tintA: 0x178582, tintB: 0xbfa181,
-    labelBg: "rgba(15,32,52,0.95)", labelText: "#e6e2d8",
+    labelBg: "rgba(15,32,52,0.95)", labelText: "#e6e2d8", glass: 0x8fb8d8, body: 0xe6e2d8, bodyOp: 0.5, wet: 0x1f6e8c, warm: 0xbfa181,
   },
   light: {
     name: "light", bg: 0xffffff, accent: 0x970747, edge: 0x970747, pin: 0x970747, pinCss: "#970747", pinHot: "#d0306f", pinInk: "#ffffff",
     slab: 0xd9d3d6, tile: 0xe9e4e6, tileLine: 0xb8aeb3, door: 0x1a1012, win: 0x6b5a60, fix: 0xb8aeb3, planeBase: 0xf1edef,
     imgColor: 0xffffff, imgOpacity: 0.35, grid: 0xb8aeb3, gridOp: 0.45, tintA: 0x970747, tintB: 0x6b5a60,
-    labelBg: "rgba(255,255,255,0.95)", labelText: "#1a1012",
+    labelBg: "rgba(255,255,255,0.95)", labelText: "#1a1012", glass: 0x5a8fb8, body: 0x6b5a60, bodyOp: 0.5, wet: 0x5b86a8, warm: 0xb08968,
   },
 };
 
@@ -110,6 +117,44 @@ const area = (r: Ring) => {
   return a / 2;
 };
 
+interface DimHover {
+  kind: "room" | "wall";
+  poly: Ring;
+  floorKey: string;
+  ppm: number;
+  src: string;
+  area?: number;
+}
+
+/** Minimum-area bounding rectangle of a polygon (brute force over edge directions). L >= B. */
+function minRect(poly: Ring) {
+  let best = { area: Infinity, ang: 0, u0: 0, u1: 0, v0: 0, v1: 0 };
+  for (let i = 0; i < poly.length; i++) {
+    const [x1, y1] = poly[i];
+    const [x2, y2] = poly[(i + 1) % poly.length];
+    const ang = Math.atan2(y2 - y1, x2 - x1);
+    const c = Math.cos(ang), s = Math.sin(ang);
+    let u0 = Infinity, u1 = -Infinity, v0 = Infinity, v1 = -Infinity;
+    for (const [x, y] of poly) {
+      const u = x * c + y * s;
+      const v = -x * s + y * c;
+      u0 = Math.min(u0, u); u1 = Math.max(u1, u); v0 = Math.min(v0, v); v1 = Math.max(v1, v);
+    }
+    const area = (u1 - u0) * (v1 - v0);
+    if (area < best.area) best = { area, ang, u0, u1, v0, v1 };
+  }
+  const { ang, u0, u1, v0, v1 } = best;
+  const c = Math.cos(ang), s = Math.sin(ang);
+  const pt = (u: number, v: number): [number, number] => [u * c - v * s, u * s + v * c];
+  const corners = [pt(u0, v0), pt(u1, v0), pt(u1, v1), pt(u0, v1)];
+  return { corners, L: Math.max(u1 - u0, v1 - v0), B: Math.min(u1 - u0, v1 - v0), lenFirst: u1 - u0 >= v1 - v0 };
+}
+const shoelace = (r: Ring) => {
+  let a = 0;
+  for (let i = 0; i < r.length; i++) { const [x1, y1] = r[i]; const [x2, y2] = r[(i + 1) % r.length]; a += x1 * y2 - x2 * y1; }
+  return Math.abs(a / 2);
+};
+
 export class PlumbViewer {
   private el: HTMLElement;
   private cb: Callbacks;
@@ -139,7 +184,11 @@ export class PlumbViewer {
   private scans: { mesh: THREE.Mesh; start: number; h: number; fl: { group: THREE.Group } }[] = [];
   private introUntil = 0;
   private dimGroup = new THREE.Group();
-  private dims: { sprite: THREE.Sprite; born: number }[] = [];
+  private dims: { sprite: THREE.Sprite; born: number; hover?: DimHover; wpx: number; hpx: number }[] = [];
+  private hlGroup = new THREE.Group();
+  private hoverDim = -1;
+  private measureHover: { a: THREE.Vector3; b: THREE.Vector3; px: number } | null = null;
+  private measureTyped: string | null = null;
   private stage: Phase[] | null = null;
   private drawing = true;
   private pinGroup = new THREE.Group();
@@ -185,6 +234,7 @@ export class PlumbViewer {
     });
     this.scene.add(this.measureGroup);
     this.scene.add(this.dimGroup);
+    this.scene.add(this.hlGroup);
     this.camera.position.set(95, 100, 125);
     const dom = this.renderer.domElement;
     dom.addEventListener("pointermove", (e) => {
@@ -264,6 +314,7 @@ export class PlumbViewer {
   }
 
   private pick() {
+    this.pickDim();
     if (!this.pins.length) return;
     let hit: number | null = null;
     let best = 11;
@@ -284,6 +335,123 @@ export class PlumbViewer {
       this.cb.onHoverPin(hit);
       this.applyHot();
     }
+  }
+
+  private toScreen(v: THREE.Vector3) {
+    const p = v.clone().project(this.camera);
+    return { x: (p.x * 0.5 + 0.5) * this.el.clientWidth, y: (-p.y * 0.5 + 0.5) * this.el.clientHeight };
+  }
+
+  private pickDim() {
+    let hit = -1;
+    let hitMeasure = false;
+    const m = this.mousePx;
+    if (m.x > -50 && !this.tween) {
+      this.dims.forEach((d, i) => {
+        if (!d.hover || hit >= 0) return;
+        const sc = this.toScreen(d.sprite.position);
+        if (Math.abs(sc.x - m.x) <= d.wpx / 2 + 3 && Math.abs(sc.y - m.y) <= d.hpx / 2 + 3) hit = i;
+      });
+      if (hit < 0 && this.measureHover) {
+        const a = this.toScreen(this.measureHover.a), b = this.toScreen(this.measureHover.b);
+        const dx = b.x - a.x, dy = b.y - a.y;
+        const t = Math.max(0, Math.min(1, ((m.x - a.x) * dx + (m.y - a.y) * dy) / (dx * dx + dy * dy || 1)));
+        if (Math.hypot(a.x + t * dx - m.x, a.y + t * dy - m.y) < 8) hitMeasure = true;
+      }
+    }
+    const id = hitMeasure ? -2 : hit;
+    if (id === this.hoverDim) return;
+    this.hoverDim = id;
+    this.clearHover();
+    if (id === -1) { this.cb.onDimInfo?.(null); return; }
+    if (id === -2 && this.measureHover) {
+      this.cb.onDimInfo?.({ text: `${Math.round(this.measureHover.px)} px on the drawing${this.measureTyped ? ` = ${this.measureTyped} (what you typed)` : ""}`, x: m.x, y: m.y });
+      return;
+    }
+    const d = this.dims[id];
+    if (d?.hover) this.showHover(d.hover, m);
+  }
+
+  private clearHover() {
+    this.clear(this.hlGroup);
+  }
+
+  /** Show how a size label was measured: outline, bounding box with two dimension lines, or the centre line. */
+  private showHover(hv: DimHover, m: { x: number; y: number }) {
+    const fl = this.floorGroups.get(hv.floorKey);
+    if (!fl) return;
+    const { group, w, h, s, H } = fl;
+    const y = group.position.y + 0.6;
+    const W3 = (p: [number, number]) => new THREE.Vector3((p[0] - w / 2) * s, y, (p[1] - h / 2) * s);
+    const line = (pts: THREE.Vector3[], op = 1, loop = false) => {
+      const g = new THREE.BufferGeometry().setFromPoints(pts);
+      const mat = new THREE.LineBasicMaterial({ color: this.T.pin, transparent: true, opacity: op, depthTest: false });
+      const l = loop ? new THREE.LineLoop(g, mat) : new THREE.Line(g, mat);
+      l.renderOrder = 14;
+      this.hlGroup.add(l);
+    };
+    const tag = (text: string, at: THREE.Vector3) => {
+      const { t, wpx, hpx } = this.tagTex(text);
+      const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: t, transparent: true, depthTest: false, fog: false, sizeAttenuation: false }));
+      sp.scale.set(this.spritePx(wpx), this.spritePx(hpx), 1);
+      sp.position.copy(at);
+      sp.renderOrder = 15;
+      this.hlGroup.add(sp);
+    };
+    const mm = (px: number) => (px / hv.ppm).toFixed(1);
+    let text = "";
+    if (hv.kind === "room") {
+      line(hv.poly.map(W3), 1, true);
+      const r = minRect(hv.poly);
+      const c = r.corners;
+      line(c.map(W3), 0.6, true);
+      // two dimension lines, offset outward from the box, one per side length
+      const off = Math.max(w, h) * 0.025;
+      const cx = (c[0][0] + c[1][0] + c[2][0] + c[3][0]) / 4, cy = (c[0][1] + c[1][1] + c[2][1] + c[3][1]) / 4;
+      const dim = (p: [number, number], q: [number, number], label: string) => {
+        const mx = (p[0] + q[0]) / 2, my = (p[1] + q[1]) / 2;
+        let nx = my - cy, ny = -(mx - cx);
+        const nl = Math.hypot(nx, ny) || 1;
+        nx /= nl; ny /= nl;
+        // outward normal of this edge: perpendicular to the edge, away from the centre
+        const ex = q[0] - p[0], ey = q[1] - p[1];
+        const el = Math.hypot(ex, ey) || 1;
+        let px = -ey / el, py = ex / el;
+        if (px * (mx - cx) + py * (my - cy) < 0) { px = -px; py = -py; }
+        const P: [number, number] = [p[0] + px * off, p[1] + py * off];
+        const Q: [number, number] = [q[0] + px * off, q[1] + py * off];
+        line([W3(p), W3(P), W3(Q), W3(q)], 1);
+        tag(label, W3([(P[0] + Q[0]) / 2 + px * off * 0.6, (P[1] + Q[1]) / 2 + py * off * 0.6]));
+        void nx; void ny;
+      };
+      const len01 = Math.hypot(c[1][0] - c[0][0], c[1][1] - c[0][1]);
+      const len12 = Math.hypot(c[2][0] - c[1][0], c[2][1] - c[1][1]);
+      dim(c[0], c[1], `${mm(len01)} m`);
+      dim(c[1], c[2], `${mm(len12)} m`);
+      const L = r.L / hv.ppm, B = r.B / hv.ppm;
+      const area = hv.area ?? shoelace(hv.poly) / (hv.ppm * hv.ppm);
+      const corners = hv.poly.length;
+      const isRect = Math.abs(area - L * B) / Math.max(area, 0.01) < 0.03;
+      text = `Length ${L.toFixed(1)} m × breadth ${B.toFixed(1)} m (outer box) · area ${area.toFixed(1)} m² from the room outline ` + (isRect ? "(= L × B)" : `(not L × B: the outline has ${corners} corners)`);
+    } else {
+      const ob = obb(hv.poly as [number, number][]);
+      line(hv.poly.map(W3), 1, true);
+      const c = Math.cos(ob.th), sn = Math.sin(ob.th);
+      const a: [number, number] = [ob.cx - (c * ob.L) / 2, ob.cy - (sn * ob.L) / 2];
+      const b2: [number, number] = [ob.cx + (c * ob.L) / 2, ob.cy + (sn * ob.L) / 2];
+      line([W3(a), W3(b2)], 1);
+      tag(`${mm(ob.L)} m`, W3([ob.cx, ob.cy]).setY(y + H * s * 0.3));
+      let per = 0;
+      for (let i = 0; i < hv.poly.length; i++) { const [x1, y1] = hv.poly[i]; const [x2, y2] = hv.poly[(i + 1) % hv.poly.length]; per += Math.hypot(x2 - x1, y2 - y1); }
+      const thick = per > 0 ? Math.min(ob.W, (2 * shoelace(hv.poly)) / per) : ob.W;
+      text = `Centre-line length ${mm(ob.L)} m · thickness ≈ ${mm(thick)} m`;
+    }
+    this.cb.onDimInfo?.({ text: `${text} · scale: ${hv.src}`, x: m.x, y: m.y });
+  }
+
+  /** What to say about the Set-real-size line when hovered: the metres that were typed. */
+  setMeasureInfo(typed: string | null) {
+    this.measureTyped = typed;
   }
 
   private dotTex(): THREE.CanvasTexture {
@@ -498,52 +666,68 @@ export class PlumbViewer {
     return { t, wpx, hpx: 16 };
   }
 
-  /** Real-size labels once a scale is known: main wall lengths and room areas. ppm null removes them. */
-  setDimensions(floorKey: string | null, ppm: number | null) {
+  /** Room names on every floor; once a scale is known also wall lengths and room areas on that floor. */
+  setDimensions(floorKey: string | null, ppm: number | null, src = "typical door size") {
     this.clear(this.dimGroup);
     this.dims = [];
-    const fl = floorKey ? this.floorGroups.get(floorKey) : undefined;
-    const geo = floorKey ? this.geos.get(floorKey) : undefined;
-    if (!fl || !geo || !ppm) return;
-    const { group, w, h, H, s } = fl;
-    const items: { x: number; y: number; text: string }[] = [];
-    const walls = geo.walls
-      .map((wl) => {
-        let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-        for (const [x, y] of wl.outer) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
-        return { len: Math.max(x1 - x0, y1 - y0), cx: (x0 + x1) / 2, cy: (y0 + y1) / 2 };
-      })
-      .filter((x) => x.len / ppm >= 1.5)
-      .sort((a, b) => b.len - a.len)
-      .slice(0, 8);
-    for (const wl of walls) items.push({ x: wl.cx, y: wl.cy, text: `${(wl.len / ppm).toFixed(1)} m` });
-    const rooms = geo.rooms
-      .filter((r) => r.polygon.length >= 3)
-      .map((r) => {
-        let a2 = 0, cx = 0, cy = 0;
-        for (let i = 0; i < r.polygon.length; i++) {
-          const [x1, y1] = r.polygon[i];
-          const [x2, y2] = r.polygon[(i + 1) % r.polygon.length];
-          a2 += x1 * y2 - x2 * y1;
-          cx += x1;
-          cy += y1;
-        }
-        return { a: Math.abs(a2 / 2) / (ppm * ppm), cx: cx / r.polygon.length, cy: cy / r.polygon.length };
-      })
-      .filter((x) => x.a >= 2)
-      .sort((a, b) => b.a - a.a)
-      .slice(0, 6);
-    for (const r of rooms) items.push({ x: r.cx, y: r.cy, text: `${r.a.toFixed(1)} m²` });
+    this.clearHover();
     const t0 = performance.now();
-    items.forEach((it, i) => {
-      const { t, wpx, hpx } = this.tagTex(it.text);
-      const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: t, transparent: true, opacity: 0, depthTest: false, fog: false, sizeAttenuation: false }));
-      sp.scale.set(this.spritePx(wpx), this.spritePx(hpx), 1);
-      sp.position.set((it.x - w / 2) * s, group.position.y + H * s * 0.6, (it.y - h / 2) * s);
-      sp.renderOrder = 13;
-      this.dimGroup.add(sp);
-      this.dims.push({ sprite: sp, born: t0 + i * 90 });
-    });
+    let n = 0;
+    for (const [key, fl] of this.floorGroups) {
+      const geo = this.geos.get(key);
+      if (!geo) continue;
+      const { group, w, h, H, s } = fl;
+      const scaled = !!ppm && key === floorKey;
+      const items: { x: number; y: number; text: string; hover?: DimHover }[] = [];
+      if (scaled && ppm) {
+        const walls = geo.walls
+          .filter((wl) => wl.outer.length >= 3)
+          .map((wl) => {
+            const ob = obb(wl.outer as [number, number][]);
+            return { len: ob.L, cx: ob.cx, cy: ob.cy, poly: wl.outer as Ring };
+          })
+          .filter((x) => x.len / ppm >= 1.5)
+          .sort((a, b) => b.len - a.len)
+          .slice(0, 8);
+        for (const wl of walls) items.push({ x: wl.cx, y: wl.cy, text: `${(wl.len / ppm).toFixed(1)} m`, hover: { kind: "wall", poly: wl.poly, floorKey: key, ppm, src } });
+      }
+      const long = Math.max(w, h);
+      const rooms = geo.rooms
+        .filter((r) => r.polygon.length >= 3)
+        .map((r) => {
+          let a2 = 0, cx = 0, cy = 0, x0 = Infinity, x1 = -Infinity;
+          for (let i = 0; i < r.polygon.length; i++) {
+            const [xa, ya] = r.polygon[i];
+            const [xb, yb] = r.polygon[(i + 1) % r.polygon.length];
+            a2 += xa * yb - xb * ya;
+            cx += xa;
+            cy += ya;
+            x0 = Math.min(x0, xa);
+            x1 = Math.max(x1, xa);
+          }
+          const nm = r.label ?? (r.subtype && r.subtype !== "room" ? r.subtype : null);
+          return { px: Math.abs(a2 / 2), cx: cx / r.polygon.length, cy: cy / r.polygon.length, bw: x1 - x0, nm, poly: r.polygon as Ring };
+        })
+        .filter((r) => r.bw >= long * 0.07 && (scaled || r.nm))
+        .sort((a, b) => b.px - a.px)
+        .slice(0, 10);
+      for (const r of rooms) {
+        const area = scaled && ppm ? r.px / (ppm * ppm) : null;
+        if (area !== null && area < 2 && !r.nm) continue;
+        const text = [r.nm, area !== null ? `${area.toFixed(1)} m²` : null].filter(Boolean).join(" · ");
+        if (text) items.push({ x: r.cx, y: r.cy, text, hover: scaled && ppm ? { kind: "room", poly: r.poly, floorKey: key, ppm, src, area: area ?? undefined } : undefined });
+      }
+      for (const it of items) {
+        const { t, wpx, hpx } = this.tagTex(it.text);
+        const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: t, transparent: true, opacity: 0, depthTest: false, fog: false, sizeAttenuation: false }));
+        sp.scale.set(this.spritePx(wpx), this.spritePx(hpx), 1);
+        sp.position.set((it.x - w / 2) * s, group.position.y + H * s * 0.6, (it.y - h / 2) * s);
+        sp.renderOrder = 13;
+        this.dimGroup.add(sp);
+        this.dims.push({ sprite: sp, born: t0 + (scaled ? n * 90 : 2600 + n * 40), hover: it.hover, wpx, hpx });
+        n++;
+      }
+    }
   }
 
   private stepDims() {
@@ -554,11 +738,14 @@ export class PlumbViewer {
 
   // ---- measure tool
   /** Turn on two-click measuring on one floor; cb gets the two image-pixel points. */
-  setMeasure(floorKey: string | null, cb: ((px: [number, number][]) => void) | null) {
+  setMeasure(floorKey: string | null, cb: ((px: [number, number][]) => void) | null, keep = false) {
     this.measureKey = floorKey;
     this.measureCb = cb;
-    this.measurePts = [];
-    this.clear(this.measureGroup);
+    if (!keep) {
+      this.measurePts = [];
+      this.clear(this.measureGroup);
+      this.measureHover = null;
+    }
     this.renderer.domElement.style.cursor = floorKey ? "crosshair" : "grab";
     // hold the model still while measuring (two exact clicks on a rotating model is impossible)
     window.clearTimeout(this.resumeTimer);
@@ -575,6 +762,7 @@ export class PlumbViewer {
     const l = fl.group.worldToLocal(hit.point.clone());
     if (this.measurePts.length >= 2) {
       this.measurePts = [];
+      this.measureHover = null;
       this.clear(this.measureGroup);
     }
     this.measurePts.push([l.x + fl.w / 2, l.z + fl.h / 2]);
@@ -587,6 +775,7 @@ export class PlumbViewer {
       const a = this.measureGroup.children[0].position;
       const b = this.measureGroup.children[1].position;
       this.measureGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([a, b]), new THREE.LineBasicMaterial({ color: this.T.pin, depthTest: false })));
+      this.measureHover = { a: a.clone(), b: b.clone(), px: Math.hypot(this.measurePts[1][0] - this.measurePts[0][0], this.measurePts[1][1] - this.measurePts[0][1]) };
       this.measureCb?.([...this.measurePts]);
     }
   }
@@ -800,7 +989,9 @@ export class PlumbViewer {
         const t = g.clone();
         g.translate(0, 0.25, 0);
         t.translate(0, 0.5, 0);
-        const c = new THREE.Color(i % 2 ? T.tintA : T.tintB);
+        const rt = `${r.subtype ?? ""} ${r.label ?? ""}`.toLowerCase();
+        const c = new THREE.Color(/bath|toilet|wc|sauna|shower|laundry|wet|kph|\bph\b|\bwc\b/.test(rt) ? T.wet : /living|kitchen|dining|lounge|oh\b|\bkk\b/.test(rt) ? T.warm : T.tileLine);
+        void i;
         const n = t.attributes.position.count;
         const col = new Float32Array(n * 3);
         for (let k = 0; k < n; k++) col.set([c.r, c.g, c.b], k * 3);
@@ -821,20 +1012,9 @@ export class PlumbViewer {
     if (tintM) tint.add(new THREE.Mesh(tintM, new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.3, depthWrite: false, side: THREE.DoubleSide })));
     const tintPart = mk("finishes", tint);
 
-    const markers = (name: string, els: { polygon: [number, number][] }[], color: number, depth: number, yy: number, op: number) => {
-      const ps: THREE.BufferGeometry[] = [];
-      for (const e of els) {
-        if (e.polygon.length < 3 || Math.abs(area(e.polygon as Ring)) < 0.2) continue;
-        try { ps.push(nonIdx(extrude(toShape(e.polygon as Ring), depth, yy))); } catch { /* skip */ }
-      }
-      const m = ps.length ? mergeGeometries(ps, false) : null;
-      const g = new THREE.Group();
-      if (m) g.add(new THREE.Mesh(m, new THREE.MeshBasicMaterial({ color, transparent: true, opacity: op, depthWrite: false })));
-      return mk(name, g);
-    };
-    const fix = markers("fixtures", geo.fixtures, T.fix, H * 0.22, 0, 0.35);
-    const win = markers("openings", geo.windows, T.win, H * 0.6, H * 0.25, 0.75);
-    const door = markers("openings", geo.doors, T.door, H * 0.75, 0, 0.7);
+    const objs = buildObjects(geo.doors, geo.windows, geo.fixtures, w, h, H, T);
+    mk("fixtures", objs.fixtures);
+    mk("openings", objs.openings);
 
     // services: glowing lines running along the walls
     const sv: THREE.Vector3[] = [];
@@ -879,7 +1059,7 @@ export class PlumbViewer {
     roof.add(new THREE.LineSegments(new THREE.EdgesGeometry(roofG), new THREE.LineBasicMaterial({ color: T.edge, transparent: true, opacity: 1 })));
     mk("roof", roof);
 
-    void fix; void win; void door; void tintPart;
+    void tintPart;
     return { group, s, w, h, H, plane, rim, content, parts };
   }
 
