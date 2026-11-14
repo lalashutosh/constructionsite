@@ -1,7 +1,17 @@
 # Plumb: where we are
 
 Plain-language status. Updated after every milestone. Branch `p2-finish` on GitHub (`main` untouched).
-Last update: **14:35**
+Last update: **15:20**
+
+## 15:20 update: redesign + build plan + harder questions
+
+**Done in the engine (tested, committed):**
+- **Building type → checklist → build order** (`GET /api/plan`). Example, swiss plan: *Apartment building, high confidence (7 apartment outlines, 7 kitchens)* → 78 door sets, 63 windows, 6 toilets, 7 baths, 7 kitchens from the drawing; paint, boards, lights, sockets, tiles, concrete and roof area from the chosen style (budget / standard / premium / nordic). Steps: site → foundation → slab → walls → roof → windows/doors → wiring/pipes → boards → finishes → fittings → handover. Data centres get a different list (raster floor, UPS, cooling) that asks for the IT load.
+- **Harder questions** ("which room is largest", averages, "more windows than doors", "rooms with a window", "toilets and sinks in total"): an LLM drafts a query, code computes the answer. About $0.0003 and 2 s each. Swiss examples: largest room Pièce 1.01, kitchens 7, bathroom area 24.33 m², windows − doors = −15.
+- Hard questions no longer get hijacked by simple matchers (e.g. "average room area" used to return the total).
+- **3D model data** (`GET /api/geometry`): walls with room openings from the CNN on normal plans, stroke tracing on big archival scans (no fake walls in site plans).
+
+**In progress:** the UI agent is rebuilding the screen: left rail (upload image/folder), 3D model centre (fixing the mirror bug, adding an overlay on/off toggle and floor slabs), questions bottom-left, Findings | Build plan top-right with a step-by-step build animation. The full accuracy run is also still going.
 
 ## What it does
 
