@@ -42,13 +42,17 @@ render those pages with PyMuPDF at dpi=150. Truth: `cache/stress/truth.json`. Ha
   93.2 m vs 98.6 m (footprint now unions all sizeable components), depth 38.6 vs 87.2 m WRONG (north wing split into its
   own view; overall dims unreadable at 768 px); S-101 PNG 4.68x3.66 m vs PDF 5.79x4.84 m DISAGREE; rooms on S-101 are
   slivers (total 1.0 m²); doors/windows on construction sheets honestly refused.
-- IN PROGRESS (agents launched ~00:30, may be cut off — check `git status` / `docs/handoff/big-sheets.md`):
-  (a) overall size from printed overall dimensions + joined views, PNG/PDF agreement, room labels + sliver filter,
-  round 2 on 3 more complex USACE sheets (`docs/stress-report-r2.md`); (b) the user's two NEW TASKS below
-  (engine/overrides_el.py, /api/elements/override, web inspector) — `docs/handoff/elements.md`.
+- NEXT (handed to teammate ~00:45; agents were stopped before changing any file):
+  (a) overall size from printed overall dimensions (`engine.scale.sheet_scale.analyze(...)['dims']`: largest per
+  direction, angle 0 = width, 90 = depth) + join plan views the profiler split (stoa3 north wing); make S-101 PNG and
+  PDF agree (PDF text layer is truth); room names from `sheet_text.words` + drop sliver rooms; round 2 on 3 more complex
+  sheets from WBDG STD 123-335-03 (`scripts/stress_big.py`), then once with LLM on. Gate: CubiCasa 400q DEV stays 77.0%,
+  Swiss 300q counts >= 90% (`--no-siblings --limit`, fresh PLUMB_CACHE_DIR).
+  (b) the user's two NEW TASKS below. Suggested files: engine/overrides_el.py, `/api/elements/override`, a web inspector;
+  reuse the checks pattern (engine/scale/checks.py, web/src/checks.tsx).
 - `wip/archival-walls` (`7f3ee15`): still unverified wall filter for hand-drawn scans (see the 20:30 section).
 
-**NEW TASKS from the user (agent started ~00:30, see above):**
+**NEW TASKS from the user (not started):**
 1. **Every element must be selectable** (in 3D and on the 2D overlay: rooms, walls, doors, windows, fixtures, stairs,
    labels). Selecting one shows what it is, its size (via the solved scale), its source/tag (drawn/specified/chosen),
    confidence, and which answers it feeds. If the element has no instructions/explanation shown yet, show them
