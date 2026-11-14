@@ -320,14 +320,20 @@ def _name_types(png: bytes, n: int, llm, cands: Optional[list[list[str]]] = None
     if cf.exists():
         try:
             d = json.loads(cf.read_text())
+            NAMING_COST["first_usd"] = d.get("usd")            # what naming cost when it was paid (None = not recorded)
+            NAMING_COST["cached"] = True
             return {int(k): v for k, v in d["names"].items()}, 0.0, {int(k): v for k, v in d["agree"].items()}
         except Exception:  # noqa: BLE001
             pass
     names, usd, agree = _name_types_live(png, n, llm, cands)
+    NAMING_COST["first_usd"], NAMING_COST["cached"] = usd, False
     if names:
         CACHE.mkdir(parents=True, exist_ok=True)
-        cf.write_text(json.dumps({"names": names, "agree": agree}))
+        cf.write_text(json.dumps({"names": names, "agree": agree, "usd": round(usd, 5)}))
     return names, usd, agree
+
+
+NAMING_COST: dict = {"first_usd": None, "cached": False}
 
 
 def _name_types_live(png: bytes, n: int, llm, cands: Optional[list[list[str]]] = None) -> tuple[dict[int, str], float, dict[int, str]]:
@@ -567,7 +573,10 @@ def _checklist(abs_path: str, sha: str, facts, llm) -> dict:
                              "area_m2": r.attrs.get("area_m2"), "polygon": [list(p) for p in r.polygon],
                              "counts": per_room.get(r.id, {})})
     out["rooms"].sort(key=lambda r: r["name"])
+    first = NAMING_COST.get("first_usd")
     out["cost"] = {"usd": round(usd, 5), "ms": int((time.perf_counter() - t0) * 1000),
+                   "names_cached": bool(NAMING_COST.get("cached")),
+                   "first_usd": round(float(first) + (usd if NAMING_COST.get("cached") else 0.0), 5) if first is not None else None,
                    "llm_calls": len(llm) if isinstance(llm, (list, tuple)) else (1 if llm is not None else 0)}
     return out
 

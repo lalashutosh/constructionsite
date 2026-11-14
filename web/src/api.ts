@@ -99,6 +99,9 @@ export interface BuildPlan {
   checklist: PlanItem[];
   steps: PlanStep[];
   open_inputs?: unknown[];
+  /** estimated services drawn over the building (construction sheets without an MEP sheet) */
+  services_map?: { w: number; h: number; outline: [number, number][]; piping: [number, number][][]; electrical: [number, number][][];
+    quantities: Record<string, { value: number; unit: string; tag: string; basis: string }> } | null;
   /** true when the engine endpoint was unreachable and the local sample shape is shown */
   mock?: boolean;
 }

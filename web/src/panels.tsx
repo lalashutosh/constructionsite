@@ -1,4 +1,4 @@
-import { ViewCube, LayerToggles, LAYER_COLOURS } from "./deepui";
+import { ViewCube, LayerToggles, LAYER_COLOURS, ServiceMap } from "./deepui";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ChevronDown, ChevronRight, CircleCheck, CircleMinus, FolderUp, BookOpen, FolderTree, LayoutGrid, Moon, Play, Ruler, Square, Sun, TriangleAlert, Upload, X } from "lucide-react";
 import { imageUrl, type BuildPlan, type Geometry, type Sample, type ScanCheck } from "./api";
@@ -835,6 +835,8 @@ export function BuildPanel(p: {
               {ordered.map(([g, items]) => (
                 <div key={g} className="cgroup">
                   <h3>{g}</h3>
+                  {pl.services_map && g === "Plumbing" && pl.services_map.piping.length > 0 && <ServiceMap map={pl.services_map} kind="piping" />}
+                  {pl.services_map && g === "Electrical" && pl.services_map.electrical.length > 0 && <ServiceMap map={pl.services_map} kind="electrical" />}
                   {items.map((c) => {
                     const needsIt = c.qty === null && (c.per === "it_load_kw" || /it.?load/i.test(c.basis));
                     const src = c.per ? pl.basis[c.per]?.source : null;

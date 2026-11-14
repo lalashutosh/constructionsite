@@ -457,7 +457,8 @@ export default function App() {
   const planBasis = plan?.basis?.scale_px_per_m;
   const scaleTag = active && ppmByPath[active.path] ? "chosen" : (scaleAsm?.tag ?? planBasis?.tag ?? "defaulted");
   const scaleSrc = scaleAsm?.source ?? planBasis?.source ?? null;
-  const scaleKind: "defaulted" | "specified" | "chosen" = scaleTag === "specified" ? "specified" : scaleTag === "chosen" ? "chosen" : "defaulted";
+  const scaleRead = !!scaleLine && scaleLine.conf >= 0.5 && activeChecks?.some((c) => c.kind === "scale" && !/no scale/i.test(c.question ?? ""));
+  const scaleKind: "defaulted" | "specified" | "chosen" = scaleTag === "chosen" ? "chosen" : (scaleTag === "specified" || scaleRead) ? "specified" : "defaulted";
   const settled = (path: string) => specs.filter((s) => findings[path]?.[s.key]?.proof || findings[path]?.[s.key]?.err).length;
   const nowMs = Date.now();
   let progress: ProgressInfo | null = null;

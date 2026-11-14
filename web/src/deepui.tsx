@@ -57,7 +57,7 @@ export function LayerToggles({ viewer, layers, extra }: { viewer: () => PlumbVie
   const [on, setOn] = useState<Record<string, boolean>>({ envelope: true, walls: true, furniture: true, piping: true, electrical: true });
   const [msg, setMsg] = useState<string | null>(null);
   useEffect(() => { if (!msg) return; const t = setTimeout(() => setMsg(null), 3500); return () => clearTimeout(t); }, [msg]);
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(true);              // open and inviting by default
   if (!layers) return null;
   return (
     <div className={`layers ${open ? "open" : ""}`}>
@@ -93,8 +93,15 @@ export type Checklist = {
   zones?: { name: string; polygon: [number, number][]; counts: Record<string, number> }[];
   summary?: string[];
   printed?: { title: string; text: string; kind: string }[];
-  cost?: { usd: number; ms: number };
+  cost?: { usd: number; ms: number; names_cached?: boolean; first_usd?: number | null };
 };
+function costLine(c: NonNullable<Checklist["cost"]>) {
+  const secs = `${(c.ms / 1000).toFixed(0)} s`;
+  if (!c.names_cached) return <>{secs} · <b>${c.usd.toFixed(3)}</b> to read the whole sheet</>;
+  if (c.first_usd != null) return <>{secs} · <b>${c.first_usd.toFixed(3)}</b> paid once, re-reads free</>;
+  return <>{secs} · symbol names reused from an earlier read (its cost was not recorded)</>;
+}
+
 export function ChecklistPanel(p: { path: string | null; deepHint?: { on: boolean; eta_s: number; reason: string } | null;
   services?: Record<string, { value: number; unit: string; tag: string; basis: string }> | null;
   onShow: (polys: [number, number][][]) => void; onRoom: (id: string, poly: [number, number][]) => void;
@@ -132,7 +139,7 @@ export function ChecklistPanel(p: { path: string | null; deepHint?: { on: boolea
   const byId = new Map((data?.elements ?? []).map((e) => [e.id, e]));
   return (
     <section className="cklist">
-      <header><h3>What's on this sheet</h3>{data?.cost && <span className="muted sm">{(data.cost.ms / 1000).toFixed(0)} s · ${data.cost.usd.toFixed(3)}</span>}</header>
+      <header><h3>What's on this sheet</h3>{data?.cost && <span className="ckcost">{costLine(data.cost)}</span>}</header>
       {(p.deepHint?.on || data?.deep.on) && !data && (
         <p className="deepnote">Deep read: this sheet is very detailed ({p.deepHint?.reason}). Counting every symbol takes about {Math.round(eta / 60) || 1} min.</p>
       )}
@@ -165,13 +172,16 @@ export function ChecklistPanel(p: { path: string | null; deepHint?: { on: boolea
           </ul>
           {!!p.services && Object.keys(p.services).length > 0 && (
             <details className="ckrooms" open>
-              <summary>Services (estimated, no MEP sheet)</summary>
-              <ul>
+              <summary>Services, estimated (no MEP sheet in this set)</summary>
+              <div className="svc-tiles">
                 {Object.entries(p.services).map(([k, v]) => (
-                  <li key={k} title={v.basis}><span>{({ pipe_m: "Pipework", cable_m: "Cable", lights: "Light fittings", sockets: "Sockets", wet_points: "Wet points" } as Record<string, string>)[k] ?? k}</span>
-                    <span className="muted sm">{v.value} {v.unit}</span><div className="sm muted">{v.basis}</div></li>
+                  <div key={k} className={`svc-tile ${k}`} title={v.basis}>
+                    <b>{v.value.toLocaleString()}{v.unit === "m" ? <small> m</small> : null}</b>
+                    <span>{({ pipe_m: "Pipework", cable_m: "Cable", lights: "Light fittings", sockets: "Sockets", wet_points: "Wet points" } as Record<string, string>)[k] ?? k}</span>
+                  </div>
                 ))}
-              </ul>
+              </div>
+              <p className="sm muted">How: {Object.values(p.services).map((v) => v.basis).filter((b, i, a) => a.indexOf(b) === i).slice(0, 2).join("; ")}.</p>
             </details>
           )}
           {!!data.zones?.length && (
@@ -209,10 +219,12 @@ export function ChecklistPanel(p: { path: string | null; deepHint?: { on: boolea
 // ---------------------------------------------------------------- first-time tour
 export type TourStep = { title: string; body: string; act?: () => void };
 export function Tour({ steps, k }: { steps: TourStep[]; k: string }) {
-  const seen = typeof localStorage !== "undefined" && localStorage.getItem("plumb-tour") === "done";
-  const [i, setI] = useState<number | null>(seen ? null : 0);
+  const key = `plumb-tour:${k}`;                         // a walk-through for every newly opened drawing
+  const seenOf = () => { try { return localStorage.getItem(key) === "done"; } catch { return false; } };
+  const [i, setI] = useState<number | null>(seenOf() ? null : 0);
+  useEffect(() => { setI(seenOf() ? null : 0); }, [k]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (i !== null) steps[i]?.act?.(); }, [i, k]); // eslint-disable-line react-hooks/exhaustive-deps
-  const done = () => { localStorage.setItem("plumb-tour", "done"); setI(null); };
+  const done = () => { try { localStorage.setItem(key, "done"); } catch { /* private window */ } setI(null); };
   if (i === null) return <button className="tourbtn" onClick={() => setI(0)} title="Show the tour again">Tour</button>;
   const s = steps[i];
   if (!s) return null;
@@ -229,5 +241,37 @@ export function Tour({ steps, k }: { steps: TourStep[]; k: string }) {
         </div>
       </div>
     </div>
+  );
+}
+
+
+// ---------------------------------------------------------------- service runs drawn over the building (build plan)
+export function ServiceMap({ map, kind }: { map: { outline: [number, number][]; piping: [number, number][][]; electrical: [number, number][][];
+  quantities: Record<string, { value: number; unit: string; basis: string }> }; kind: "piping" | "electrical" }) {
+  const xs = map.outline.map((q) => q[0]), ys = map.outline.map((q) => q[1]);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+  const pad = 0.04 * Math.max(x1 - x0, y1 - y0);
+  const vb = `${x0 - pad} ${y0 - pad} ${x1 - x0 + 2 * pad} ${y1 - y0 + 2 * pad}`;
+  const sw = Math.max(x1 - x0, y1 - y0) / 220;
+  const lines = kind === "piping" ? map.piping : map.electrical;
+  const col = kind === "piping" ? "#3b82f6" : "#f59e0b";
+  const big = kind === "piping"
+    ? [["pipe_m", "of pipework"], ["wet_points", "wet points"]]
+    : [["cable_m", "of cable"], ["lights", "light fittings"], ["sockets", "sockets"]];
+  return (
+    <figure className="svcmap">
+      <svg viewBox={vb} preserveAspectRatio="xMidYMid meet" role="img" aria-label={`${kind} runs over the building`}>
+        <polygon points={map.outline.map((q) => q.join(",")).join(" ")} className="svc-outline" strokeWidth={sw * 1.5} />
+        {lines.map((l, i) => <polyline key={i} points={l.map((q) => q.join(",")).join(" ")} fill="none" stroke={col} strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round" opacity={0.9} />)}
+      </svg>
+      <figcaption>
+        <div className="svc-big">
+          {big.filter(([k]) => map.quantities[k]).map(([k, w]) => (
+            <span key={k}><b>{map.quantities[k].value.toLocaleString()}</b>{map.quantities[k].unit === "m" ? " m" : ""} <small>{w}</small></span>
+          ))}
+        </div>
+        <small className="muted">Estimated: {map.quantities[kind === "piping" ? "pipe_m" : "cable_m"]?.basis}</small>
+      </figcaption>
+    </figure>
   );
 }

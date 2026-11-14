@@ -794,6 +794,29 @@ async def build_plan(path: str, vibe: str = "standard", it_load_kw: Optional[flo
         counts.update(sh)
         out = plan(facts, vibe, px, tag, needs={"it_load_kw": it_load_kw} if it_load_kw else None, counts=counts)
         out["read_from"] = use
+        if fpo is not None and facts.extras.get("route") == "cad":      # services: estimated from the deep read
+            try:
+                from engine import symbols as SY
+                from engine.layers import estimate_services
+                est = estimate_services(facts, SY.cached(facts.provenance.sha256 or _sha(p)), float(fpo.attrs["px_per_m"]))
+                q = est["quantities"]
+                for c in out["checklist"]:
+                    k = {"lights": "lights", "sockets": "sockets"}.get(c["id"])
+                    if k and k in q:
+                        c.update(qty=q[k]["value"], tag="defaulted", basis=q[k]["basis"] + " (estimate)")
+                add = [("pipework", "Plumbing", "Pipework (supply + waste runs)", "pipe_m"),
+                       ("cable", "Electrical", "Cable (lighting + power circuits)", "cable_m")]
+                for cid, grp, item, k in add:
+                    if k in q:
+                        out["checklist"].append({"id": cid, "group": grp, "item": item, "qty": q[k]["value"], "unit": "m",
+                                                 "tag": "defaulted", "basis": q[k]["basis"] + " (estimate)",
+                                                 "step": "rough_in", "per": k})
+                out["services_map"] = {"w": facts.width_px, "h": facts.height_px,
+                                       "outline": [list(map(float, pt)) for pt in fpo.polygon],
+                                       "piping": est["piping"][:400], "electrical": est["electrical"][:400],
+                                       "quantities": q}
+            except Exception as e:  # noqa: BLE001
+                out["services_error"] = f"{type(e).__name__}: {e}"
         return out
     return await asyncio.to_thread(run)
 
