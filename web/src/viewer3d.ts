@@ -848,6 +848,7 @@ export class PlumbViewer {
       }
     }
     void big;
+    this.linkStairs(floors, gap);
     this.applyStage();
     if (!this.reduce) {
       const t0 = performance.now();
@@ -905,6 +906,31 @@ export class PlumbViewer {
       this.flyTo(homeTarget.clone().add(new THREE.Vector3(0, homePos.distanceTo(homeTarget) * 1.02, 0.001)), homeTarget, 900);
     }
     this.controls.update();
+  }
+
+  /** Stacked floors: a dashed line joins each staircase to the nearest staircase on the floor above. */
+  private linkStairs(floors: FloorInput[], gap: number) {
+    if (floors.length < 2) return;
+    const at = (f: FloorInput, i: number) => {
+      const s = 100 / Math.max(f.geo.width, f.geo.height);
+      return f.geo.fixtures.filter((e) => /stair/i.test(e.kind) && e.polygon.length).map((e) => {
+        const cx = e.polygon.reduce((a, p) => a + p[0], 0) / e.polygon.length;
+        const cy = e.polygon.reduce((a, p) => a + p[1], 0) / e.polygon.length;
+        return new THREE.Vector3((cx - f.geo.width / 2) * s, i * gap, (cy - f.geo.height / 2) * s);
+      });
+    };
+    const mat = new THREE.LineDashedMaterial({ color: this.T.accent, dashSize: 1.2, gapSize: 0.8, transparent: true, opacity: 0.9 });
+    for (let i = 0; i + 1 < floors.length; i++) {
+      const lo = at(floors[i], i), hi = at(floors[i + 1], i + 1);
+      for (const a of lo) {
+        if (!hi.length) break;
+        const b = hi.reduce((best, p) => (Math.hypot(p.x - a.x, p.z - a.z) < Math.hypot(best.x - a.x, best.z - a.z) ? p : best), hi[0]);
+        const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints([a.clone().setY(a.y + 3.6), b]), mat);
+        line.computeLineDistances();
+        line.userData.stairLink = true;
+        this.root.add(line);
+      }
+    }
   }
 
   private buildFloor(f: FloorInput, s: number) {
