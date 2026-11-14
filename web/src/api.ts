@@ -1,74 +1,165 @@
-/**
- * Two data modes, selected by VITE_API:
- *  - "fixtures" (default): fetch static JSON from /fixtures/*.json, copied
- *    from contracts/fixtures/ by scripts/copy-fixtures.mjs (predev/prebuild).
- *  - "live": fetch from the FastAPI engine at :8000.
- *
- * The UI never invents a number: every ProofObject comes from one of these
- * two places, or is read verbatim from claims.json.
- */
-import type { ProofObject, SheetFacts } from "./types";
+/** Live engine client (FastAPI on :8000). The UI renders only contract JSON from here. */
+import type { Element, ProofObject } from "./types";
 
-export type Mode = "fixtures" | "live";
+export const BASE = "http://localhost:8000/api";
+const q1 = (path: string) => encodeURIComponent(path);
 
-export function getMode(): Mode {
-  return import.meta.env.VITE_API === "live" ? "live" : "fixtures";
-}
+export const imageUrl = (path: string) => `${BASE}/image?path=${q1(path)}`;
 
-const LIVE_BASE = "http://localhost:8000/api";
-
-/** One row of the demo fixture switcher: id, human label, tier hint, file. */
-export interface FixtureEntry {
-  id: string;
-  label: string;
-  file: string;
-}
-
-export const DEMO_FIXTURES: FixtureEntry[] = [
-  { id: "doors", label: "Doors · 7 vs 6 (amber)", file: "sample_proof_doors.json" },
-  { id: "area_before", label: "Area · before scale (amber)", file: "sample_proof_area.json" },
-  { id: "area_after", label: "Area · after scale (green)", file: "demo_takeoff_area.json" },
-  { id: "refusal", label: "Elevation · refused (grey)", file: "sample_proof_refusal.json" },
-];
-
-export async function fetchProof(entry: FixtureEntry): Promise<ProofObject> {
-  if (getMode() === "live") {
-    const res = await fetch(`${LIVE_BASE}/analyze?id=${encodeURIComponent(entry.id)}`);
-    if (!res.ok) throw new Error(`live API ${res.status} for ${entry.id}`);
-    return (await res.json()) as ProofObject;
-  }
-  const res = await fetch(`/fixtures/${entry.file}`);
-  if (!res.ok) throw new Error(`fixture ${entry.file} not found (${res.status})`);
+export async function ask(path: string, question: string): Promise<ProofObject> {
+  const res = await fetch(`${BASE}/ask`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path, question, benchmark: false }),
+  });
+  if (!res.ok) throw new Error(`engine answered ${res.status}`);
   return (await res.json()) as ProofObject;
 }
 
-/** SheetFacts for context geometry (walls/rooms/windows around the answer). Null if unavailable. */
-export async function fetchFacts(proof: ProofObject): Promise<SheetFacts | null> {
+export async function upload(file: File): Promise<string> {
+  const fd = new FormData();
+  fd.append("file", file);
+  const res = await fetch(`${BASE}/upload`, { method: "POST", body: fd });
+  if (!res.ok) throw new Error(`upload failed (${res.status})`);
+  return ((await res.json()) as { path: string }).path;
+}
+
+export type Ring = [number, number][];
+export interface Geometry {
+  width: number;
+  height: number;
+  coords: string;
+  walls: { outer: Ring; holes: Ring[] }[];
+  rooms: Element[];
+  doors: Element[];
+  windows: Element[];
+  fixtures: Element[];
+  elements_aligned: boolean;
+  credit?: string | null;
+  wall_note?: string | null;
+  check?: ScanCheck | null;
+  cost?: { ms: number; cpu_s?: number; llm_calls: number; usd: number; note?: string | null } | null;
+}
+export interface ScanView {
+  n: number;
+  box: [number, number, number, number];
+  type: string;
+  type_source?: string | null;
+  reader?: string | null;
+  agreement?: number | null;
+  why?: string | null;
+  flags?: string[];
+}
+export interface ScanCheck {
+  views: ScanView[];
+  warnings: string[];
+  floors?: SheetFloor[];
+  reviewer?: { used?: boolean; models?: string[]; cost_usd?: number; notes?: string | null } | null;
+}
+
+export async function geometry(path: string): Promise<Geometry> {
+  const res = await fetch(`${BASE}/geometry?path=${q1(path)}`);
+  if (!res.ok) throw new Error(`geometry ${res.status}`);
+  return (await res.json()) as Geometry;
+}
+
+export interface Sample {
+  id: string;
+  path: string;
+  label: string;
+  kind: "plan" | "not_plan";
+  credit: string;
+  thumb: string;
+  questions: { label: string; text: string }[];
+}
+
+export async function fetchSamples(): Promise<Sample[]> {
   try {
-    const url = getMode() === "live" ? `${LIVE_BASE}/facts?file=${encodeURIComponent(proof.provenance.file)}` : "/fixtures/sample_facts.json";
-    const res = await fetch(url);
-    if (!res.ok) return null;
-    const f = (await res.json()) as SheetFacts;
-    return f.provenance.file === proof.provenance.file ? f : null;
+    const res = await fetch("/samples/samples.json");
+    return res.ok ? ((await res.json()) as { samples: Sample[] }).samples : [];
   } catch {
-    return null;
+    return [];
   }
 }
 
-/** Live-only POSTs (ask, scale, decide). In fixtures mode the UI switches fixture instead. */
-export async function livePost<T>(path: "ask" | "scale" | "decide" | "cost", body: unknown): Promise<T> {
-  const res = await fetch(`${LIVE_BASE}/${path}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-  if (!res.ok) throw new Error(`live API ${res.status} for ${path}`);
-  return (await res.json()) as T;
+/* ---------- build plan ---------- */
+export type PhaseName = "site" | "foundation" | "floor" | "walls" | "openings" | "services" | "finishes" | "roof";
+export interface PlanBasis { value: string | number; unit?: string | null; tag: string; source?: string | null }
+export interface PlanItem { id: string; group: string; item: string; qty: number | string | null; unit: string; tag: string; basis: string; step?: string; per?: string }
+export interface PlanStep { n: number; id: string; title: string; why: string; needs: string[]; phase: PhaseName }
+export interface BuildPlan {
+  building: { type: string; label: string; confidence: string; evidence: string[] };
+  vibe: string;
+  vibes: { id: string; label: string; blurb: string }[];
+  basis: Record<string, PlanBasis>;
+  checklist: PlanItem[];
+  steps: PlanStep[];
+  open_inputs?: unknown[];
+  /** true when the engine endpoint was unreachable and the local sample shape is shown */
+  mock?: boolean;
 }
 
-/** claims.json: numbers measured by evalkit. Optional; never required. */
-export async function fetchClaims(): Promise<Record<string, unknown> | null> {
+export async function fetchPlan(path: string, vibe: string, extra: Record<string, number | string> = {}): Promise<BuildPlan> {
   try {
-    const res = await fetch("/claims.json");
-    if (!res.ok) return null;
-    return (await res.json()) as Record<string, unknown>;
+    const more = Object.entries(extra).map(([k, v]) => `&${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`).join("");
+    const res = await fetch(`${BASE}/plan?path=${q1(path)}&vibe=${encodeURIComponent(vibe)}${more}`);
+    if (res.ok) return (await res.json()) as BuildPlan;
   } catch {
-    return null;
+    /* fall through to the local sample */
   }
+  const m = (await import("./mockPlan.json")).default as unknown as BuildPlan;
+  return { ...m, vibe, mock: true };
+}
+
+/** User-measured scale: two image-pixel points and the real length between them. Returns the recomputed answers. */
+export async function setScale(path: string, pxLength: number, lengthM: number, questions: string[]): Promise<ProofObject[]> {
+  const res = await fetch(`${BASE}/scale`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path, anchors: [{ kind: "user", px_length: pxLength, length_m: lengthM }], questions }),
+  });
+  if (res.status === 422) {
+    const j = (await res.json().catch(() => ({}))) as { detail?: ScaleIssue };
+    throw new ScaleError(j.detail ?? { message: "That measurement does not look right." });
+  }
+  if (!res.ok) throw new Error(`scale failed (${res.status})`);
+  return (await res.json()) as ProofObject[];
+}
+
+export interface ScaleIssue {
+  message: string;
+  median_room_m2?: number;
+  suggestion?: string | { label?: string; length_m?: number; unit?: string; value?: number } | null;
+}
+/** HTTP 422 from /api/scale: the measurement is implausible; nothing was applied. */
+export class ScaleError extends Error {
+  issue: ScaleIssue;
+  constructor(issue: ScaleIssue) {
+    super(issue.message);
+    this.issue = issue;
+  }
+}
+
+/* ---------- project (folder) ---------- */
+export interface BuildingFloor { path: string; name: string; doc_type: string; sheet?: string | null; title?: string | null; level?: number | null; level_label?: string | null; level_source?: string | null; why?: string | null; stack_index: number; display_label?: string | null }
+export interface BuildingOther { path: string; name: string; doc_type: string; discipline?: string | null; sheet?: string | null; title?: string | null; why?: string | null; scan_check?: unknown; display_label?: string | null }
+export interface BuildingAlt extends BuildingOther { alternative_of?: string | null; level_label?: string | null; stack_index?: number }
+export interface BuildingResult { building: string; method: string; floors: BuildingFloor[]; alternatives: BuildingAlt[]; other: BuildingOther[]; groups: Record<string, string[]>; notes: string[] }
+
+export async function buildProject(files: { path: string; name: string }[]): Promise<BuildingResult> {
+  const res = await fetch(`${BASE}/building`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ files }) });
+  if (!res.ok) throw new Error(`could not sort the folder (${res.status})`);
+  const j = (await res.json()) as BuildingResult;
+  return { ...j, floors: j.floors ?? [], alternatives: j.alternatives ?? [], other: j.other ?? [], groups: j.groups ?? {}, notes: j.notes ?? [] };
+}
+
+/** One floor plan on a sheet that holds several (from the scan check, engine/scancheck.py). */
+export interface SheetFloor {
+  view: number;
+  box: [number, number, number, number];
+  level?: number | null;
+  level_label?: string;
+  label: string;
+  wall_indices: number[];
+  level_source?: string;
 }

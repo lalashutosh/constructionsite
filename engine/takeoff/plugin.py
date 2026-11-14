@@ -12,8 +12,9 @@ def _run(ctx, name: str):
     from engine import query
 
     facts = ctx.facts
-    if facts is None:
-        return None
+    if facts is None or not facts.elements or "vector" in facts.extras:
+        return None   # no elements: a count over nothing is not evidence; vector files: the exact vector voters
+                      # own the fixed intents and the elements serve the planner only
     source = ctx.path.split("/")[1] if "/" in ctx.path else None
     if ctx.intent == "apartments":
         from engine.query.graph import apartment_of

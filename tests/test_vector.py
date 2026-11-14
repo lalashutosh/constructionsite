@@ -87,7 +87,15 @@ def test_plugin_registers_resolver_and_voters():
     registry.reset()
 
 
-@pytest.mark.skipif(not os.environ.get("DATASET_ROOT") and not pathlib.Path(".env").exists(), reason="dataset not available")
+def _has_dataset() -> bool:
+    try:
+        from evalkit.data import dataset_root
+        return dataset_root().joinpath("questions.jsonl").exists()
+    except Exception:  # noqa: BLE001  (DATASET_ROOT unset on CI raises; that means: no dataset)
+        return False
+
+
+@pytest.mark.skipif(not _has_dataset(), reason="dataset not available")
 def test_real_dxf_and_ifc_round_trip():
     from evalkit.data import load_questions
     from engine.vector import plugin
@@ -103,3 +111,31 @@ def test_real_dxf_and_ifc_round_trip():
     ctx = registry.Ctx(path=q.path, abs_path="", question=q.question, intent=q.intent, params=q.params, kind="area")
     vr = plugin.voter_primary(ctx)
     assert vr is not None and abs(vr.voter.value - float(str(q.answer).split()[0])) / float(str(q.answer).split()[0]) < 0.02
+
+
+def test_credit_lookup_table_and_all_files(tmp_path):
+    from engine.vector import credits
+    d = tmp_path / "data"
+    (d / "ifc_models").mkdir(parents=True)
+    (d / "ifc_models" / "LICENSE.md").write_text(
+        "| file | title | licence | credit | source |\n|---|---|---|---|---|\n| m.ifc | M | MIT | (c) X | http://x |\n")
+    (d / "swiss_dwellings").mkdir()
+    (d / "swiss_dwellings" / "LICENSE.md").write_text("intro\n\nAll files: CC-BY-4.0. Credit: Swiss Dwellings v3.0.0, CC BY 4.0.\n")
+    assert credits.lookup(tmp_path, "data/ifc_models/m.ifc") == ("MIT", "(c) X")
+    assert credits.lookup(tmp_path, "data/swiss_dwellings/a.dxf") == ("CC-BY-4.0", "Swiss Dwellings v3.0.0, CC BY 4.0.")
+    assert credits.lookup(tmp_path, "data/ifc_models/unknown.ifc") == (None, None)
+
+
+def test_extract_gives_sheet_facts_not_raster(monkeypatch, tmp_path):
+    """The pipeline looks for engine.vector.plugin.extract; without it vector files fell through to the raster
+    extractor and every swiss/ifc answer was capped at amber (product mode: refused)."""
+    from engine.vector import plugin
+    d = tmp_path / "data" / "swiss_dwellings"
+    _touch(d / "a.dxf", b"0\nEOF\n")
+    (d / "LICENSE.md").write_text("All files: CC-BY-4.0. Credit: SD credit.\n")
+    monkeypatch.setattr(siblings, "dataset_root", lambda: tmp_path)
+    f = plugin.extract("data/swiss_dwellings/a.dxf", allow_siblings=True)
+    assert f.legible and f.sheet_type == "floor_plan" and f.provenance.fmt == "dxf"
+    assert f.provenance.credit == "SD credit." and f.provenance.license == "CC-BY-4.0"
+    with pytest.raises(FileNotFoundError):
+        plugin.extract("data/swiss_dwellings/missing.dxf")

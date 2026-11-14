@@ -7,6 +7,8 @@ bedroom:
   - MH          # makuuhuone
   - MH1
   - MH2
+  - MAKUUHUONE
+  - MHH
 living:
   - OH          # olohuone
   - OLOHUONE
@@ -28,6 +30,10 @@ wc:
 sauna:
   - S
   - SAUNA
+  - LOYLYH
+  - LÖYLYH
+  - LOYLY
+  - LÖYLY
 storage:
   - VAR
   - VARASTO

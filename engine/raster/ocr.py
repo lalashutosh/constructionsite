@@ -51,7 +51,8 @@ def categorize(text: str) -> str | None:
 
 
 def ocr_tokens(img_rgb: np.ndarray, *, upscale_to: int = 1200, min_conf: float = 40.0,
-                rotations: tuple[int, ...] = (0, 1, 2, 3)) -> list[OcrToken]:
+                rotations: tuple[int, ...] = (0, 1, 2, 3),
+                lex_conf: float = 20.0) -> list[OcrToken]:
     """Run tesseract fin+eng at the given quarter-turn rotations of the (upscaled) image,
     return tokens with bbox mapped back to ORIGINAL (un-upscaled, un-rotated) pixel coords.
     `rotations` defaults to all 4 (0/90/180/270); engine.raster.extract passes a smaller set to
@@ -85,7 +86,11 @@ def ocr_tokens(img_rgb: np.ndarray, *, upscale_to: int = 1200, min_conf: float =
             if not text:
                 continue
             conf = float(data["conf"][i])
-            if conf < min_conf:
+            cat = categorize(text)
+            # lexicon hits are accepted at a lower confidence: rotated "MH" labels are often
+            # read at conf 20-50 (colorful-2002: second "MH 2" at conf 20), and a strict
+            # lexicon match is already a strong filter
+            if conf < (min(min_conf, lex_conf) if cat else min_conf):
                 continue
             x, y, bw, bh = (data["left"][i], data["top"][i], data["width"][i], data["height"][i])
             # map the 4 box corners from the rotated-upscaled frame back to upscaled-frame (k=0),
@@ -95,7 +100,7 @@ def ocr_tokens(img_rgb: np.ndarray, *, upscale_to: int = 1200, min_conf: float =
             xs = [p[0] / scale for p in un]
             ys = [p[1] / scale for p in un]
             bbox = (min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys))
-            out.append(OcrToken(text=text, clean=clean_token(text), category=categorize(text),
+            out.append(OcrToken(text=text, clean=clean_token(text), category=cat,
                                  bbox=bbox, conf=conf))
     return out
 

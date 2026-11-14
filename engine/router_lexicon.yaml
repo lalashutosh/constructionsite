@@ -1,0 +1,41 @@
+# Router layer 2b: object nouns and kind cues, hand-written (NOT fitted to any question set).
+# Each pattern is a case-insensitive regex matched on the NFKC-casefolded question (quoted text removed).
+# Languages: en, de, fr, it, fi, et, da, sv. Add a word here, not in code.
+#
+# concepts: name -> regex.  intents: (source, kind, concept) -> intent.  First matching concept wins.
+# Order matters: more specific concepts first (bathroom before bath, washbasin before basin, wc room before wc).
+
+kind_cues:
+  area: '\b(area|m²|m2|sq\.?\s?m|square\s+met|surface|superficie|fläche|flaeche|pinta-?ala|pindala|areal|størrelse|storlek|how\s+big|wie\s+gro(ß|ss))'
+  length: '\b(length|long|länge|laenge|longueur|lunghezza|pituus|pikkus|længde|längd)\b'
+  volume: '\b(volume|volumen|volym|volumen|tilavuus|maht|rumfang|m³|m3)\b'
+  count: '\b(how\s+many|number\s+of|count|wie\s+viele|anzahl|combien|nombre\s+de|quant[ie]|numero\s+di|kuinka\s+monta|montako|mitu|hvor\s+mange|antal|hur\s+många)\b'
+
+concepts:
+  wc_room: '\b(wc\s*rooms?|wcs\b|toilet\s+rooms?|wc-?(tilat|huone)|wc-tila)'
+  bathroom: '\b(bath\s*rooms?|badezimmer|salles?\s+de\s+bains?|bagni|bagno|kylpyhuone\w*|vannitub\w*|badeværelse\w*|badrum\w*)'
+  bedroom: '\b(bed\s*rooms?|schlafzimmer|chambres?|camer[ae]\s+da\s+letto|makuuhuone\w*|magamistub\w*|soveværelse\w*|sovrum\w*)'
+  kitchen: '\b(kitchens?|küchen?|kuechen?|cuisines?|cucin[ae]|keittiö\w*|köö(k|gi)\w*|køkken\w*|kök\w*)'
+  sauna: '\b(saunas?|saun[ao]i?\w*)'
+  balcony: '\b(balcon(y|ies|s|i|e)|balkon\w*|parveke\w*|rõdu\w*|altan\w*|loggi[ae]s?|terrass\w*)'
+  washbasin: '\b(wash\s*basins?|basins?|lavabos?|lavandini?|waschbecken|waschtisch\w*|pesuall\w*|valamu\w*|håndvask\w*|tvättställ\w*)'
+  sink: '\b(sinks?|spülen?|éviers?|lavell[io]|tiskiall\w*|vask\w*)'
+  bathtub: '\b(bath\s*tubs?|tubs?|baths\b|badewannen?|baignoires?|vasc[ah]e?|kylpyamm\w*|vann[ie]\b|badekar\w*|badkar\w*)'
+  shower: '\b(showers?|duschen?|douches?|docc[ei]a?|suihku\w*|dušš\w*|bruse\w*|dusch\w*)'
+  toilet: '\b(toilets?|wc\b|toiletten?|toilettes?|gabinett?i?|wc-?istuin\w*|vessa\w*|tualett\w*)'
+  window: '\b(windows?|fenster|fenêtres?|finestr[ae]|ikkun\w*|aken\w*|akn\w*|vinduer?|fönster)'
+  door: '\b(doors?|doorways?|türen|tür|portes?|port[ae]\b|ov(i|ea|et|ia|ien)\b|uks\w*|døre?|dörr\w*)'
+  apartment: '\b(apartments?|flats?|units?|dwellings?|wohnung\w*|appartements?|logements?|appartament[io]|asun\w*|korter\w*|lejlighed\w*|lägenhet\w*)'
+  total: '\b(total|all\s+(the\s+)?(numbered\s+)?(indoor\s+)?rooms|whole\s+floor|gesamt\w*|insgesamt|totale?s?|tou(s|tes)\s+les|complessiv\w*|yhteensä|kokonais\w*|kokku|samlet|totalt)'
+  storey: '\b(storeys?|stor(ies|y)|levels?|floors\b|etagen?|geschoss\w*|étages?|pian[io]\b|kerro\w*|korrus\w*|etage\w*|våning\w*)'
+
+# (source, kind) -> concept -> intent. Sources without an entry fall through to the LLM / planner.
+intents:
+  cubicasa5k:
+    count: {wc_room: wc_rooms, bathroom: bathrooms, bedroom: bedrooms, kitchen: kitchens, sauna: saunas,
+            balcony: balconies, washbasin: sinks, sink: sinks, bathtub: showers_baths, shower: showers_baths,
+            toilet: toilets, window: windows, door: doors, storey: floors}
+  swiss_dwellings:
+    count: {washbasin: washbasins, sink: washbasins, bathtub: bathtubs, shower: showers, toilet: toilets,
+            wc_room: toilets, window: windows, door: doors, apartment: apartments}
+    area: {apartment: apartment_net_area, total: total_net_area}

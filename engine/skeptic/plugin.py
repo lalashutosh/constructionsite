@@ -27,7 +27,10 @@ def _wrap(mod_name: str):
         if not ctx.abs_path.lower().endswith(RASTER_EXT):
             return None                    # pdf/dxf/ifc go to the vector route, not to pixel voters
         mod = importlib.import_module(f"engine.skeptic.voters.{mod_name}")
-        return mod.run(ctx)
+        r = mod.run(ctx)
+        if r is not None:
+            r.second_opinion = True        # independent cross-check of the raster detector, not a replacement
+        return r
 
     fn.__name__ = mod_name
     return fn

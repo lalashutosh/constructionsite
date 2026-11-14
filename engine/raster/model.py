@@ -98,3 +98,15 @@ def infer(img_rgb: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         rooms = F.softmax(out[0, 21:33], dim=0).numpy()
         icons = F.softmax(out[0, 33:44], dim=0).numpy()
     return rooms.astype(np.float32), icons.astype(np.float32)
+
+
+def infer_tta(img_rgb: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Two-pass test-time augmentation: identity + 90-degree rotation (probabilities rotated back
+    to the input frame before averaging, so every map is in ORIGINAL rendered-pixel coordinates).
+    Measured on 199 DEV images (docs/handoff/raster-finetune.md): windows/sinks/saunas/toilets
+    gain 4-6 pts over a single pass; a third pass (h-flip) adds <1 pt and costs 1.5 s."""
+    r0, i0 = infer(img_rgb)
+    rot = np.ascontiguousarray(np.rot90(img_rgb))  # counter-clockwise
+    r1, i1 = infer(rot)
+    back = lambda a: np.rot90(a, -1, (1, 2))  # inverse of the CCW rotation
+    return (r0 + back(r1)) / 2.0, (i0 + back(i1)) / 2.0

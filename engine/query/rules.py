@@ -74,7 +74,15 @@ def prior_fallback_1(els, facts):
     return els, None  # handled in run(): value = 1 when detector says 0 (showers_baths)
 
 
+def _reader(els, facts):
+    return els, None  # handled in run(): the value comes from that intent's reader in engine.count.rules
+
+
 RULES: dict[str, Callable] = {
+    "reader_saunas": _reader,
+    "reader_bedrooms": _reader,
+    "reader_kitchens": _reader,
+    "reader_wc_rooms": _reader,
     "door_requires_leaf": door_requires_leaf,
     "double_bowl_one_sink": double_bowl_one_sink,
     "separate_wc_not_bathroom": separate_wc_not_bathroom,

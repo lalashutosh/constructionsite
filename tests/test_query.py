@@ -102,3 +102,38 @@ def test_fixed_specs_equal_intent_path_on_synthetic_fixture():
                    Element(id="fb", kind="floor_blob", polygon=[(0, 0), (9, 0), (9, 9), (0, 9)])]
     for it in INTENTS:
         assert count(it, copy.deepcopy(f))[0] == run(spec_for(it, {}, "cubicasa5k"), copy.deepcopy(f)).value, it
+
+
+def test_argmax_area_names_the_room_and_avg_area():
+    from contracts.proof import Element, Provenance, SheetFacts
+    from engine.query.run import run
+    sq = lambda x, s: [(x, 0.0), (x + s, 0.0), (x + s, s), (x, s)]
+    f = SheetFacts(provenance=Provenance(file="f"), elements=[
+        Element(id="r1", kind="room", label="Bad", polygon=sq(0, 2), attrs={"area_m2": 4.0}),
+        Element(id="r2", kind="room", label="Wohnen", polygon=sq(5, 5), attrs={"area_m2": 25.0})])
+    r = run({"select": "room", "aggregate": "argmax_area"}, f)
+    assert r.value == "Wohnen, 25.0 m²" and r.evidence_ids == ["r2"]
+    assert run({"select": "room", "aggregate": "avg_area"}, f).value == 14.5
+
+
+def test_difference_combine():
+    from contracts.proof import Element, Provenance, SheetFacts
+    from engine.query import execute_plan
+    f = SheetFacts(provenance=Provenance(file="f"), elements=[
+        Element(id=f"w{i}", kind="window", polygon=[(i, 0), (i, 1)]) for i in range(3)] + [
+        Element(id="d0", kind="door", polygon=[(0, 0), (0, 1)])])
+    r = execute_plan([{"select": "window", "aggregate": "count"}, {"select": "door", "aggregate": "count"}],
+                     "difference", f)
+    assert r.value == 2 and r.groups == {"part1": 3, "part2": 1}
+
+
+def test_a_room_with_a_toilet_is_a_bathroom_even_if_unnamed():
+    from contracts.proof import Element, Provenance, SheetFacts
+    from engine.query.run import run
+    sq = lambda x, s: [(x, 0.0), (x + s, 0.0), (x + s, s), (x, s)]
+    f = SheetFacts(provenance=Provenance(file="f"), elements=[
+        Element(id="r1", kind="room", subtype="sauna", label="S", polygon=sq(0, 10), attrs={"area_m2": 4.0}),
+        Element(id="r2", kind="room", subtype="living", polygon=sq(20, 30), attrs={"area_m2": 30.0}),
+        Element(id="t1", kind="toilet", polygon=sq(3, 2))])
+    r = run({"select": "room", "where": {"room_type": "bathroom"}, "aggregate": "sum_area"}, f)
+    assert r.value == 4.0 and r.evidence_ids == ["r1"] and any("toilet" in n for n in r.notes)

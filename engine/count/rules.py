@@ -60,7 +60,8 @@ def _subtype_instances(facts: SheetFacts, subtype: str) -> tuple[int, list[str],
     docs/decisions/weights.md). Clustered by distance so duplicate OCR tokens for the same room
     (different rotation passes) don't double count."""
     matches = [e for e in facts.elements
-               if e.subtype == subtype and e.kind in ("room", "label")]
+               if e.subtype == subtype and (e.kind == "room" or (
+                   e.kind == "label" and not e.attrs.get("claimed")))]  # claimed label = its room
     if not matches:
         return 0, [], [0, 0, 0]
     diag = math.hypot(facts.width_px or 1, facts.height_px or 1)
@@ -68,6 +69,17 @@ def _subtype_instances(facts: SheetFacts, subtype: str) -> tuple[int, list[str],
     runs = [_cluster_count(points, r * diag) for r in _CLUSTER_RATIOS]
     value = runs[1]  # medium radius is the canonical answer
     return value, [e.id for e in matches], runs
+
+
+def _label_instances(facts: SheetFacts, subtype: str, min_conf: float = 0.0) -> tuple[int, list[str]]:
+    """Distinct OCR label hits of `subtype` (duplicates from the rotation passes collapse when
+    within 3% of the image diagonal, i.e. the same printed word). Every hit sits in its own room."""
+    labs = [e for e in facts.elements
+            if e.kind == "label" and e.subtype == subtype and e.conf >= min_conf]
+    if not labs:
+        return 0, []
+    diag = math.hypot(facts.width_px or 1, facts.height_px or 1)
+    return _cluster_count([_centroid(e.polygon) for e in labs], 0.03 * diag), [e.id for e in labs]
 
 
 def _mark_default(facts: SheetFacts, intent: str, value: int, reason: str) -> None:
@@ -128,10 +140,18 @@ def showers_baths(facts: SheetFacts):
 # Room-label-backed intents (OCR overriding/filling in the CNN's coarse room classes).
 # ---------------------------------------------------------------------------------------------
 
+_SAUNA_LABEL_CONF = 0.6  # lone "S" is a noisy hit; below 60 OCR conf it is mostly clutter
+
+
 def saunas(facts: SheetFacts):
-    """'How many saunas ...?' Sauna has no CNN room class; purely an OCR 'S'/'SAUNA' label hit
-    (engine/raster/lexicon_fi.yaml)."""
-    return _subtype_instances(facts, "sauna")
+    """'How many saunas are on this floor plan?' Sauna has no CNN room class. The CNN's
+    `sauna_bench` icon is the strongest signal (dev: 83% exact vs 59% for OCR labels, prior 57%),
+    one bench blob per sauna; OCR 'S'/'SAUNA'/'LOYLYH' labels decide only when no bench is found."""
+    icons = _icon_count(facts, "sauna_bench")
+    if icons[0] > 0:
+        return icons
+    n, ids = _label_instances(facts, "sauna", _SAUNA_LABEL_CONF)
+    return n, ids, [n, n, n]
 
 
 def kitchens(facts: SheetFacts):
@@ -148,8 +168,16 @@ def kitchens(facts: SheetFacts):
 
 
 def bedrooms(facts: SheetFacts):
-    """'... (makuuhuone, usually marked MH) ...' -- CNN `bedroom` room class, OCR 'MH' confirms."""
-    return _subtype_instances(facts, "bedroom")
+    """'... (makuuhuone, usually marked MH) ...' -- CNN `bedroom` room class (slivers below 1.5%
+    of the image dropped at extraction) and the distinct OCR 'MH'/'MH1'/'MH 2' labels (one per
+    room); the larger of the two wins, so 'MH 1' + 'MH 2' => 2 even if the CNN merges or splits
+    (regression: colorful-2002 = 2). Labels alone are NOT enough: OCR misses ~40% of them, so
+    'labels first' scored 66% against 75% for CNN-or-labels on DEV."""
+    value, ids, runs = _subtype_instances(facts, "bedroom")
+    n_lab, lab_ids = _label_instances(facts, "bedroom", 0.2)
+    if n_lab > value:
+        return n_lab, lab_ids, [n_lab] * 3
+    return value, ids, runs
 
 
 def wc_rooms(facts: SheetFacts):

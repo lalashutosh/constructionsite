@@ -1,0 +1,3 @@
+User direction 2026-11-14: replace the CSS-3D layer stack and the multi-tab UI with ONE clean workspace: left rail (upload image / folder, drawings), centre = real 3D model of the plan (walls extruded from /api/geometry over the drawing at low opacity), bottom-left = questions + answer with reasoning and sources, top-right = findings list.
+Decision: three.js is allowed in web/ (overrides AGENTS.md "no heavy 3D lib"); the 3D view is the visual proof, so it earns its weight. Layout and type scale follow the golden ratio (61.8 / 38.2 splits; 13/21/34/55 px).
+Removed from the UI: trust lens, scan/reading/overlay toggle, receipt/decide tabs, intro hook, revision scrubber, layer sliders. Plain words replace jargon ("Verified", "Needs a look", "Can't answer").

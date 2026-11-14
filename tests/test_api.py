@@ -46,3 +46,39 @@ def test_cors_header(client):
     r = client.options("/health", headers={"Origin": "http://localhost:5173",
                                            "Access-Control-Request-Method": "GET"})
     assert r.headers.get("access-control-allow-origin") == "http://localhost:5173"
+
+
+def test_image_traversal_and_missing(client):
+    assert client.get("/api/image", params={"path": "../etc/passwd"}).status_code == 400
+    assert client.get("/api/image", params={"path": "data/cubicasa5k/does-not-exist.png"}).status_code == 404
+
+
+def test_override_needs_engine_support(client):
+    r = client.post("/api/override", json={"path": "data/cubicasa5k/x.png", "question": "How many doors?",
+                                           "element_id": "d1", "polygon": [[0, 0], [1, 0], [1, 1]], "keep": True})
+    assert r.status_code in (501, 404)       # stub engine has no overrides; missing file is 404
+
+
+def test_implausible_measurement_is_refused():
+    from contracts.proof import Element, Provenance, SheetFacts
+    sq = lambda x: [(x, 0.0), (x + 300, 0.0), (x + 300, 300), (x, 300)]       # 300 px square rooms
+    f = SheetFacts(provenance=Provenance(file="f"), elements=[
+        Element(id=f"r{i}", kind="room", polygon=sq(400 * i)) for i in range(3)])
+    assert M._implausible_scale({"px_length": 300, "length_m": 3}, f) is None            # 100 px/m -> 9 m2 rooms
+    bad = M._implausible_scale({"px_length": 300, "length_m": 248}, f)                   # 248 cm typed as metres
+    assert bad and "not plausible" in bad["message"] and "cm" in (bad["suggestion"] or "")
+
+
+def test_paths_outside_dataset_and_uploads_are_refused(client):
+    for bad in ("/etc/passwd", "/private/etc/hosts", "../../etc/passwd"):
+        r = client.post("/api/ask", json={"path": bad, "question": "How many doors?"})
+        assert r.status_code == 400, bad
+        assert client.get("/api/image", params={"path": bad}).status_code == 400
+
+
+def test_zero_or_negative_measurements_are_refused():
+    from contracts.proof import Provenance, SheetFacts
+    f = SheetFacts(provenance=Provenance(file="f"))
+    for a in ({"px_length": 0, "length_m": 3}, {"px_length": -50, "length_m": 3}, {"px_length": 50, "length_m": 0},
+              {"px_per_m": float("inf")}):
+        assert M._implausible_scale(a, f), a

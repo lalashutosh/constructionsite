@@ -11,6 +11,8 @@ import logging
 import os
 import pathlib
 import statistics
+import re
+import threading
 import time
 from typing import Any, Callable, Optional
 
@@ -71,12 +73,16 @@ def _agree(a: float, b: float, kind: str) -> bool:
 
 def pick_value(results: list, kind: str):
     """Exact-source voter wins; else the median voter (ties -> smaller TTA spread)."""
+    if kind == "text":                          # "which room is largest?" -> a name
+        return next((r.voter.value for r in results if isinstance(r.voter.value, str)), None)
     scored = [r for r in results if isinstance(r.voter.value, (int, float))]
     if not scored:
         return None
     exact = [r for r in scored if r.exact]
     if exact:
         return float(exact[0].voter.value) if kind != "count" else int(exact[0].voter.value)
+    primary = [r for r in scored if not getattr(r, "second_opinion", False)]
+    scored = primary or scored            # weak cross-checks move the tier, not the number
     vals = [float(r.voter.value) for r in scored]
     med = statistics.median(vals)
     best = min(scored, key=lambda r: (abs(float(r.voter.value) - med), _spread(r.voter)))
@@ -101,8 +107,18 @@ class PipelineEngine:
         from engine.query import llm as llm_mod
         self.llm = llm if llm is not None else llm_mod.default_llm()
         self.classifier = TemplateClassifier(self.llm) if self.llm else None
+        # new questions are planned by the STRONG model with reasoning on (open-weight endpoints are cheap; the fast
+        # model with thinking off is kept for routing and as a fallback)
+        self.planner_llm = None
+        if self.llm is not None and hasattr(self.llm, "kind"):
+            from engine.query.llm import VerdaLLM
+            self.planner_llm = VerdaLLM(getattr(self.llm, "prov", "verda"), "strong")
+            self.planner_llm.no_think = False
+            self.planner_llm.plan_tokens = 6000
         self.user_anchors: dict[str, list[dict]] = {}
         self.choices: dict[str, dict] = {}
+        # user verdicts on single elements, per (sha256, intent): [{"polygon": [[x,y],...], "keep": bool, "id": str}]
+        self.overrides: dict[tuple[str, str], list[dict]] = {}
         self._prior: Optional[dict] = None
         _discover()
 
@@ -117,6 +133,13 @@ class PipelineEngine:
         hit = facts_cache.get(sha, allow_siblings)
         if hit is not None:
             return hit
+        with _file_lock(sha, allow_siblings):            # 20 parallel questions on one new drawing -> 1 extraction
+            hit = facts_cache.get(sha, allow_siblings)
+            if hit is not None:
+                return hit
+            return self._analyze_uncached(path, abs_path, sha, allow_siblings, _ctx)
+
+    def _analyze_uncached(self, path, abs_path, sha, allow_siblings, _ctx) -> SheetFacts:
         facts = self._extract(path, abs_path, allow_siblings, _ctx)
         facts.provenance.sha256 = facts.provenance.sha256 or sha
         if not (facts.legibility_note or "").startswith("extraction failed"):
@@ -160,9 +183,27 @@ class PipelineEngine:
         stage = progress or (lambda s: None)
         rt = route_question(question, path, classifier=self.classifier)
         po = self._ask(path, question, rt, allow_siblings, benchmark, stage)
+        try:                                  # "... on floor 2" on a sheet with several floor plans
+            from engine import sheetfloor
+            on_floor = sheetfloor.restrict(po, question, po.provenance.sha256)
+        except Exception as e:  # noqa: BLE001
+            on_floor = None
+            po.notes.append(f"per-floor split skipped: {type(e).__name__}")
+        if rt.layer == "regex-complex":       # LLM off and the question asks more than the matched template
+            if po.tier == Tier.green:
+                po.tier = Tier.amber
+            po.notes.append(f"this answers the simpler question '{rt.intent}'; the question asks more "
+                            "(turn the planner on: LLM_PROVIDER=verda)")
         po.cost.ms = (time.perf_counter() - t0) * 1000
         for f in ("llm_calls", "tokens_in", "tokens_out", "usd"):
             setattr(po.cost, f, getattr(po.cost, f) + getattr(rt.cost, f))
+        try:
+            from engine.answer_text import sentence
+            po.answer_text = sentence(po)
+            if on_floor:
+                po.answer_text = sheetfloor.name_floor(po.answer_text, on_floor)
+        except Exception:  # noqa: BLE001  (the sentence is a convenience; never fail an answer over it)
+            po.answer_text = None
         bad = invariants.check(po)
         if bad:
             log.warning("invariants violated for %s: %s", path, bad)
@@ -206,6 +247,8 @@ class PipelineEngine:
                 notes.append(f"triage: {tr.note}")
             if tr.refuse and not refusal:
                 refusal = tr.refuse
+        if not refusal:
+            refusal = _scan_check_refusal(sha)     # the 3D scan check found no floor plan on this sheet
         capped = False
         if refusal:
             if not benchmark:
@@ -256,9 +299,15 @@ class PipelineEngine:
         # vote
         stage("vote")
         results = self._vote(ctx, notes)
+        if kind == "count":
+            self._label_vote(results, ctx, facts, notes)
+            self._apply_overrides(results, sha, rt.intent, po, notes)
         planner_cost = Cost()
-        if not results and self.llm is not None and rt.intent == "unknown":
+        if not results and self.llm is not None:      # no reader answered the matched type -> let the planner try
+            if rt.intent != "unknown":
+                notes.append(f"no reader answers '{rt.intent}' on this drawing; trying the planner")
             results, planner_cost = self._plan_vote(ctx, question, facts, po, notes)
+            kind = po.kind                      # the planner decides the answer's kind (count / area / text)
         for r in results:
             r.voter.runs = list(r.voter.runs)
         po.voters = [r.voter for r in results]
@@ -278,7 +327,7 @@ class PipelineEngine:
                                                      tag=Tag.defaulted, source="dev-median prior"))
                 tier = Tier.amber
             else:
-                return self._grey(po, "no extractor could answer this question from the drawing")
+                return self._grey(po, po.refusal or "no reader or query could answer this question from the drawing")
         if capped and tier == Tier.green:
             tier = Tier.amber
 
@@ -306,21 +355,33 @@ class PipelineEngine:
                 source=str(d.get("reason", "dev-median prior"))))
             notes.append(f"{rt.intent}: value is a prior (defaulted), not a detection")
 
-        # evidence
+        # evidence = the elements of the reading that gave the answer (6 windows -> pins 1..6). Other voters'
+        # candidates stay listed under their voter (element_ids) for 'Why?', but are not pinned as the answer.
+        def _same(v):
+            try:
+                return v is not None and value is not None and (
+                    int(v) == int(value) if kind == "count" else abs(float(v) - float(value)) <= 0.02 * max(abs(float(value)), 1e-9))
+            except (TypeError, ValueError):
+                return v == value
+        chosen = [r for r in results if _same(r.voter.value)] or results[:1]
+        if chosen and isinstance(value, (int, float)) and kind == "count":
+            chosen = chosen[:1]                    # one reading's elements, numbered 1..value
         seen: set[str] = set()
-        for r in results:
+        for r in chosen:
             for e in r.evidence:
                 if e.id not in seen and len(po.evidence) < 400 and len(e.polygon) >= 2:
                     seen.add(e.id)
                     po.evidence.append(e)
         if not po.evidence and results:
             by = {e.id: e for e in facts.elements}
-            for r in results:
+            for r in chosen:
                 for i in r.voter.element_ids[:400]:
                     if i in by and i not in seen and len(by[i].polygon) >= 2:
                         seen.add(i)
                         po.evidence.append(by[i])
 
+        for e in po.evidence:                 # voters may leak numpy scalars into attrs (JSON can't encode them)
+            e.attrs = _native(e.attrs)
         unit = next((r.unit for r in results if r.unit), None)
         po.unit = unit or {"area": "m2", "length": "m", "volume": "m3", "count": "count"}.get(kind)
         po.value = value
@@ -332,13 +393,178 @@ class PipelineEngine:
                 p = fn(po.model_dump(mode="json"))
             except Exception:  # noqa: BLE001
                 p = None
-            if p is not None:
+            if p is not None and po.query_spec is None:     # calibrated on fixed-intent answers only
                 notes.append(f"historically right {p:.0%} of the time at this agreement level")
+                po.reliability = round(float(p), 3)
+                po.reliability_note = (f"answers with this agreement pattern were right {p:.0%} of the time on "
+                                       "DEV drawings (calibrator trained on 600 DEV answers)")
         log.info("ask %s intent=%s kind=%s value=%s tier=%s voters=%s", path, rt.intent, kind, po.value,
                  po.tier.value, [v.name for v in po.voters])
         return po
 
     # ------------------------------------------------------------------ helpers
+    # intents where the vision label reader beat the current reader on DEV (40 scans, 350 questions, cache/proto/
+    # labeleval.py): bedrooms 88% vs 71%, wc_rooms 91% vs 74%. Elsewhere it is a second opinion (tier only).
+    LABEL_PRIMARY = {"bedrooms", "wc_rooms"}
+
+    def _label_vote(self, results: list, ctx, facts: SheetFacts, notes: list[str]) -> None:
+        """Vision LLM transcribes the room labels; code maps them through engine/glossary.yaml and counts."""
+        from engine import label_reader as LR
+        if self.llm is None or not hasattr(self.llm, "complete_vision") or not ctx.abs_path.lower().endswith(
+                (".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff", ".bmp")):
+            return
+        if ctx.intent not in LR.glossary()["intent_room_types"]:
+            return
+        try:
+            import cv2
+            from engine.registry import VoterResult
+            img = cv2.imread(ctx.abs_path, cv2.IMREAD_COLOR)
+            labels = LR.read_labels(img, self.llm, facts_cache.sha256_file(ctx.abs_path))
+            got = LR.count(labels, ctx.intent)
+            if got is None:
+                return
+            n, hits = got
+            h, w = img.shape[:2]
+            ev = []
+            for i, l in enumerate(l for l in labels if l.get("text") in hits):
+                if isinstance(l.get("x"), (int, float)) and isinstance(l.get("y"), (int, float)):
+                    cx, cy, r = l["x"] / 100 * w, l["y"] / 100 * h, 0.025 * max(w, h)
+                    ev.append(Element(id=f"label_{i}", kind="label", label=l["text"],
+                                      polygon=[(cx - r, cy - r), (cx + r, cy - r), (cx + r, cy + r), (cx - r, cy + r)],
+                                      attrs={"read_by": "vision label reader"}))
+            primary = ctx.intent in self.LABEL_PRIMARY
+            if primary:
+                for r in results:                   # the measured-better reader decides; the others cross-check
+                    r.second_opinion = True
+            note = (f"AI read the room labels {', '.join(hits) or '(none of this type)'} -> {n} "
+                    f"(glossary: {', '.join(sorted({LR.norm_label(h) for h in hits})) or '-'})")
+            results.append(VoterResult(voter=Voter(name="label_reader", value=int(n), element_ids=[e.id for e in ev],
+                                                   runs=[int(n)], note=note),
+                                       evidence=ev, unit="count", second_opinion=not primary))
+            notes.append("labels read by a vision model, counted by code" + (" (decides this answer)" if primary else ""))
+        except Exception as e:  # noqa: BLE001  (the label reader is optional)
+            notes.append(f"label reader unavailable: {type(e).__name__}")
+
+    READER_Q = {"window": "How many windows are shown on this floor plan?",
+                "door": "How many doors are shown on this floor plan? Count doorways fitted with a door; open doorways without a door leaf do not count.",
+                "toilet": "How many toilet bowls (WC seats) are drawn on this floor plan?",
+                "sink": "How many sinks and wash basins (kitchen and bathroom combined; a double-bowl sink counts as one) are drawn on this floor plan?"}
+
+    def _parts_from_readers(self, plan, res, ctx, notes: list[str]) -> None:
+        """A comparison like 'more windows than doors?' must use the same readers as 'how many windows?' (the
+        Findings), not raw element counts. Plain count parts of a known object are recomputed that way."""
+        from engine.query import execute_plan
+        swapped, vals = False, []
+        for spec in plan.specs:
+            sel = spec.get("select")
+            q = self.READER_Q.get(sel) if isinstance(sel, str) and spec.get("aggregate") == "count" \
+                and not spec.get("where") and "/swiss_dwellings/" not in ctx.abs_path else None
+            if q:
+                po = self.ask(ctx.path, q, allow_siblings=ctx.allow_siblings, benchmark=True)
+                if isinstance(po.value, (int, float)):
+                    vals.append(int(po.value))
+                    swapped = True
+                    continue
+            vals.append(None)
+        if not swapped:
+            return
+        parts = [v if v is not None else res.groups.get(f"part{i + 1}") for i, v in enumerate(vals)]
+        a, b = (parts + [None, None])[:2]
+        if a is None or b is None:
+            return
+        if plan.combine in ("greater", "less"):
+            res.value = "Yes" if ((a > b) if plan.combine == "greater" else (a < b)) else "No"
+        elif plan.combine == "difference":
+            res.value = a - b
+        elif plan.combine == "ratio" and b:
+            res.value = round(a / b, 4)
+        elif plan.combine == "sum":
+            res.value = sum(p for p in parts if p is not None)
+        res.groups = {f"part{i + 1}": p for i, p in enumerate(parts)}
+        notes.append("counts in this comparison come from the same readers as the Findings")
+
+    def _with_walls(self, facts: SheetFacts, ctx, po: ProofObject, notes: list[str]) -> SheetFacts:
+        """Scans carry no wall elements; for wall questions add the CNN wall pieces (same walls as the 3D view) with
+        footprint area, centre-line length and volume through the drawing scale and a style ceiling height."""
+        try:
+            import cv2
+            from shapely.geometry import Polygon
+            from engine import geometry3d
+            from engine.decide.vibe import load_vibe
+            img = cv2.imread(ctx.abs_path, cv2.IMREAD_COLOR)
+            got = geometry3d.cnn_walls(img) if img is not None else None
+            if not got or not got[0]:
+                return facts
+            sc = self._scale(facts, facts_cache.sha256_file(ctx.abs_path))
+            px = sc.px_per_m
+            h = float(load_vibe("standard")["ceiling_height_m"]["value"])
+            els = list(facts.elements)
+            for i, wl in enumerate(got[0]):
+                g = Polygon(wl["outer"], wl["holes"]).buffer(0)
+                if g.area <= 0:
+                    continue
+                attrs = {"area_px": round(g.area, 1)}
+                if px:
+                    a_m2 = g.area / px ** 2
+                    # centre-line length of a band of walls ~ area / mean thickness (thickness from the outline)
+                    thick = max(1e-6, 2 * g.area / max(g.length, 1e-6))
+                    length_m = (g.area / thick) / px
+                    attrs.update(area_m2=round(a_m2, 3), length_m=round(length_m, 2), volume_m3=round(a_m2 * h, 3))
+                els.append(Element(id=f"wall_{i}", kind="wall", polygon=[tuple(p) for p in wl["outer"]], attrs=attrs))
+            if px:
+                po.assumptions.append(_scale_assumption(sc))
+                po.assumptions.append(Assumption(key="wall_height_m", value=h, unit="m", tag=Tag.defaulted,
+                                                 source="standard style ceiling height"))
+            notes.append(f"walls: {len(got[0])} wall pieces from the 3D wall reader added for this question")
+            return facts.model_copy(update={"elements": els})
+        except Exception as e:  # noqa: BLE001
+            notes.append(f"walls unavailable: {type(e).__name__}")
+            return facts
+
+    def _apply_overrides(self, results: list, sha: str, intent: str, po: ProofObject, notes: list[str]) -> None:
+        """A user verdict ("this IS / is NOT a door") corrects every voter's element set: a voter that lacks a
+        confirmed element gains it, a voter that has a rejected one loses it (match: IoU >= 0.3). Values change by
+        those corrections only, and the tier is then recomputed from agreement as usual, so resolving every
+        disputed element is what turns an answer green. Each verdict is recorded as a `chosen` assumption."""
+        verdicts = self.overrides.get((sha, intent)) or []
+        if not verdicts:
+            return
+        from shapely.geometry import Polygon
+
+        def poly(pts):
+            try:
+                g = Polygon([(float(p[0]), float(p[1])) for p in pts])
+                return g if g.is_valid and g.area > 0 else g.buffer(0)
+            except Exception:  # noqa: BLE001
+                return None
+
+        def iou(a, b):
+            if a is None or b is None or a.is_empty or b.is_empty:
+                return 0.0
+            u = a.union(b).area
+            return a.intersection(b).area / u if u else 0.0
+
+        for r in results:
+            if not isinstance(r.voter.value, (int, float)) or r.exact:
+                continue
+            own = [poly([(pt.x, pt.y) if hasattr(pt, "x") else pt for pt in e.polygon]) for e in r.evidence]
+            delta = 0
+            for v in verdicts:
+                g = poly(v["polygon"])
+                has = any(iou(g, o) >= 0.3 for o in own)
+                if v["keep"] and not has:
+                    delta += 1
+                elif not v["keep"] and has:
+                    delta -= 1
+            if delta:
+                r.voter.value = max(0, int(r.voter.value) + delta)
+                r.voter.note = (r.voter.note + "; " if r.voter.note else "") + f"user corrections {delta:+d}"
+        for v in verdicts:
+            po.assumptions.append(Assumption(key=f"user:{intent}:{v.get('id', '?')}", value=bool(v["keep"]),
+                                             tag=Tag.chosen, source="user"))
+        notes.append(f"user verdicts applied: {sum(v['keep'] for v in verdicts)} confirmed, "
+                     f"{sum(not v['keep'] for v in verdicts)} rejected")
+
     @staticmethod
     def _grey(po: ProofObject, reason: str) -> ProofObject:
         po.tier, po.value, po.refusal = Tier.grey, None, reason
@@ -369,6 +595,10 @@ class PipelineEngine:
             return facts.scale or ScaleInfo(needs_user=True)
 
     def _attach_scale(self, po: ProofObject, scale: Optional[ScaleInfo], facts: SheetFacts, value: float) -> None:
+        if "vector" in facts.extras or po.provenance.resolved_from in ("dxf", "ifc"):
+            # exact CAD/BIM read: values are already in metres; no door guess, no 'ask for a reference length'
+            po.scale = ScaleInfo(px_per_m=1.0, rel_sigma=0.001, anchors=[], widths_relative=False, needs_user=False)
+            return
         if scale is not None and scale.px_per_m:
             po.scale = scale
             if scale.rel_sigma is not None and po.kind == "area":
@@ -407,12 +637,40 @@ class PipelineEngine:
         from engine.registry import VoterResult
 
         cost = Cost()
+        if re.search(r"\bwall|partition|seinä|wand|mur\b|parete", question, re.I) and \
+                not any(e.kind == "wall" for e in facts.elements) and "vector" not in facts.extras:
+            facts = self._with_walls(facts, ctx, po, notes)
         try:
-            plan = planner.plan(question, facts, self.llm)
+            try:
+                plan = planner.plan(question, facts, self.planner_llm or self.llm)
+            except Exception as e:  # noqa: BLE001  (strong model failed / empty: fall back to the fast one)
+                if self.planner_llm is None:
+                    raise
+                notes.append(f"strong planner failed ({type(e).__name__}); fast planner used")
+                plan = planner.plan(question, facts, self.llm)
             cost = plan.cost
-            res = query.execute_plan(plan.specs, plan.combine, facts, ctx.params.get("_px_per_m"))
+            px = ctx.params.get("_px_per_m")
+            res = query.execute_plan(plan.specs, plan.combine, facts, px)
+            if len(plan.specs) > 1:
+                self._parts_from_readers(plan, res, ctx, notes)
+            if res.value is None and res.needs_scale and not px:
+                # areas on a scan without a printed scale: fall back to the engine's scale (door-width prior or the
+                # user's anchors), say so, and let the user type the real size
+                sc = self._scale(facts, facts_cache.sha256_file(ctx.abs_path))
+                if sc.px_per_m:
+                    res = query.execute_plan(plan.specs, plan.combine, facts, sc.px_per_m)
+                    po.scale = sc
+                    po.assumptions.append(_scale_assumption(sc))
+                    if not any(a.kind in ("user", "dimension", "scale_bar", "printed_ratio", "printed_area")
+                               for a in sc.anchors):
+                        notes.append("no printed scale: sizes assume typical 0.9 m doors; enter a real dimension to fix")
+                    else:
+                        notes.append("scale: " + "; ".join(a.note or a.kind for a in sc.anchors if a.kind != "door_prior"))
         except Exception as e:  # noqa: BLE001
             notes.append(f"planner failed: {type(e).__name__}: {e}")
+            m = re.search(r"unsupported: (.+)", str(e))
+            if m:
+                po.refusal = f"this question needs something the query engine cannot express yet ({m.group(1)})"
             c = getattr(e, "cost", None)
             if c is not None:  # LLM was called but the spec was rejected: account the call, no planner answer
                 po.cost = Cost(**{**po.cost.model_dump(), "llm_calls": c.llm_calls, "tokens_in": c.tokens_in,
@@ -423,15 +681,31 @@ class PipelineEngine:
         po.query_spec = plan.specs[0] if len(plan.specs) == 1 else {"parts": plan.specs, "combine": plan.combine}
         if res.value is None or isinstance(res.value, list):
             notes.append("planner spec ran but produced no scalar (needs scale or list answer)")
+            miss = next((n.split(": ", 1)[1] for n in res.notes if n.startswith("no matching elements")), None)
+            if miss:
+                po.refusal = miss                    # e.g. "no bathroom recognised on this drawing"
             return [], cost
         by = {e.id: e for e in facts.elements}
-        if po.kind not in ("area", "length", "volume") and res.unit in ("m2", "m", "m3"):
+        if res.unit == "ratio":
+            po.kind = "other"                       # a share/ratio: keep the fraction, never round to a count
+        elif po.kind not in ("area", "length", "volume") and res.unit in ("m2", "m", "m3"):
             po.kind = {"m2": "area", "m": "length", "m3": "volume"}[res.unit]
         elif res.unit == "count":
             po.kind = "count"
         notes.append("answer computed by code from an LLM-drafted query_spec")
-        v = int(res.value) if po.kind == "count" else float(res.value)
-        return [VoterResult(Voter(name="planner_query", value=v, element_ids=res.evidence_ids, runs=[v],
+        po.reliability_note = ("computed by a query the LLM drafted (shown below); no measured reliability for "
+                               "free-form questions yet: check the parts and the highlighted elements")
+        for n in res.notes:
+            notes.append(f"query: {n}")
+        if res.groups:
+            notes.append("query parts: " + ", ".join(f"{k}={v}" for k, v in res.groups.items()))
+        if isinstance(res.value, str):                  # "which room ..." -> a name, not a number
+            po.kind = "text"
+            v = res.value
+        else:
+            v = int(res.value) if po.kind == "count" else float(res.value)
+        return [VoterResult(Voter(name="planner_query", value=v, element_ids=res.evidence_ids,
+                              runs=[] if isinstance(v, str) else [v],
                                   note="LLM-drafted spec executed by the query engine"),
                             evidence=[by[i] for i in res.evidence_ids if i in by], unit=res.unit)], cost
 
@@ -450,6 +724,59 @@ class PipelineEngine:
             return (0 if kind == "count" else None), "no prior available"
         v = int(round(v)) if kind == "count" else float(v)
         return v, f"benchmark best guess: per-{'intent' if intent in p['intent'] else 'source/type'} dev-median prior"
+
+
+_LOCKS: dict = {}
+_LOCKS_GUARD = threading.Lock()
+
+
+def _file_lock(sha: str, allow: bool) -> "threading.Lock":
+    with _LOCKS_GUARD:
+        return _LOCKS.setdefault((sha, allow), threading.Lock())
+
+
+def _scan_check_refusal(sha: str) -> Optional[str]:
+    """If the scan check (2 wall readers + 2 vision reviewers, api /api/geometry) already ran on this file and found
+    no floor plan, floor-plan questions do not apply. Reads the cached result only; never calls a model here."""
+    try:
+        import json as _json
+        f = ROOT / "cache" / "geometry" / f"{sha}-pixels.json"
+        if not f.exists():
+            return None
+        views = (_json.loads(f.read_text()).get("check") or {}).get("views") or []
+        types = [v.get("type") for v in views if v.get("type")]
+        src = {v.get("type_source", "") for v in views}
+        if types and "floor_plan" not in types and any("reviewer" in s for s in src):
+            shown = ", ".join(sorted({t.replace("_", " ") for t in types}))
+            return (f"this sheet shows a {shown}, not a floor plan (scan check: two AI reviewers agree), "
+                    "so floor-plan counts do not apply")
+    except Exception:  # noqa: BLE001
+        return None
+    return None
+
+
+def _scale_assumption(sc: ScaleInfo) -> Assumption:
+    """Where the drawing's scale came from, as an assumption with an honest tag."""
+    kinds = {a.kind for a in sc.anchors}
+    if "user" in kinds:
+        tag, src = Tag.chosen, "your measurement"
+    elif kinds & {"dimension", "scale_bar", "printed_ratio", "printed_area"}:
+        a = next(a for a in sc.anchors if a.kind in ("dimension", "scale_bar", "printed_ratio", "printed_area"))
+        tag, src = Tag.specified, f"measurements printed on the drawing: {a.note or a.kind}"
+    else:
+        tag, src = Tag.defaulted, "typical door width (0.9 m) on this drawing"
+    return Assumption(key="scale_px_per_m", value=round(sc.px_per_m, 3), unit="px/m", tag=tag, source=src)
+
+
+def _native(x):
+    """numpy scalars/arrays -> plain Python, recursively."""
+    if isinstance(x, dict):
+        return {k: _native(v) for k, v in x.items()}
+    if isinstance(x, (list, tuple)):
+        return [_native(v) for v in x]
+    if hasattr(x, "item") and type(x).__module__ == "numpy":
+        return x.tolist() if getattr(x, "ndim", 0) else x.item()
+    return x
 
 
 def _load_priors() -> dict:

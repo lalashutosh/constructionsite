@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from .proof import ProofObject, Tier
 
+AGREE_TOL = 0.02   # area/length/volume: same tolerance as the scorer and engine.pipeline._agree
+
 
 def check(po: ProofObject) -> list[str]:
     bad: list[str] = []
@@ -17,8 +19,11 @@ def check(po: ProofObject) -> list[str]:
         vals = [v.value for v in po.voters if v.value is not None]
         if len(vals) < 2:
             bad.append("green needs >= 2 independent voters")
-        elif len(set(vals)) != 1:
+        elif po.kind == "count" and len(set(vals)) != 1:
             bad.append(f"green requires voters to agree, got {vals}")
+        elif po.kind != "count" and (max(vals) - min(vals)) > AGREE_TOL * max(abs(v) for v in vals):
+            # area/length/volume agree within the scoring tolerance (docs/decisions/contract-invariants-area-tolerance.md)
+            bad.append(f"green requires voters to agree within {AGREE_TOL:.0%}, got {vals}")
 
     if po.kind == "count" and po.value is not None and not isinstance(po.value, int):
         bad.append("count value must be int")

@@ -1,266 +1,570 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { DEMO_FIXTURES, fetchClaims, fetchFacts, fetchProof, getMode } from "./api";
-import type { Element, Interval, ProofObject, Scalar, SheetFacts } from "./types";
-import { effective, findings, receipt, type Ruling } from "./derive";
-import { disputedIds } from "./derive";
-import { EvidenceStack, type ViewMode } from "./components/EvidenceStack";
-import { AnswerCard } from "./components/AnswerCard";
-import { ReceiptPanel } from "./components/ReceiptPanel";
-import { DecisionCards } from "./components/DecisionCards";
-import { FindingsList } from "./components/FindingsList";
-import { ScaleAsk } from "./components/ScaleAsk";
-import { CostMeter } from "./components/CostMeter";
-import { TrustLens } from "./components/TrustLens";
-import { Hook } from "./components/Hook";
-import { Lab } from "./Lab";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ask, buildProject, fetchPlan, fetchSamples, setScale, ScaleError, geometry, imageUrl, upload, type Geometry, type Sample, type BuildPlan, type BuildingResult } from "./api";
+import { chipsFor, findingSpecs } from "./logic";
+import type { ProofObject } from "./types";
+import { HowPage } from "./how";
+import { ProjectDrawer, flattenProject, noFloorsNote, typeWord, type FileStatus, type ProjFile } from "./project";
+import { Ask, BuildPanel, Findings, Know, Rail, Drawer, Seg, ViewerPane, type BannerItem, type ProgressInfo, type ScaleState, type ThemeName, type Floor, type FindingState, type Upload } from "./panels";
 
-type Tab = "answer" | "receipt" | "decide" | "findings";
-const TABS: { id: Tab; label: string }[] = [
-  { id: "answer", label: "Answer" },
-  { id: "receipt", label: "Receipt" },
-  { id: "decide", label: "Decide" },
-  { id: "findings", label: "Findings" },
-];
-
-export interface Loaded {
-  proofs: Record<string, ProofObject>;
-  facts: Record<string, SheetFacts | null>;
+interface ProjectState {
+  names: string[];
+  result: BuildingResult | null;
+  stage: "upload" | "title" | "sort" | "build" | "done";
+  upI: number;
+  upN: number;
+  since: number;
+  error: string | null;
+  skipped: string;
 }
-
-export async function loadAll(): Promise<Loaded> {
-  const proofs: Record<string, ProofObject> = {};
-  const facts: Record<string, SheetFacts | null> = {};
-  await Promise.all(
-    DEMO_FIXTURES.map(async (f) => {
-      try {
-        const p = await fetchProof(f);
-        proofs[f.id] = p;
-        facts[f.id] = await fetchFacts(p);
-      } catch {
-        /* fixture missing: simply not offered */
-      }
-    }),
-  );
-  return { proofs, facts };
-}
-
-export function mergeElements(proof: ProofObject, facts: SheetFacts | null): Element[] {
-  const ids = new Set(proof.evidence.map((e) => e.id));
-  return [...(facts?.elements ?? []).filter((e) => !ids.has(e.id)), ...proof.evidence];
-}
-
-export function sizeOf(facts: SheetFacts | null) {
-  return facts?.width_px && facts.height_px ? { w: facts.width_px, h: facts.height_px } : null;
-}
-
-function useQuery() {
-  return useMemo(() => new URLSearchParams(window.location.search), []);
-}
+const FOLDER_STAGES = ["Uploading", "Reading title blocks", "AI sorting the sheets", "Building floors"];
+const SINGLE_STAGES = ["Uploading", "Reading the drawing", "Checking with 2 AI reviewers", "Building in 3D", "Counting"];
+const EXTS = ["png", "jpg", "jpeg", "pdf", "dxf", "ifc", "svg"];
+const extOf = (n: string) => n.toLowerCase().split(".").pop() ?? "";
 
 export default function App() {
-  const [hash, setHash] = useState(window.location.hash);
+  const [samples, setSamples] = useState<Sample[]>([]);
+  const [floors, setFloors] = useState<Floor[]>([]);
+  const [activeKey, setActiveKey] = useState<string | null>(null);
+  const [findings, setFindings] = useState<Record<string, Record<string, FindingState>>>({});
+  const [selected, setSelected] = useState<{ path: string; proof: ProofObject } | null>(null);
+  const [asking, setAsking] = useState(false);
+  const [askErr, setAskErr] = useState<string | null>(null);
+  const [hoverIdx, setHoverIdx] = useState<number | null>(null);
+  const [showPins, setShowPins] = useState(true);
+  const [drawer, setDrawer] = useState(false);
+  const [uploads, setUploads] = useState<Upload[]>([]);
+  const [busy] = useState<string | null>(null);
+  const [mode, setMode] = useState<"findings" | "plan">("findings");
+  const [vibe, setVibe] = useState("standard");
+  const [plans, setPlans] = useState<Record<string, BuildPlan>>({});
+  const [stepIdx, setStepIdx] = useState<number | null>(null);
+  const [playing, setPlaying] = useState(false);
+  const [drawingOn, setDrawingOn] = useState(true);
+  const [theme, setTheme] = useState<ThemeName>(() => {
+    const saved = localStorage.getItem("plumb-theme");
+    return saved === "light" || saved === "dark" ? saved : window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+  });
   useEffect(() => {
-    const f = () => setHash(window.location.hash);
-    window.addEventListener("hashchange", f);
-    return () => window.removeEventListener("hashchange", f);
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem("plumb-theme", theme);
+  }, [theme]);
+  const [scale, setScaleState] = useState<ScaleState>("off");
+  const [ppmByPath, setPpmByPath] = useState<Record<string, number>>({});
+  const [banner, setBanner] = useState<BannerItem[] | null>(null);
+  const [flash, setFlash] = useState<string[]>([]);
+  const [why, setWhy] = useState(false);
+  const [proj, setProj] = useState<ProjectState | null>(null);
+  const [projDrawer, setProjDrawer] = useState(false);
+  const [flat, setFlat] = useState<{ path: string; typeWord: string; title: string; why: string | null; sheet: string | null; isSchedule: boolean } | null>(null);
+  const [upl, setUpl] = useState<{ since: number } | null>(null);
+  const [, setTick] = useState(0);
+  const retryRef = useRef<(() => void) | null>(null);
+  const doneAt = useRef<Record<string, number>>({});
+  const needTick = useRef(false);
+  const [scaleIssue, setScaleIssue] = useState<{ message: string; label: string | null; lengthM: number | null } | null>(null);
+  const [page, setPage] = useState<"work" | "how">("work");
+  const [measureTyped, setMeasureTyped] = useState<string | null>(null);
+  const [measuredPx, setMeasuredPx] = useState<number | null>(null);
+  const [planExtra, setPlanExtra] = useState<Record<string, number>>({});
+  const fileRef = useRef<HTMLInputElement>(null);
+  const dirRef = useRef<HTMLInputElement>(null);
+  const runId = useRef(0);
+  const [epoch, setEpoch] = useState(0);
+
+  useEffect(() => {
+    void fetchSamples().then(setSamples);
   }, []);
-  if (hash.startsWith("#/lab")) return <Lab name={hash.split("/")[2] ?? ""} />;
-  return <Main />;
-}
 
-function Main() {
-  const q = useQuery();
-  const [loaded, setLoaded] = useState<Loaded | null>(null);
-  const [claims, setClaims] = useState<Record<string, unknown> | null>(null);
-  const [fx, setFx] = useState(q.get("fx") ?? "doors");
-  const [tab, setTab] = useState<Tab>((q.get("tab") as Tab) ?? "answer");
-  const [mode, setMode] = useState<ViewMode>((q.get("view") as ViewMode) ?? "reading");
-  const [explode, setExplode] = useState(1);
-  const [wipe, setWipe] = useState(50);
-  const [lens, setLens] = useState(false);
-  const [hover, setHover] = useState<string[]>([]);
-  const [pinned, setPinned] = useState<string | null>(null);
-  const [ruling, setRuling] = useState<Ruling>(q.get("rule") === "yes" ? "yes" : null);
-  const [chosen, setChosen] = useState<Record<string, Scalar>>({});
-  const [vibe, setVibe] = useState<string | null>(null);
-  const [asking, setAsking] = useState(q.get("ask") === "1");
-  const [askDismissed, setAskDismissed] = useState<string[]>([]);
-  const [hook, setHook] = useState(q.get("hook") !== "0");
-  const hookAt = Number(q.get("hookAt") ?? 0);
+  const active = floors.find((f) => f.key === activeKey) ?? null;
 
-  useEffect(() => {
-    void loadAll().then(setLoaded);
-    void fetchClaims().then(setClaims);
+  const open = useCallback((list: { path: string; name: string; credit?: string }[]) => {
+    setEpoch((e) => e + 1);
+    setSelected(null);
+    setAskErr(null);
+    setHoverIdx(null);
+    setFloors(list.map((l) => ({ key: l.path, path: l.path, name: l.name, credit: l.credit ?? null, geo: null, geoErr: null })));
+    setActiveKey(list[list.length - 1]?.path ?? null);
+    setDrawer(false);
   }, []);
 
+  // deep link: ?open=<dataset-relative or upload path>&name=<shown name> (demo + tests)
   useEffect(() => {
-    const k = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        setPinned(null);
-        setHover([]);
-        setAsking(false);
+    const q = new URLSearchParams(window.location.search);
+    const path = q.get("open");
+    if (path) open([{ path, name: q.get("name") ?? path.split("/").pop() ?? path }]);
+  }, [open]);
+
+  // geometry for every floor, one at a time (first call per file can take a while)
+  const geoBusy = useRef(false);
+  useEffect(() => {
+    if (geoBusy.current) return;
+    const next = [...floors].sort((a, b) => (a.key === activeKey ? -1 : b.key === activeKey ? 1 : 0)).find((f) => !f.geo && !f.geoErr);
+    if (!next) return;
+    geoBusy.current = true;
+    setFloors((fs) => fs.map((f) => (f.key === next.key ? { ...f, geoStart: Date.now() } : f)));
+    geometry(next.path)
+      .then((g: Geometry) => setFloors((fs) => fs.map((f) => (f.key === next.key ? { ...f, geo: g, geoDone: Date.now() } : f))))
+      .catch((e: Error) => setFloors((fs) => fs.map((f) => (f.key === next.key ? { ...f, geoErr: e.message } : f))))
+      .finally(() => {
+        geoBusy.current = false;
+        setFloors((fs) => [...fs]);
+      });
+  }, [floors, activeKey]);
+
+  // findings for the active drawing, asked in sequence
+  const specs = useMemo(() => (active ? findingSpecs(active.path, samples) : []), [active, samples]);
+  useEffect(() => {
+    if (!active || !specs.length) return;
+    const path = active.path;
+    const my = ++runId.current;
+    const have = findings[path] ?? {};
+    void (async () => {
+      for (const s of specs) {
+        if (have[s.key]?.proof || have[s.key]?.err) continue;
+        if (runId.current !== my) return;
+        setFindings((f) => ({ ...f, [path]: { ...(f[path] ?? {}), [s.key]: { loading: true } } }));
+        let st: FindingState;
+        try {
+          st = { proof: await ask(path, s.q) };
+        } catch (e) {
+          st = { err: (e as Error).message };
+        }
+        setFindings((f) => ({ ...f, [path]: { ...(f[path] ?? {}), [s.key]: st } }));
+        if (st.proof) setSelected((cur) => (cur && cur.path === path ? cur : { path, proof: st.proof! }));
       }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active?.path, specs.length, epoch]);
+
+  const askPath = flat?.path ?? active?.path ?? null;
+  const submit = async (q: string) => {
+    if (!askPath || !q.trim()) return;
+    setAsking(true);
+    setAskErr(null);
+    try {
+      const p = await ask(askPath, q.trim());
+      setSelected({ path: askPath, proof: p });
+    } catch (e) {
+      setAskErr((e as Error).message);
+    } finally {
+      setAsking(false);
+    }
+  };
+
+  const flatName = (f: File) => (f as File & { webkitRelativePath?: string }).webkitRelativePath || f.name;
+  const levelName = (f: { level?: number | null; level_label?: string | null; sheet?: string | null; display_label?: string | null }) =>
+    f.display_label || f.level_label || (f.level != null ? `Level ${f.level}` : (f.sheet ?? "Plan"));
+
+  const runBuild = async (done: { path: string; name: string }[], skipped: string) => {
+    setProj((p) => (p ? { ...p, stage: "title", since: Date.now(), error: null } : p));
+    const timer = window.setTimeout(() => setProj((p) => (p && p.stage === "title" ? { ...p, stage: "sort", since: Date.now() } : p)), 6000);
+    try {
+      const result = await buildProject(done);
+      window.clearTimeout(timer);
+      const floorsSorted = [...result.floors].sort((x, y) => x.stack_index - y.stack_index);
+      open(floorsSorted.map((f) => ({ path: f.path, name: levelName(f) })));
+      setFlat(null);
+      setProj((p) => (p ? { ...p, result, stage: floorsSorted.length ? "build" : "done", since: Date.now(), skipped } : p));
+      setProjDrawer(true);
+    } catch (e) {
+      window.clearTimeout(timer);
+      retryRef.current = () => void runBuild(done, skipped);
+      setProj((p) => (p ? { ...p, error: (e as Error).message } : p));
+    }
+  };
+
+  const doUpload = async (files: File[], folder: boolean) => {
+    const visible = files.filter((f) => !flatName(f).split("/").some((s) => s.startsWith(".")));
+    if (folder && visible.length > 1) {
+      const ok = visible.slice(0, 80).sort((x, y) => flatName(x).localeCompare(flatName(y), undefined, { numeric: true }));
+      setPage("work");
+      setDrawer(false);
+      setProjDrawer(true);
+      setProj({ names: ok.map(flatName), result: null, stage: "upload", upI: 0, upN: ok.length, since: Date.now(), error: null, skipped: "" });
+      const done: { path: string; name: string }[] = [];
+      const skipExt: Record<string, number> = {};
+      for (let k = 0; k < ok.length; k++) {
+        try {
+          done.push({ path: await upload(ok[k]), name: flatName(ok[k]) });
+        } catch {
+          const e = `.${extOf(ok[k].name)}`;
+          skipExt[e] = (skipExt[e] ?? 0) + 1;
+        }
+        setProj((p) => (p ? { ...p, upI: k + 1 } : p));
+      }
+      if (!done.length) {
+        retryRef.current = () => void doUpload(files, folder);
+        setProj((p) => (p ? { ...p, error: "None of the files could be uploaded" } : p));
+        return;
+      }
+      const nSkip = Object.values(skipExt).reduce((s, n) => s + n, 0);
+      await runBuild(done, nSkip ? `${nSkip} file${nSkip > 1 ? "s" : ""} not uploaded (type not supported): ${Object.entries(skipExt).map(([e, n]) => `${n} ${e}`).join(", ")}` : "");
+      return;
+    }
+    const ok = visible.filter((f) => EXTS.includes(extOf(f.name))).slice(0, 12);
+    if (!ok.length) return;
+    ok.sort((x, y) => x.name.localeCompare(y.name, undefined, { numeric: true }));
+    setProj(null);
+    setUpl({ since: Date.now() });
+    try {
+      const done: Upload[] = [];
+      for (const f of ok) done.push({ path: await upload(f), name: f.name });
+      setUploads((u) => [...done, ...u]);
+      open(done.map((d) => ({ ...d, credit: undefined })));
+      setFlat(null);
+    } catch (e) {
+      setAskErr((e as Error).message);
+    } finally {
+      setUpl(null);
+    }
+  };
+
+  const planKey = active ? `${active.path}|${vibe}|${JSON.stringify(planExtra)}` : "";
+  const plan = plans[planKey] ?? null;
+  useEffect(() => {
+    if (mode !== "plan" || !active || (plans[planKey] && !plans[planKey].mock)) return;
+    let live = true;
+    void fetchPlan(active.path, vibe, planExtra).then((p) => live && setPlans((m) => ({ ...m, [planKey]: p })));
+    return () => {
+      live = false;
     };
-    window.addEventListener("keydown", k);
-    return () => window.removeEventListener("keydown", k);
-  }, []);
-
-  const proof = loaded?.proofs[fx] ?? null;
-  const facts = loaded?.facts[fx] ?? null;
-  const elements = useMemo(() => (proof ? mergeElements(proof, facts) : []), [proof, facts]);
-  const eff = useMemo(() => (proof ? effective(proof, ruling) : null), [proof, ruling]);
-  const dis = useMemo(() => (proof ? disputedIds(proof) : []), [proof]);
-  const anchorIds = useMemo(() => proof?.scale?.anchors.flatMap((a) => a.element_ids) ?? [], [proof]);
-  const doorsCtx = useMemo(() => elements.filter((e) => e.kind === "door"), [elements]);
-
-  // the widest interval among fixtures for the same question: the "before" band the collapse is measured against
-  const axis = useMemo<Interval | null>(() => {
-    if (!proof?.interval || !loaded) return null;
-    const same = Object.values(loaded.proofs).filter((p) => p.question === proof.question && p.interval);
-    const lo = Math.min(...same.map((p) => p.interval!.lo));
-    const hi = Math.max(...same.map((p) => p.interval!.hi));
-    const pad = (hi - lo) * 0.08;
-    return { lo: Math.max(0, lo - pad), hi: hi + pad };
-  }, [proof, loaded]);
-
-  const pick = useCallback((id: string) => {
-    setFx(id);
-    setRuling(null);
-    setPinned(null);
-    setHover([]);
-    setChosen({});
-    setVibe(null);
-    setTab("answer");
-  }, []);
-
-  const endHook = useCallback(() => setHook(false), []);
-
-  if (!loaded || !proof || !eff) {
-    return <div className="lab">Loading proof…</div>;
+  }, [mode, planKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    setStepIdx(null);
+    setPlaying(false);
+  }, [active?.path, mode]);
+  useEffect(() => {
+    if (!playing || !plan) return;
+    const t = setInterval(() => {
+      setStepIdx((i) => {
+        const n = i === null ? 0 : i + 1;
+        if (n >= plan.steps.length) {
+          setPlaying(false);
+          return plan.steps.length - 1;
+        }
+        return n;
+      });
+    }, 2200);
+    return () => clearInterval(t);
+  }, [playing, plan]);
+  const curStep = mode === "plan" && plan && stepIdx !== null ? plan.steps[stepIdx] : null;
+  const startScale = () => {
+    setPage("work");
+    setBanner(null);
+    setMeasuredPx(null);
+    setScaleIssue(null);
+    setScaleState("pick");
+  };
+  const cancelScale = () => setScaleState("off");
+  const applyLength = async (m: number, typed?: { v: number; unit: string }) => {
+    if (!active || measuredPx === null) return;
+    const q = selected?.proof.question ?? specs[0]?.q;
+    if (!q) return;
+    const path = active.path;
+    setAsking(true);
+    setScaleIssue(null);
+    try {
+      const before = plans[planKey] ?? (await fetchPlan(path, vibe, planExtra));
+      const [pr] = await setScale(path, measuredPx, m, [q]);
+      if (pr) setSelected({ path, proof: pr });
+      const after = await fetchPlan(path, vibe, planExtra);
+      setPlans({ [planKey]: after });
+      setPpmByPath((x) => ({ ...x, [path]: measuredPx / m }));
+      setMeasureTyped(`${typed ? `${typed.v} ${typed.unit}` : `${m} m`}`);
+      const want: [string, string][] = [["floor_area_m2", "floor area"], ["wall_length_m", "wall length"], ["paint_l", "paint"], ["dry_area_m2", "flooring"], ["wet_tiles", "wet-floor tiles"]];
+      const items: BannerItem[] = [];
+      for (const [k, label] of want) {
+        const b = after.basis[k];
+        if (b && typeof b.value === "number" && b.value > 0) items.push({ label, value: b.value, unit: k === "wet_tiles" ? "pcs" : (b.unit ?? "").replace("m2", "m²") });
+      }
+      setBanner(items);
+      const old = new Map(before.checklist.map((c) => [c.id, c.qty]));
+      setFlash(after.checklist.filter((c) => c.qty !== null && old.get(c.id) !== c.qty).map((c) => c.id));
+      setScaleState("payoff");
+      window.setTimeout(() => setScaleState("off"), 5200);
+      window.setTimeout(() => setBanner(null), 9000);
+    } catch (e) {
+      if (e instanceof ScaleError) {
+        // implausible measurement: nothing was applied, keep the form open and offer the fix
+        const s = e.issue.suggestion;
+        let label: string | null = null;
+        let lengthM: number | null = null;
+        if (s && typeof s === "object") {
+          lengthM = typeof s.length_m === "number" ? s.length_m : null;
+          label = s.label ?? (typed ? `Use ${typed.v} ${s.unit ?? "cm"}` : null);
+        } else if (typeof s === "string") {
+          label = s;
+        }
+        if (lengthM === null && typed && typed.unit === "m" && typed.v >= 50) {
+          lengthM = typed.v / 100;
+          label = label ?? `Use ${typed.v} cm`;
+        }
+        setScaleIssue({ message: e.issue.message, label, lengthM });
+      } else {
+        setAskErr((e as Error).message);
+        setScaleState("off");
+      }
+    } finally {
+      setAsking(false);
+    }
+  };
+  // how the current sizes were obtained: defaulted (typical door), specified (printed on the drawing), chosen (you measured)
+  const scaleAsm = selected?.proof.assumptions.find((x) => x.key === "scale_px_per_m");
+  const planBasis = plan?.basis?.scale_px_per_m;
+  const scaleTag = active && ppmByPath[active.path] ? "chosen" : (scaleAsm?.tag ?? planBasis?.tag ?? "defaulted");
+  const scaleSrc = scaleAsm?.source ?? planBasis?.source ?? null;
+  const scaleKind: "defaulted" | "specified" | "chosen" = scaleTag === "specified" ? "specified" : scaleTag === "chosen" ? "chosen" : "defaulted";
+  const settled = (path: string) => specs.filter((s) => findings[path]?.[s.key]?.proof || findings[path]?.[s.key]?.err).length;
+  const nowMs = Date.now();
+  let progress: ProgressInfo | null = null;
+  if (proj && proj.error) {
+    progress = { stages: FOLDER_STAGES, idx: proj.stage === "upload" ? 0 : 2, frac: null, since: proj.since, label: "", error: proj.error, onRetry: () => retryRef.current?.() };
+  } else if (proj && proj.stage !== "done") {
+    if (proj.stage === "upload") progress = { stages: FOLDER_STAGES, idx: 0, frac: proj.upI / Math.max(1, proj.upN), since: proj.since, label: `Uploading ${proj.upI}/${proj.upN} files` };
+    else if (proj.stage === "title") progress = { stages: FOLDER_STAGES, idx: 1, frac: null, since: proj.since, label: "Reading title blocks" };
+    else if (proj.stage === "sort") progress = { stages: FOLDER_STAGES, idx: 2, frac: null, since: proj.since, label: "AI sorting the sheets" };
+    else {
+      const K = floors.length;
+      const k = floors.filter((f) => f.geo || f.geoErr).length;
+      progress = { stages: FOLDER_STAGES, idx: 3, frac: K ? k / K : 1, since: proj.since, label: `Building floor ${Math.min(k + 1, K)}/${K}` };
+    }
+  } else if (upl) {
+    progress = { stages: SINGLE_STAGES, idx: 0, frac: null, since: upl.since, label: "Uploading" };
+  } else if (active && active.geoErr) {
+    progress = { stages: SINGLE_STAGES, idx: 1, frac: null, since: active.geoStart ?? nowMs, label: "", error: active.geoErr, onRetry: () => setFloors((fs) => fs.map((f) => (f.key === active.key ? { ...f, geoErr: null } : f))) };
+  } else if (active && !active.geo) {
+    const since = active.geoStart ?? nowMs;
+    const el = (nowMs - since) / 1000;
+    progress = { stages: SINGLE_STAGES, idx: el > 6 ? 2 : 1, frac: null, since, label: el > 6 ? "Checking with 2 AI reviewers" : "Reading the drawing" };
+  } else if (active && active.geo && nowMs - (active.geoDone ?? 0) < 2700) {
+    const ck = active.geo.check;
+    const plans = ck ? ck.views.filter((v) => v.type === "floor_plan").length : 0;
+    progress = { stages: SINGLE_STAGES, idx: 3, frac: Math.min(1, (nowMs - (active.geoDone ?? nowMs)) / 2700), since: active.geoDone ?? nowMs, label: `Building in 3D${plans ? ` · found ${plans} floor plan${plans === 1 ? "" : "s"}` : ""}` };
+  } else if (active && specs.length && settled(active.path) < specs.length) {
+    progress = { stages: SINGLE_STAGES, idx: 4, frac: settled(active.path) / specs.length, since: active.geoDone ?? nowMs, label: `Counting · ${settled(active.path)}/${specs.length} questions` };
+  } else if (active && active.geo) {
+    const t = (doneAt.current[active.key] ??= nowMs);
+    if (nowMs - t < 1500) progress = { stages: SINGLE_STAGES, idx: 5, frac: 1, since: t, label: "Done" };
   }
-  const highlight = hover.length ? hover : pinned ? [pinned] : [];
-  const canAsk = proof.kind === "area" && proof.tier === "amber" && Boolean(loaded.proofs["area_after"]) && fx === "area_before";
-  const fin = findings(proof, ruling, chosen);
-  const lines = receipt(proof, chosen, vibe);
-  const showAsk = asking || (proof.scale?.needs_user === true && proof.kind === "area" && !askDismissed.includes(fx) && !hook);
+  needTick.current = progress !== null;
+  useEffect(() => {
+    const t = window.setInterval(() => needTick.current && setTick((x) => x + 1), 500);
+    return () => window.clearInterval(t);
+  }, []);
+  useEffect(() => {
+    if (proj && proj.stage === "build" && floors.length && floors.every((f) => f.geo || f.geoErr)) setProj((p) => (p ? { ...p, stage: "done" } : p));
+  }, [floors, proj]);
+
+  const projFiles: ProjFile[] = proj?.result
+    ? flattenProject(proj.result)
+    : (proj?.names ?? []).map((n) => ({ path: "", name: n, docType: "pending", sheet: null, title: null, why: null, isFloor: false, levelLabel: null }));
+  const statusOf = (f: ProjFile): FileStatus => {
+    if (!proj?.result) return proj && proj.names.indexOf(f.name) < proj.upI ? "reading" : "queued";
+    if (!f.isFloor) return "not a plan";
+    if (f.altOf !== undefined) return "queued";
+    const fl = floors.find((x) => x.path === f.path);
+    if (fl?.geo || fl?.geoErr) return "done";
+    const firstPending = floors.find((x) => !x.geo && !x.geoErr);
+    return firstPending?.path === f.path ? "reading" : "queued";
+  };
+  const openProjFile = (f: ProjFile) => {
+    if (!f.path) return;
+    if (f.isFloor && f.altOf === undefined) {
+      setFlat(null);
+      setActiveKey(f.path);
+    } else if (f.isFloor && f.altOf !== undefined) {
+      // another version of a storey: swap it into the stack in place of the shown plan, never stack both
+      const of = f.altOf;
+      setFlat(null);
+      setFloors((fs) => {
+        if (fs.some((x) => x.path === f.path)) return fs;
+        const base = fs.find((x) => x.path === of) ?? fs[fs.length - 1];
+        return fs.map((x) => (x === base ? { key: f.path, path: f.path, name: `${f.label || base.name} (version)`, credit: null, geo: null, geoErr: null } : x));
+      });
+      setActiveKey(f.path);
+    } else {
+      setFlat({ path: f.path, typeWord: typeWord(f.docType), title: f.label || [f.sheet, f.title].filter(Boolean).join(" · ") || f.name.split("/").pop() || f.name, why: f.why, sheet: f.sheet, isSchedule: /sched/i.test(f.docType) });
+    }
+  };
+  const projectNote = proj?.result && proj.result.floors.length === 0 && proj.stage === "done" ? noFloorsNote(projFiles) : null;
+  const seg = <Seg mode={mode} onMode={setMode} />;
+
+  const selFloor = selected ? floors.find((f) => f.key === selected.path) : undefined;
 
   return (
-    <div className="app">
-      {hook && fx === "doors" && (
-        <Hook proof={proof} elements={elements} size={sizeOf(facts)} answerIds={proof.evidence.filter((e) => e.kind === "door").map((e) => e.id)} onDone={endHook} startAt={hookAt} />
-      )}
-      <header className="top">
-        <span className="brand">
-          <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true">
-            <path d="M10 2v13M4 15h12M7 18h6" stroke="#7dd3fc" strokeWidth="1.8" fill="none" strokeLinecap="round" />
-            <circle cx="10" cy="15" r="2.4" fill="#7dd3fc" />
-          </svg>
-          Plumb
-        </span>
-        <span className="file" title={proof.provenance.file}>{proof.provenance.file.split("/").pop()}</span>
-        <span className="pill">{facts?.sheet_type?.replace(/_/g, " ") ?? (proof.tier === "grey" ? "not a plan" : "sheet")}</span>
-        <select aria-label="demo question" value={fx} onChange={(e) => pick(e.target.value)}>
-          {DEMO_FIXTURES.filter((f) => loaded.proofs[f.id]).map((f) => (
-            <option key={f.id} value={f.id}>
-              {f.label}
-            </option>
-          ))}
-        </select>
-        <span className="spacer" />
-        <label className="asof" title="Needs a second revision of this drawing. None loaded yet.">
-          as of revision
-          <input type="range" min={0} max={1} defaultValue={0} disabled aria-label="as of revision" />
-          <span>{proof.provenance.revision ?? "only one"}</span>
-        </label>
-        <TrustLens on={lens} onToggle={() => setLens((v) => !v)} />
-        <div className="seg" role="group" aria-label="view">
-          {([["scan", "Scan"], ["reading", "Our reading"], ["overlay", "Overlay"]] as [ViewMode, string][]).map(([m, l]) => (
-            <button key={m} aria-pressed={mode === m} onClick={() => setMode(m)}>
-              {l}
-            </button>
-          ))}
-        </div>
-      </header>
-
-      <div className="main">
-        <section className="left" aria-label="plan">
-          <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column" }}>
-            <div className="stage-tools" style={{ position: "relative" }}>
-              <label>
-                Layer gap
-                <input type="range" min={0} max={1} step={0.01} value={explode} disabled={mode !== "reading"} onChange={(e) => setExplode(Number(e.target.value))} aria-label="layer gap" />
-              </label>
-              <label>
-                Wipe
-                <input type="range" min={0} max={100} value={wipe} disabled={mode !== "overlay"} onChange={(e) => setWipe(Number(e.target.value))} aria-label="wipe" />
-              </label>
-              <span>{mode === "reading" ? "Layers exploded: hover a number to light its layer" : mode === "overlay" ? "Drag to compare scan and reading" : "Raw scan, nothing added"}</span>
-            </div>
-            <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", position: "relative" }}>
-              <EvidenceStack
-                proof={proof}
-                elements={elements}
-                size={sizeOf(facts)}
-                answerIds={proof.evidence.map((e) => e.id)}
-                disputedIds={ruling ? [] : dis}
-                anchorIds={anchorIds}
-                tier={eff.tier}
-                mode={mode}
-                explode={explode}
-                wipe={wipe}
-                highlightIds={highlight}
-                pinnedId={pinned}
-                lens={lens}
-                onHover={setHover}
-                onPin={setPinned}
-              />
-            </div>
-          </div>
-        </section>
-
-        <aside className="right">
-          <div className="tabs" role="tablist">
-            {TABS.map((t) => (
-              <button key={t.id} role="tab" aria-selected={tab === t.id} onClick={() => setTab(t.id)}>
-                {t.label}
-                {t.id === "findings" && <span className="badge">{fin.length}</span>}
-                {t.id === "decide" && <span className="badge">{proof.decisions_open.filter((d) => !(d.key in chosen)).length}</span>}
-              </button>
-            ))}
-          </div>
-          <div className="tabpanel" role="tabpanel">
-            {tab === "answer" && <AnswerCard proof={proof} eff={eff} ruling={ruling} axis={axis} canAsk={canAsk} onRule={setRuling} onHover={setHover} onPin={setPinned} onAsk={() => setAsking(true)} />}
-            {tab === "receipt" && <ReceiptPanel lines={lines} onHover={setHover} onPin={setPinned} />}
-            {tab === "decide" && <DecisionCards proof={proof} chosen={chosen} vibe={vibe} axis={axis} onChoose={(k, v) => setChosen((c) => ({ ...c, [k]: v }))} onVibe={setVibe} />}
-            {tab === "findings" && <FindingsList items={fin} onHover={setHover} onPin={setPinned} />}
-          </div>
-        </aside>
-      </div>
-
-      <footer className="foot">
-        <CostMeter cost={proof.cost} claims={claims} />
-        <span className="spacer" />
-        <span className="credit">
-          {getMode() === "live" ? "live" : "fixtures"} · {proof.provenance.credit ?? proof.provenance.license ?? "no credit on file"}
-          {proof.provenance.resolved_from ? ` · resolved from ${proof.provenance.resolved_from}` : ""}
-        </span>
-      </footer>
-
-      {showAsk && axis && (
-        <ScaleAsk
-          proof={proof}
-          doors={doorsCtx}
-          axis={axis}
-          onClose={() => {
-            setAsking(false);
-            setAskDismissed((d) => [...d, fx]);
-          }}
-          onAnswer={() => {
-            setAsking(false);
-            // fixtures mode: the post-answer proof is the real takeoff output
-            pick("area_after");
-          }}
+    <div className={`app ${projDrawer && proj ? "pd" : ""}`}>
+      <Rail
+        onImage={() => fileRef.current?.click()}
+        onFolder={() => dirRef.current?.click()}
+        onDrawings={() => { setProjDrawer(false); setDrawer((d) => !d); }}
+        drawerOpen={drawer}
+        theme={theme}
+        onTheme={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
+        howOn={page === "how"}
+        onHow={() => setPage((p) => (p === "how" ? "work" : "how"))}
+        hasProject={!!proj}
+        onProject={() => { setDrawer(false); setProjDrawer((d) => !d); }}
+      />
+      <input
+        ref={fileRef}
+        type="file"
+        hidden
+        accept=".png,.jpg,.jpeg,.pdf,.dxf,.ifc,.svg"
+        onChange={(e) => {
+          void doUpload([...(e.target.files ?? [])], false);
+          e.target.value = "";
+        }}
+      />
+      <input
+        ref={dirRef}
+        type="file"
+        hidden
+        // @ts-expect-error non-standard but widely supported directory picker
+        webkitdirectory=""
+        multiple
+        onChange={(e) => {
+          void doUpload([...(e.target.files ?? [])], true);
+          e.target.value = "";
+        }}
+      />
+      {drawer && (
+        <Drawer
+          samples={samples}
+          uploads={uploads}
+          onPick={(p, n, c) => open([{ path: p, name: n, credit: c }])}
+          onClose={() => setDrawer(false)}
         />
+      )}
+      {projDrawer && proj && (
+        <ProjectDrawer
+          result={proj.result}
+          pending={proj.names}
+          statusOf={statusOf}
+          files={projFiles}
+          activePath={activeKey}
+          flatPath={flat?.path ?? null}
+          onOpen={openProjFile}
+          onClose={() => setProjDrawer(false)}
+          skipped={proj.skipped}
+        />
+      )}
+      {page === "how" ? (
+        <HowPage />
+      ) : (
+      <main className="grid">
+        <section className="col left">
+          <ViewerPane
+            floors={floors}
+            active={active}
+            selected={selected}
+            selFloor={selFloor}
+            showPins={showPins}
+            hoverIdx={hoverIdx}
+            onHover={setHoverIdx}
+            busy={busy}
+            onPickFloor={setActiveKey}
+            onOpenDrawings={() => setDrawer(true)}
+            stage={curStep && plan && stepIdx !== null ? plan.steps.slice(0, stepIdx + 1).map((x) => x.phase) : null}
+            stageLabel={curStep ? `Step ${curStep.n} · ${curStep.title}` : null}
+            drawingOn={drawingOn}
+            setDrawingOn={setDrawingOn}
+            theme={theme}
+            scale={scale}
+            scaleKind={scaleKind}
+            scaleSrc={scaleSrc}
+            scaleIssue={scaleIssue}
+            ppm={active ? (ppmByPath[active.path] ?? null) : null}
+            banner={banner}
+            applying={asking}
+            onScaleStart={startScale}
+            onScaleCancel={cancelScale}
+            onMeasured={(px) => {
+              setMeasuredPx(Math.hypot(px[1][0] - px[0][0], px[1][1] - px[0][1]));
+              setScaleState("enter");
+            }}
+            onApplyLength={(m, typed) => void applyLength(m, typed)}
+            progress={progress}
+            measureTyped={measureTyped}
+            flat={flat}
+            onCloseFlat={() => setFlat(null)}
+            projectNote={projectNote}
+            onRetryGeo={() => setFloors((fs) => fs.map((f) => (f.key === activeKey ? { ...f, geoErr: null } : f)))}
+            onWhyRead={() => {
+              setSelected(null);
+              setWhy(true);
+            }}
+          />
+          <Ask
+            active={askPath}
+            chips={askPath ? (flat ? chipsFor(flat.path).slice(0, 2) : chipsFor(askPath)) : []}
+            selected={selected && askPath && selected.path === askPath ? selected.proof : null}
+            asking={asking}
+            err={askErr}
+            onAsk={(q) => void submit(q)}
+            onWhy={() => setWhy(true)}
+          />
+        </section>
+        <section className="col right">
+          {mode === "plan" ? (
+            <BuildPanel
+              plan={plan}
+              vibe={vibe}
+              onVibe={setVibe}
+              stepIdx={stepIdx}
+              onStep={(i) => {
+                setPlaying(false);
+                setStepIdx(i);
+              }}
+              playing={playing}
+              onPlay={() => {
+                if (playing) setPlaying(false);
+                else {
+                  setStepIdx(null);
+                  setPlaying(true);
+                }
+              }}
+              seg={seg}
+              hasDrawing={!!active}
+              onSetSize={startScale}
+              onInput={(k, v) => setPlanExtra((x) => ({ ...x, [k]: v }))}
+              scaleKind={scaleKind}
+              scaleSrc={scaleSrc}
+              flash={flash}
+            />
+          ) : (
+            <Findings
+              seg={seg}
+              flat={flat}
+              onAskSchedule={() => document.querySelector<HTMLInputElement>(".askform input")?.focus()}
+              active={active}
+              specs={specs}
+              states={active ? (findings[active.path] ?? {}) : {}}
+              floors={floors}
+              activeKey={activeKey}
+              onPickFloor={setActiveKey}
+              selectedId={selected?.proof.id ?? null}
+              onSelect={(p) => active && setSelected({ path: active.path, proof: p })}
+              onWhy={(p) => {
+                if (active) setSelected({ path: active.path, proof: p });
+                setWhy(true);
+              }}
+            />
+          )}
+          {why && (
+            <Know
+              proof={selected && active && selected.path === active.path ? selected.proof : null}
+              floor={selFloor ?? null}
+              hoverIdx={hoverIdx}
+              onHover={setHoverIdx}
+              showPins={showPins}
+              setShowPins={setShowPins}
+              imgUrl={active ? imageUrl(active.path) : ""}
+              check={active?.geo?.check ?? null}
+              onClose={() => setWhy(false)}
+            />
+          )}
+        </section>
+      </main>
       )}
     </div>
   );

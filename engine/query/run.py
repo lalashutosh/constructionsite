@@ -92,9 +92,43 @@ def _eq(a: Optional[str], b: str) -> bool:
     return (a or "").strip().casefold() == b.strip().casefold()
 
 
-def _subtype_ok(e: Element, want: str, rules: list[str]) -> bool:
+# a room TYPE asked for in words -> the names readers give it (en/fi/de/fr/it) ...
+ROOM_SYNONYMS = {
+    "bathroom": {"bathroom", "bath", "wc", "toilet", "washroom", "restroom", "kh", "kph", "ph", "pesuh", "sh", "shower",
+                 "bad", "bain", "bagno", "wet_room"},
+    "bedroom": {"bedroom", "mh", "makuuhuone", "schlafzimmer", "chambre", "camera"},
+    "kitchen": {"kitchen", "k", "kk", "keittiö", "küche", "cuisine", "cucina"},
+}
+ROOM_SYNONYMS["bathrooms"] = ROOM_SYNONYMS["bathroom"]
+# ... and the fixtures that make a room that type even when no reader named it (a toilet = a bathroom/WC)
+ROOM_BY_FIXTURE = {"bathroom": {"toilet", "shower", "bathtub"}, "bathrooms": {"toilet", "shower", "bathtub"}}
+
+
+def _rooms_with(facts: SheetFacts, fixture_kinds: set) -> set:
+    from shapely.geometry import Point
+    pts = []
+    for e in facts.elements:
+        if e.kind in fixture_kinds and e.polygon:
+            xs, ys = [p[0] for p in e.polygon], [p[1] for p in e.polygon]
+            pts.append(Point((min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2))
+    out = set()
+    for r in facts.elements:
+        if r.kind != "room":
+            continue
+        g = _poly(r)
+        if g is not None and any(g.contains(p) for p in pts):
+            out.add(r.id)
+    return out
+
+
+def _subtype_ok(e: Element, want: str, rules: list[str], wet: Optional[set] = None) -> bool:
     st = (e.subtype or "").casefold()
     w = want.casefold()
+    if w in ROOM_SYNONYMS and e.kind == "room":
+        if st in ROOM_SYNONYMS[w] or (e.label or "").strip().casefold() in ROOM_SYNONYMS[w]:
+            return True
+        if wet is not None and e.id in wet:
+            return True
     if w == "kitchen" and "kitchenettes_count" in rules:
         return st in R.KITCHEN_ALIASES
     if w == "balcony" and "glazed_balconies_count" in rules:
@@ -110,7 +144,9 @@ def select(spec: dict, facts: SheetFacts) -> list[Element]:
     els = [e for e in facts.elements if "*" in kinds or e.kind in kinds]
     for key in ("room_type", "subtype"):
         if where.get(key):
-            els = [e for e in els if _subtype_ok(e, where[key], rules)]
+            want = where[key].casefold()
+            wet = _rooms_with(facts, ROOM_BY_FIXTURE[want]) if want in ROOM_BY_FIXTURE else None
+            els = [e for e in els if _subtype_ok(e, where[key], rules, wet)]
     if where.get("label"):
         els = [e for e in els if _eq(e.label, where["label"])]
     if where.get("id"):
@@ -137,6 +173,7 @@ def _filter_has(els, has, facts):
         p = _poly(e)
         if p is None:
             continue
+        p = p.buffer(0.08 * (p.area ** 0.5))      # windows/doors sit ON the room outline, not strictly inside
         n = 0
         for ie, ip in inner:
             c = ip.centroid if ip is not None else (Point(ie.polygon[0]) if ie.polygon else None)
@@ -203,19 +240,25 @@ def _agg(els: list[Element], spec: dict, facts: SheetFacts, px_per_m, res: Resul
         return [e.label or e.id for e in els]
     vals: list[float] = []
     for e in els:
-        if agg in ("sum_area", "max_area"):
+        if agg in ("sum_area", "max_area", "avg_area"):
             v = _area_m2(e, px_per_m)
         elif agg == "sum_length":
             v = _length_m(e, px_per_m)
         else:
             raw = e.attrs.get(spec["attr"])
             v = float(raw) if isinstance(raw, (int, float)) else None
+            if v is None:
+                res.notes.append(f"'{spec['attr']}' is not known for {e.kind} elements")
         if v is None:
             res.needs_scale = True
             continue
         vals.append(v)
+    if not vals and els:
+        return None                     # elements exist but none had the measure: unknown, not zero
     if agg == "max_area":
         return max(vals) if vals else 0.0
+    if agg == "avg_area":
+        return float(sum(vals) / len(vals)) if vals else None
     return float(sum(vals))
 
 
@@ -223,7 +266,9 @@ def run(spec: dict, facts: SheetFacts, px_per_m: Optional[float] = None) -> Resu
     validate(spec)
     rules = list(spec.get("rules") or [])
     els = select(spec, facts)
-    unit = {"sum_area": "m2", "max_area": "m2", "sum_length": "m"}.get(spec["aggregate"], "count")
+    unit = {"sum_area": "m2", "max_area": "m2", "avg_area": "m2", "sum_length": "m",
+            "argmax_area": "label", "argmin_area": "label", "argmax_group": "label",
+            "argmin_group": "label"}.get(spec["aggregate"], "count")
     if spec["aggregate"] == "sum_attr":
         unit = next((u for suf, u in (("_m3", "m3"), ("_m2", "m2"), ("_m", "m")) if spec["attr"].endswith(suf)), "count")
     res = Result(unit=unit)
@@ -233,6 +278,56 @@ def run(spec: dict, facts: SheetFacts, px_per_m: Optional[float] = None) -> Resu
         if note:
             res.notes.append(note)
     res.evidence_ids = [e.id for e in els]
+    rt = ((spec.get("where") or {}).get("room_type") or "").casefold()
+    if rt in ROOM_BY_FIXTURE and els:
+        res.notes.append(f"{rt} = rooms named bath/WC/KH/PH/… or containing a toilet, shower or bathtub")
+    if not els and spec["aggregate"] not in ("count", "list"):
+        w = spec.get("where") or {}
+        what = w.get("room_type") or w.get("subtype") or w.get("label") or spec.get("select")
+        res.notes.append(f"no matching elements: no {what} recognised on this drawing")
+        res.value = None                          # a sum over nothing is 'not found', not a confident 0
+        return res
+    if spec["aggregate"] in ("argmax_area", "argmin_area"):
+        scored = [(a, e) for e in els if (a := _area_m2(e, px_per_m)) is not None]
+        unit_word = "m2"
+        if not scored:                     # no scale: comparing rooms of ONE drawing needs only relative areas
+            scored = [(p.area, e) for e in els if (p := _poly(e)) is not None and p.area > 0]
+            unit_word = "px2 (relative, no scale needed to compare)"
+        if not scored:
+            res.needs_scale = bool(els)
+            return res
+        a, e = (max if spec["aggregate"] == "argmax_area" else min)(scored, key=lambda t: t[0])
+        num = e.attrs.get("number")
+        name = e.label or (e.subtype or e.kind).replace("_", " ")
+        same = [x for _, x in scored if (x.label or x.subtype) == (e.label or e.subtype)]
+        if len(same) > 1 and not num:           # several rooms share the name: say which one (rank by area)
+            order = sorted(same, key=lambda x: _area_m2(x, px_per_m) or (_poly(x).area if _poly(x) else 0))
+            name = f"{name} #{order.index(e) + 1} of {len(same)} (by size)"
+        size = f", {a:.1f} m²" if unit_word == "m2" else ""
+        res.value = f"{name}" + (f" ({num})" if num and num != e.label else "") + size
+        res.notes.append(f"{len(scored)} candidates compared by area; chosen {a:.2f} {unit_word}")
+        res.groups = {"area": round(a, 2)}
+        res.evidence_ids = [e.id]
+        return res
+    if spec["aggregate"] in ("argmax_group", "argmin_group") and spec.get("group_by"):
+        from engine.query.graph import apartment_of
+        amap = apartment_of(facts) if spec["group_by"] == "apartment" else {}
+        buckets: dict[str, list[Element]] = {}
+        for e in els:
+            k = _group_key(e, spec["group_by"], amap)
+            if k:
+                buckets.setdefault(k, []).append(e)
+        if not buckets:
+            res.value = None
+            res.notes.append(f"no {spec['group_by']} groups found")
+            return res
+        pick = (max if spec["aggregate"] == "argmax_group" else min)(buckets, key=lambda k: len(buckets[k]))
+        res.groups = {k: len(v) for k, v in sorted(buckets.items())}
+        res.value = f"{spec['group_by']} {pick} ({len(buckets[pick])} {spec['select'] if isinstance(spec['select'], str) else 'items'}s)"
+        res.unit = "label"
+        res.evidence_ids = [e.id for e in buckets[pick]]
+        res.notes.append("per group: " + ", ".join(f"{k}={v}" for k, v in res.groups.items()))
+        return res
     if spec.get("group_by"):
         from engine.query.graph import apartment_of
         amap = apartment_of(facts) if spec["group_by"] == "apartment" else {}
@@ -242,6 +337,13 @@ def run(spec: dict, facts: SheetFacts, px_per_m: Optional[float] = None) -> Resu
         res.groups = {k: _agg(v, spec, facts, px_per_m, res) for k, v in sorted(buckets.items())}
     res.value = _agg(els, spec, facts, px_per_m, res)
     if spec["aggregate"] == "count":
+        rd = next((r for r in rules if r.startswith("reader_")), None)
+        if rd:                                   # the intent's reader has logic a spec can't express: use it
+            from engine.count import _DISPATCH
+            fn = _DISPATCH.get(rd[len("reader_"):])
+            if fn is not None:
+                n, ids, _runs = fn(facts)
+                res.value, res.evidence_ids = int(n), list(ids)
         if "min_one" in rules:
             res.value = max(1, int(res.value))
         if "prior_fallback_1" in rules and res.value == 0:
@@ -251,6 +353,6 @@ def run(spec: dict, facts: SheetFacts, px_per_m: Optional[float] = None) -> Resu
             res.value = 1
         res.value = int(res.value)
         res.runs = [res.value]
-    if res.needs_scale and spec["aggregate"] in ("sum_area", "max_area", "sum_length") and not px_per_m:
+    if res.needs_scale and spec["aggregate"] in ("sum_area", "max_area", "avg_area", "sum_length") and not px_per_m:
         res.value = None
     return res

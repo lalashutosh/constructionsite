@@ -153,3 +153,24 @@ def test_llm_template_calls_le_distinct_templates(env, tmp_path):
     clf2 = TemplateClassifier(llm, cache_path=tmp_path / "templates.json")
     route(templates[0] % 77, PATH, classifier=clf2)
     assert llm.calls == 3
+
+
+def test_user_verdict_corrects_voters_and_recomputes_tier():
+    """Skeptic Duel: voter A sees 2 doors, voter B sees 1; the user confirms the door only A saw ->
+    B gains it, both say 2, tier is recomputed from agreement (green), verdict recorded as `chosen`."""
+    from contracts.proof import Element, ProofObject, Provenance, Tag, Voter
+    from engine import registry
+    from engine.pipeline import PipelineEngine, compute_tier
+
+    sq = lambda x: [(x, 0.0), (x + 1, 0.0), (x + 1, 1.0), (x, 1.0)]
+    a = registry.VoterResult(voter=Voter(name="detector", value=2), evidence=[
+        Element(id="a1", kind="door", polygon=sq(0)), Element(id="a2", kind="door", polygon=sq(5))])
+    b = registry.VoterResult(voter=Voter(name="doors_arc", value=1), evidence=[
+        Element(id="b1", kind="door", polygon=sq(0))], second_opinion=True)
+    eng = PipelineEngine.__new__(PipelineEngine)
+    eng.overrides = {("sha", "doors"): [{"id": "a2", "polygon": sq(5), "keep": True}]}
+    po = ProofObject(id="x", question="q", provenance=Provenance(file="f"))
+    eng._apply_overrides([a, b], "sha", "doors", po, po.notes)
+    assert (a.voter.value, b.voter.value) == (2, 2)
+    assert compute_tier([a, b], "count")[0].value == "green"
+    assert po.assumptions and po.assumptions[0].tag == Tag.chosen
