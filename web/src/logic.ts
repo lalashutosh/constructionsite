@@ -22,7 +22,43 @@ export function fmtNum(v: Scalar | null | undefined): string {
 
 export function fmtCost(p: ProofObject): string {
   const c = p.cost;
-  return `${(c.ms / 1000).toFixed(1)} s · ${c.tokens_in + c.tokens_out} tokens · $${c.usd.toFixed(2)}`;
+  const llm = c.llm_calls > 0 ? ` · ${c.llm_calls} LLM call${c.llm_calls > 1 ? "s" : ""}` : "";
+  return `${(c.ms / 1000).toFixed(1)} s · ${c.tokens_in + c.tokens_out} tokens · $${c.usd.toFixed(4)}${llm}`;
+}
+
+const UNITS: Record<string, string> = { m2: "m²", m3: "m³", m: "m" };
+const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
+export interface Display {
+  /** the headline value, null when there is nothing to show */
+  big: string | null;
+  unit: string;
+  /** compared parts for yes/no style answers */
+  parts: string | null;
+  small: boolean;
+}
+
+/** The headline of an answer, by kind: integer, one decimal with unit, or the word itself. */
+export function answerDisplay(p: ProofObject): Display {
+  const none: Display = { big: null, unit: "", parts: null, small: false };
+  if (p.tier === "grey" || p.value === null || p.value === undefined || p.value === "") return none;
+  const v = p.value;
+  if (p.kind === "count") return { ...none, big: String(Math.round(Number(v))) };
+  if (p.kind === "area" || p.kind === "length" || p.kind === "volume") {
+    const n = Number(v);
+    return { ...none, big: Number.isFinite(n) ? n.toFixed(1) : String(v), unit: UNITS[p.unit ?? ""] ?? (p.unit && p.unit !== "count" ? p.unit : "") };
+  }
+  if (p.kind === "text") {
+    const note = p.notes.find((n) => n.startsWith("query parts:"));
+    let parts: string | null = null;
+    if (note) {
+      const vals = [...note.matchAll(/part\d+=(-?[\d.]+)/g)].map((m) => m[1]);
+      const sel = ((p.query_spec as { parts?: { select?: string }[] } | null)?.parts ?? []).map((x) => x.select ?? "");
+      parts = vals.map((x, k) => (sel[k] ? `${x} ${sel[k]}${Number(x) === 1 ? "" : "s"}` : x)).join(" vs ");
+    }
+    return { big: cap(String(v)), unit: "", parts, small: true };
+  }
+  return { ...none, big: String(v), small: String(v).length > 6 };
 }
 
 const valued = (vs: Voter[]) => vs.filter((v) => v.value !== null && v.value !== undefined);
@@ -34,26 +70,32 @@ export interface Verdict {
   detail: string;
   /** full pill sentence */
   pill: string;
+  /** reliability 0..1 when the engine measured one */
+  rel: number | null;
 }
 
 export function verdict(p: ProofObject): Verdict {
+  const rel = typeof p.reliability === "number" ? p.reliability : null;
   if (p.tier === "grey") {
     const why = p.refusal ?? "no reason given";
-    return { tier: "grey", word: "Can't answer", detail: why, pill: `Can't answer: ${why}` };
+    return { tier: "grey", word: "Can't answer", detail: why, pill: `Can't answer: ${why}`, rel };
   }
   const vs = valued(p.voters);
   if (p.tier === "green") {
     const agree = vs.filter((v) => String(v.value) === String(p.value)).length || vs.length;
     const detail = `${agree} ${agree === 1 ? "check agrees" : "checks agree"}`;
-    return { tier: "green", word: "Verified", detail, pill: `Verified — ${agree} independent ${agree === 1 ? "check agrees" : "checks agree"}` };
+    return { tier: "green", word: "Verified", detail, pill: `Verified — ${agree} independent ${agree === 1 ? "check agrees" : "checks agree"}`, rel };
   }
+  const pct = rel === null ? null : `${Math.round(rel * 100)}% reliable`;
   const distinct = new Set(vs.map((v) => String(v.value)));
   if (vs.length >= 2 && distinct.size > 1) {
-    const list = vs.map((v) => `${voterWord(v.name)} ${fmtNum(v.value)}`).join(", ");
     const ab = vs.slice(0, 2).map((v) => fmtNum(v.value)).join(" vs ");
-    return { tier: "amber", word: "Needs a look", detail: list, pill: `Needs a look — checks disagree (${ab})` };
+    const list = vs.map((v) => `${voterWord(v.name)} ${fmtNum(v.value)}`).join(", ");
+    return { tier: "amber", word: "Needs a look", detail: pct ?? list, pill: `Needs a look — checks disagree (${ab})`, rel };
   }
-  return { tier: "amber", word: "Needs a look", detail: "single check", pill: "Needs a look — single check" };
+  if (pct) return { tier: "amber", word: "Needs a look", detail: pct, pill: `Needs a look — ${pct}`, rel };
+  if (p.query_spec) return { tier: "amber", word: "Needs a look", detail: "Computed from a query · check the parts", pill: "Needs a look — computed from a query, check the parts", rel };
+  return { tier: "amber", word: "Needs a look", detail: "check the highlighted elements", pill: "Needs a look", rel };
 }
 
 export interface FindingSpec {
@@ -117,10 +159,11 @@ export function chipsFor(path: string): string[] {
 
 /** Title for a finding row: bold "5 doors", or the bare noun for a refusal. */
 export function findingTitle(spec: FindingSpec, p: ProofObject | null): string {
-  const cap = spec.noun.charAt(0).toUpperCase() + spec.noun.slice(1);
-  if (!p || p.tier === "grey" || p.value === null || p.value === undefined) return cap;
-  if (p.kind === "area" || spec.key === "area") return `${fmtNum(p.value)} ${p.unit && p.unit !== "count" ? p.unit : "m²"} ${spec.noun}`;
-  return `${fmtNum(p.value)} ${spec.noun}`;
+  const c = spec.noun.charAt(0).toUpperCase() + spec.noun.slice(1);
+  if (!p) return c;
+  const d = answerDisplay(p);
+  if (d.big === null) return c;
+  return `${d.big}${d.unit ? ` ${d.unit}` : ""} ${spec.noun}`;
 }
 
 /** The engine's "tier:" note as a sentence, saying "checks" for "voters". */

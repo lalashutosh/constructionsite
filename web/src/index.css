@@ -169,7 +169,8 @@ b { font-weight: 600; }
 .frow { display: flex; gap: var(--s2); align-items: flex-start; width: 100%; text-align: left; background: none; border: 0; padding: 8px var(--s3); }
 button.frow:hover { background: var(--hover); }
 .frow.sel { background: var(--tint); }
-.frow span:last-child { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.frow span:last-child, .frow .ftext { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.frow .relbar { display: block; flex: none; }
 .frow b { font-size: 13px; }
 .frow small { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .frow.wait b { color: var(--muted); font-weight: 400; }
@@ -228,3 +229,22 @@ button.frow:hover { background: var(--hover); }
 .scan { padding: var(--s2) var(--s3) var(--s1); display: flex; flex-direction: column; gap: 4px; border-bottom: 1px solid var(--rule); flex: none; }
 .wrapline { align-items: flex-start; font-weight: 400; }
 .pad0 { padding: 0 0 var(--s1); }
+
+.big.t { font-size: 34px; line-height: 1.2; }
+.parts { color: var(--muted); font-size: 13px; }
+.clip { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.linkbtn { background: none; border: 0; padding: 0; color: var(--accent-text); text-decoration: underline; text-underline-offset: 2px; font-size: inherit; }
+.relbar { flex: none; width: 34px; height: 1px; background: var(--rule); align-self: center; position: relative; margin-left: auto; }
+.relbar i { position: absolute; left: 0; top: -1px; height: 3px; background: var(--warn); }
+.readcost { position: absolute; left: var(--s3); bottom: 24px; font-size: 11px; color: var(--muted); pointer-events: none; }
+.note-tr { bottom: 44px; }
+.rulerbtn { position: absolute; top: 52px; left: 190px; width: 24px; height: 24px; display: grid; place-items: center; background: none; border: 0; color: var(--muted); border-radius: var(--r); }
+.rulerbtn.on, .rulerbtn:hover { color: var(--accent-text); background: var(--tint); }
+.rulerbtn::after { content: attr(data-tip); position: absolute; left: 30px; top: 50%; transform: translateY(-50%); background: var(--text); color: var(--bg); padding: 4px 8px; border-radius: var(--r); font-size: 12px; white-space: nowrap; opacity: 0; pointer-events: none; z-index: 20; }
+.rulerbtn:hover::after { opacity: 1; }
+.measure { position: absolute; left: var(--s3); top: 86px; display: flex; gap: var(--s2); align-items: center; background: var(--panel); border: 1px solid var(--rule); border-radius: var(--r); padding: 6px var(--s2); font-size: 13px; }
+.measure form { display: flex; gap: var(--s1); align-items: center; }
+.measure input { width: 72px; background: var(--bg); border: 1px solid var(--rule); color: var(--text); border-radius: var(--r); padding: 3px 6px; font: inherit; font-family: var(--mono); }
+.itin { display: flex; align-items: baseline; gap: 6px; }
+.itin input { width: 56px; background: var(--bg); border: 1px solid var(--rule); color: var(--text); border-radius: var(--r); padding: 1px 5px; font-size: 12px; }
+.crow .cit { text-align: left; background: none; border: 0; padding: 0; flex: 1; min-width: 0; }

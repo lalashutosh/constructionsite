@@ -44,8 +44,25 @@ await page.getByRole("button", { name: "Are there more windows than doors?" }).c
 await page.waitForTimeout(4000);
 await shot("04-hard-question-2.png");
 
+await page.getByPlaceholder("Ask anything").fill("What is the total floor area of all bedrooms in m2?");
+await page.getByRole("button", { name: "Ask", exact: true }).click();
+await page.waitForTimeout(6000);
+await shot("04b-area-set-size.png");
+await page.getByRole("button", { name: "Set real size" }).first().click();
+await page.waitForTimeout(500);
+await page.mouse.click(300, 330);
+await page.waitForTimeout(300);
+await page.mouse.click(520, 360);
+await page.waitForTimeout(800);
+await shot("04c-measure.png");
+await page.getByLabel("Real length in metres").fill("9");
+await page.getByRole("button", { name: "Apply", exact: true }).first().click();
+await page.waitForTimeout(6000);
+await shot("04d-area-after-scale.png");
 await page.getByRole("tab", { name: "Build plan" }).click();
-await page.waitForTimeout(2500);
+await page.waitForTimeout(3000);
+await shot("05-materials.png");
+await page.getByRole("button", { name: "Build steps" }).click();
 await page.locator(".stp").nth(2).click();
 await page.waitForTimeout(2500);
 await shot("05a-plan-step3-floor.png");
@@ -58,7 +75,8 @@ await shot("05c-plan-step5-roof.png");
 await page.getByRole("button", { name: "off", exact: true }).click();
 await page.waitForTimeout(1000);
 await shot("05d-drawing-off.png");
-await page.getByRole("button", { name: "Checklist" }).click();
+await page.getByRole("button", { name: "Materials" }).click();
+await page.locator(".cit").first().click();
 await page.waitForTimeout(500);
 await shot("05e-checklist.png");
 

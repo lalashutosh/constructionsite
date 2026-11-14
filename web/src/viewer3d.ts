@@ -30,7 +30,12 @@ interface Part {
   target: number;
   cur: number;
   scaleY: boolean;
+  layer: number;
+  delayUntil: number;
 }
+/** vertical rank used by the idle layer separation */
+const LAYER: Record<string, number> = { foundation: -1, floor: 1, finishes: 1, fixtures: 1.5, walls: 2, services: 2.5, openings: 3, roof: 4, views: 0 };
+const INTRO_DELAY: Record<string, number> = { foundation: 0, floor: 120, finishes: 120, walls: 250, fixtures: 800, openings: 800 };
 
 export interface Theme {
   name: "dark" | "light";
@@ -71,27 +76,6 @@ export const THEMES: Record<"dark" | "light", Theme> = {
     labelBg: "rgba(255,255,255,0.95)", labelText: "#1a1012",
   },
 };
-
-function pinTexture(n: number, hot: boolean, T: Theme): THREE.CanvasTexture {
-  const c = document.createElement("canvas");
-  c.width = c.height = 128;
-  const g = c.getContext("2d")!;
-  g.beginPath();
-  g.arc(64, 64, 52, 0, Math.PI * 2);
-  g.fillStyle = hot ? T.pinHot : T.pinCss;
-  g.fill();
-  g.lineWidth = 5;
-  g.strokeStyle = T.pinInk;
-  g.stroke();
-  g.fillStyle = T.pinInk;
-  g.font = "500 60px 'IBM Plex Mono', monospace";
-  g.textAlign = "center";
-  g.textBaseline = "middle";
-  g.fillText(String(n), 64, 68);
-  const t = new THREE.CanvasTexture(c);
-  t.colorSpace = THREE.SRGBColorSpace;
-  return t;
-}
 
 function labelTexture(text: string, on: boolean, T: Theme): { tex: THREE.CanvasTexture; aspect: number } {
   const c = document.createElement("canvas");
@@ -136,10 +120,21 @@ export class PlumbViewer {
   private raf = 0;
   private ro: ResizeObserver;
   private floorGroups = new Map<string, { group: THREE.Group; s: number; w: number; h: number; H: number; plane: THREE.Mesh; rim: THREE.Object3D; parts: Part[] }>();
+  private lastInteract = performance.now();
+  private k = 0;
+  private reduce = typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+  private resumeTimer = 0;
+  private mousePx = { x: -99, y: -99 };
+  private frame = 0;
+  private measureKey: string | null = null;
+  private measureCb: ((px: [number, number][]) => void) | null = null;
+  private measurePts: [number, number][] = [];
+  private measureGroup = new THREE.Group();
+  private downAt = { x: 0, y: 0, t: 0 };
   private stage: Phase[] | null = null;
   private drawing = true;
   private pinGroup = new THREE.Group();
-  private pins: { sprite: THREE.Sprite; idx: number; base: number }[] = [];
+  private pins: { dot: THREE.Sprite; label: THREE.Sprite; idx: number; base: THREE.Vector3; top: THREE.Vector3; lw: number; lh: number; show: boolean }[] = [];
   private hover: number | null = null;
   private ext: number | null = null;
   private ray = new THREE.Raycaster();
@@ -166,17 +161,40 @@ export class PlumbViewer {
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.08;
-    this.controls.autoRotate = true;
-    this.controls.autoRotateSpeed = 0.5;
+    this.controls.autoRotate = !this.reduce;
+    this.controls.autoRotateSpeed = 1.0; // one turn per 60 s
     this.controls.maxPolarAngle = Math.PI * 0.49;
-    this.controls.addEventListener("start", () => (this.controls.autoRotate = false));
+    this.controls.addEventListener("start", () => {
+      this.controls.autoRotate = false;
+      window.clearTimeout(this.resumeTimer);
+      this.lastInteract = performance.now();
+    });
+    this.controls.addEventListener("end", () => {
+      this.lastInteract = performance.now();
+      window.clearTimeout(this.resumeTimer);
+      this.resumeTimer = window.setTimeout(() => (this.controls.autoRotate = !this.reduce), 3000);
+    });
+    this.scene.add(this.measureGroup);
     this.camera.position.set(95, 100, 125);
     const dom = this.renderer.domElement;
     dom.addEventListener("pointermove", (e) => {
       const r = dom.getBoundingClientRect();
       this.mouse.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+      this.mousePx = { x: e.clientX - r.left, y: e.clientY - r.top };
     });
-    dom.addEventListener("pointerleave", () => this.mouse.set(9, 9));
+    dom.addEventListener("pointerleave", () => {
+      this.mouse.set(9, 9);
+      this.mousePx = { x: -99, y: -99 };
+    });
+    dom.addEventListener("wheel", () => (this.lastInteract = performance.now()), { passive: true });
+    dom.addEventListener("pointerdown", (e) => {
+      this.downAt = { x: e.clientX, y: e.clientY, t: performance.now() };
+    });
+    dom.addEventListener("pointerup", (e) => {
+      if (!this.measureKey) return;
+      if (Math.hypot(e.clientX - this.downAt.x, e.clientY - this.downAt.y) > 5 || performance.now() - this.downAt.t > 500) return;
+      this.measureClick();
+    });
     this.ro = new ResizeObserver(() => this.resize());
     this.ro.observe(el);
     this.resize();
@@ -185,7 +203,7 @@ export class PlumbViewer {
       this.raf = requestAnimationFrame(loop);
       this.controls.update();
       this.pick();
-      this.animatePins();
+      if ((this.frame++ & 3) === 0) this.declutter();
       this.animateParts();
       this.renderer.render(this.scene, this.camera);
     };
@@ -224,58 +242,171 @@ export class PlumbViewer {
     this.camera.updateProjectionMatrix();
   }
 
+  private spritePx(px: number) {
+    return (px * 2 * Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2))) / Math.max(1, this.el.clientHeight);
+  }
+
   private pick() {
     if (!this.pins.length) return;
     let hit: number | null = null;
-    if (Math.abs(this.mouse.x) <= 1) {
-      this.ray.setFromCamera(this.mouse, this.camera);
-      const objs = this.pins.map((p) => p.sprite);
-      const h = this.ray.intersectObjects(objs, false)[0];
-      if (h) hit = this.pins.find((p) => p.sprite === h.object)!.idx;
+    let best = 11;
+    const w = this.el.clientWidth;
+    const h = this.el.clientHeight;
+    const v = new THREE.Vector3();
+    for (const p of this.pins) {
+      v.copy(p.base).project(this.camera);
+      const d = Math.hypot((v.x * 0.5 + 0.5) * w - this.mousePx.x, (-v.y * 0.5 + 0.5) * h - this.mousePx.y);
+      if (d < best) {
+        best = d;
+        hit = p.idx;
+      }
     }
     if (hit !== this.hover) {
       this.hover = hit;
-      this.renderer.domElement.style.cursor = hit === null ? "grab" : "pointer";
+      this.renderer.domElement.style.cursor = this.measureKey ? "crosshair" : hit === null ? "grab" : "pointer";
       this.cb.onHoverPin(hit);
       this.applyHot();
     }
   }
 
-  private tex(n: number, hot: boolean) {
-    const k = `${n}:${hot}:${this.T.name}`;
+  private dotTex(): THREE.CanvasTexture {
+    const k = `dot:${this.T.name}`;
     let t = this.texCache.get(k);
     if (!t) {
-      t = pinTexture(n, hot, this.T);
+      const c = document.createElement("canvas");
+      c.width = c.height = 32;
+      const g = c.getContext("2d")!;
+      g.beginPath();
+      g.arc(16, 16, 13, 0, Math.PI * 2);
+      g.fillStyle = this.T.pinCss;
+      g.fill();
+      t = new THREE.CanvasTexture(c);
+      t.colorSpace = THREE.SRGBColorSpace;
       this.texCache.set(k, t);
     }
     return t;
+  }
+
+  private labelTex(n: number, hot: boolean) {
+    const k = `lbl:${n}:${hot}:${this.T.name}`;
+    let t = this.texCache.get(k);
+    const wpx = 12 + String(n).length * 7;
+    if (!t) {
+      const c = document.createElement("canvas");
+      c.width = wpx * 2;
+      c.height = 28;
+      const g = c.getContext("2d")!;
+      g.fillStyle = hot ? this.T.pinCss : this.T.labelBg;
+      g.strokeStyle = this.T.pinCss;
+      g.lineWidth = 2;
+      g.beginPath();
+      g.roundRect(1, 1, c.width - 2, c.height - 2, 4);
+      g.fill();
+      g.stroke();
+      g.fillStyle = hot ? this.T.pinInk : this.T.pinCss;
+      g.font = "400 22px 'IBM Plex Mono', monospace";
+      g.textAlign = "center";
+      g.textBaseline = "middle";
+      g.fillText(String(n), c.width / 2, c.height / 2 + 1);
+      t = new THREE.CanvasTexture(c);
+      t.colorSpace = THREE.SRGBColorSpace;
+      this.texCache.set(k, t);
+    }
+    return { t, wpx, hpx: 14 };
   }
 
   private applyHot() {
     const hot = this.ext ?? this.hover;
     for (const p of this.pins) {
       const on = p.idx === hot;
-      (p.sprite.material as THREE.SpriteMaterial).map = this.tex(p.idx, on);
-      (p.sprite.material as THREE.SpriteMaterial).needsUpdate = true;
-      p.sprite.scale.setScalar(p.base * (on ? 1.5 : 1));
+      const { t, wpx, hpx } = this.labelTex(p.idx, on);
+      const m = p.label.material as THREE.SpriteMaterial;
+      m.map = t;
+      m.needsUpdate = true;
+      p.lw = wpx;
+      p.lh = hpx;
+      p.label.scale.set(this.spritePx(wpx), this.spritePx(hpx), 1);
+      p.dot.scale.setScalar(this.spritePx(on ? 8 : 5));
+      if (on) p.show = true;
+      p.label.visible = p.show;
     }
   }
 
-  private animatePins() {
-    const t = performance.now() / 700;
-    void t;
+  /** Hide labels that would overlap an earlier one; the dot stays and the number appears on hover. */
+  private declutter() {
+    const hot = this.ext ?? this.hover;
+    const w = this.el.clientWidth;
+    const h = this.el.clientHeight;
+    const rects: [number, number, number, number][] = [];
+    const v = new THREE.Vector3();
+    const order = [...this.pins].sort((a, b) => (a.idx === hot ? -1 : b.idx === hot ? 1 : a.idx - b.idx));
+    for (const p of order) {
+      v.copy(p.top).project(this.camera);
+      const x = (v.x * 0.5 + 0.5) * w;
+      const y = (-v.y * 0.5 + 0.5) * h;
+      const r: [number, number, number, number] = [x - p.lw / 2 - 2, y - p.lh - 2, x + p.lw / 2 + 2, y + 2];
+      const clash = rects.some((q) => r[0] < q[2] && r[2] > q[0] && r[1] < q[3] && r[3] > q[1]);
+      p.show = p.idx === hot || !clash;
+      if (p.show) rects.push(r);
+      p.label.visible = p.show;
+    }
   }
 
   private animateParts() {
-    for (const { parts } of this.floorGroups.values()) {
-      for (const p of parts) {
+    const now = performance.now();
+    const idle = (now - this.lastInteract) / 1000;
+    if (this.reduce) this.k = 0;
+    else if (idle > 6) {
+      const tc = (idle - 6) % 12;
+      this.k = tc < 6 ? 0.5 - 0.5 * Math.cos((2 * Math.PI * tc) / 6) : 0;
+    } else this.k += (0 - this.k) * 0.12;
+    for (const fl of this.floorGroups.values()) {
+      const gap = fl.H * 1.1;
+      for (const p of fl.parts) {
+        if (now < p.delayUntil) continue;
         const d = p.target - p.cur;
         if (Math.abs(d) > 0.002) p.cur += d * 0.1;
         else p.cur = p.target;
         p.obj.visible = p.cur > 0.01;
         if (p.scaleY) p.obj.scale.y = Math.max(0.001, p.cur);
         else for (const x of p.mats) x.m.opacity = x.base * p.cur;
+        p.obj.position.y = p.layer * gap * this.k;
       }
+    }
+  }
+
+  // ---- measure tool
+  /** Turn on two-click measuring on one floor; cb gets the two image-pixel points. */
+  setMeasure(floorKey: string | null, cb: ((px: [number, number][]) => void) | null) {
+    this.measureKey = floorKey;
+    this.measureCb = cb;
+    this.measurePts = [];
+    this.clear(this.measureGroup);
+    this.renderer.domElement.style.cursor = floorKey ? "crosshair" : "grab";
+  }
+
+  private measureClick() {
+    const fl = this.measureKey ? this.floorGroups.get(this.measureKey) : undefined;
+    if (!fl) return;
+    this.ray.setFromCamera(this.mouse, this.camera);
+    const hit = this.ray.intersectObject(fl.plane, false)[0];
+    if (!hit) return;
+    const l = fl.group.worldToLocal(hit.point.clone());
+    if (this.measurePts.length >= 2) {
+      this.measurePts = [];
+      this.clear(this.measureGroup);
+    }
+    this.measurePts.push([l.x + fl.w / 2, l.z + fl.h / 2]);
+    const dot = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.dotTex(), transparent: true, depthTest: false, fog: false, sizeAttenuation: false }));
+    dot.scale.setScalar(this.spritePx(7));
+    dot.position.copy(hit.point).setY(fl.group.position.y + 0.5);
+    dot.renderOrder = 12;
+    this.measureGroup.add(dot);
+    if (this.measurePts.length === 2) {
+      const a = this.measureGroup.children[0].position;
+      const b = this.measureGroup.children[1].position;
+      this.measureGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([a, b]), new THREE.LineBasicMaterial({ color: this.T.pin, depthTest: false })));
+      this.measureCb?.([...this.measurePts]);
     }
   }
 
@@ -337,6 +468,11 @@ export class PlumbViewer {
     }
     void big;
     this.applyStage();
+    if (!this.reduce) {
+      const t0 = performance.now();
+      for (const fl of this.floorGroups.values()) for (const p of fl.parts) if (p.target > 0) { p.cur = 0; p.delayUntil = t0 + (INTRO_DELAY[p.name] ?? 0); }
+    }
+    this.lastInteract = performance.now();
     // camera framing: aim at the walls' bounding box so small plans on big sheets still fill the view
     const mid = ((n - 1) * gap) / 2;
     let fx = 0;
@@ -357,7 +493,7 @@ export class PlumbViewer {
     const dist = (170 * frac + 40) + (n - 1) * 26;
     this.controls.target.set(fx, mid, fz);
     this.camera.position.set(fx + dist * 0.55, mid + dist * 0.5, fz + dist * 0.7);
-    this.controls.autoRotate = true;
+    this.controls.autoRotate = !this.reduce;
     this.controls.update();
   }
 
@@ -379,7 +515,7 @@ export class PlumbViewer {
         const m = (o as THREE.Mesh).material as THREE.Material | undefined;
         if (m) mats.push({ m, base: m.opacity });
       });
-      const p: Part = { name, obj, mats, target: 1, cur: 1, scaleY: onY };
+      const p: Part = { name, obj, mats, target: 1, cur: 1, scaleY: onY, layer: LAYER[name] ?? 0, delayUntil: 0 };
       content.add(obj);
       parts.push(p);
       return p;
@@ -566,15 +702,15 @@ export class PlumbViewer {
     this.pins = [];
   }
 
-  /** Numbered pins for the selected answer. floorKey null removes them. */
+  /** Pins for the selected answer: a 5 px dot on the element, a 1 px leader up, a compact number tag. */
   setPins(floorKey: string | null, pins: PinInput[]) {
     this.clearPins();
+    this.lastInteract = performance.now();
     const fl = floorKey ? this.floorGroups.get(floorKey) : undefined;
     if (!fl || !pins.length) return;
     const { group, w, h, H, s } = fl;
-    const y0 = H * 2.0 * s;
-    const size = 6.5;
-    const lineMat = new THREE.LineBasicMaterial({ color: this.T.pin, transparent: true, opacity: 0.8 });
+    const lift = H * 2.0 * s;
+    const lineMat = new THREE.LineBasicMaterial({ color: this.T.pin, transparent: true, opacity: 0.85 });
     for (const p of pins) {
       const poly = p.polygon;
       if (!poly.length) continue;
@@ -588,21 +724,24 @@ export class PlumbViewer {
       cy /= poly.length;
       const wx = (cx - w / 2) * s;
       const wz = (cy - h / 2) * s;
-      const wy = group.position.y;
-      const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.tex(p.idx, false), transparent: true, depthTest: false, fog: false }));
-      sprite.scale.setScalar(size);
-      sprite.renderOrder = 10;
-      sprite.position.set(wx, wy + y0, wz);
-      sprite.userData = { y0: wy + y0, amp: 0.6 };
-      this.pinGroup.add(sprite);
-      const stem = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(wx, wy + 0.2, wz), new THREE.Vector3(wx, wy + y0 - size * 0.5, wz)]);
-      this.pinGroup.add(new THREE.Line(stem, lineMat));
-      // footprint outline on the plan
-      const pts = poly.map(([x, y]) => new THREE.Vector3((x - w / 2) * s, wy + 0.4, (y - h / 2) * s));
-      if (pts.length > 1) this.pinGroup.add(new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color: this.T.pin })));
-      this.pins.push({ sprite, idx: p.idx, base: size });
+      const wy = group.position.y + H * 0.4 * s;
+      const base = new THREE.Vector3(wx, wy, wz);
+      const top = new THREE.Vector3(wx, wy + lift, wz);
+      const dot = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.dotTex(), transparent: true, depthTest: false, fog: false, sizeAttenuation: false }));
+      dot.position.copy(base);
+      dot.renderOrder = 10;
+      const label = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.labelTex(p.idx, false).t, transparent: true, depthTest: false, fog: false, sizeAttenuation: false }));
+      label.center.set(0.5, 0);
+      label.position.copy(top);
+      label.renderOrder = 11;
+      this.pinGroup.add(dot, label);
+      this.pinGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([base, top]), lineMat));
+      const pts = poly.map(([x, y]) => new THREE.Vector3((x - w / 2) * s, group.position.y + 0.4, (y - h / 2) * s));
+      if (pts.length > 1) this.pinGroup.add(new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color: this.T.pin, transparent: true, opacity: 0.6 })));
+      this.pins.push({ dot, label, idx: p.idx, base, top, lw: 20, lh: 14, show: true });
     }
     this.applyHot();
+    this.declutter();
   }
 
   private clear(g: THREE.Object3D) {
@@ -612,7 +751,7 @@ export class PlumbViewer {
         const m = o as THREE.Mesh;
         m.geometry?.dispose?.();
         const mat = m.material as THREE.Material & { map?: THREE.Texture | null };
-        if (mat?.map && !(o instanceof THREE.Sprite && g === this.pinGroup)) mat.map.dispose();
+        if (mat?.map && !(o instanceof THREE.Sprite && (g === this.pinGroup || g === this.measureGroup))) mat.map.dispose();
         mat?.dispose?.();
       });
     }

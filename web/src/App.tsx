@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ask, fetchPlan, fetchSamples, geometry, imageUrl, upload, type Geometry, type Sample, type BuildPlan } from "./api";
+import { ask, fetchPlan, fetchSamples, setScale, geometry, imageUrl, upload, type Geometry, type Sample, type BuildPlan } from "./api";
 import { chipsFor, findingSpecs } from "./logic";
 import type { ProofObject } from "./types";
 import { Ask, BuildPanel, Findings, Know, Rail, Drawer, Seg, ViewerPane, type ThemeName, type Floor, type FindingState, type Upload } from "./panels";
@@ -34,6 +34,9 @@ export default function App() {
     document.documentElement.dataset.theme = theme;
     localStorage.setItem("plumb-theme", theme);
   }, [theme]);
+  const [measure, setMeasure] = useState<"off" | "pick" | "enter">("off");
+  const [measuredPx, setMeasuredPx] = useState<number | null>(null);
+  const [planExtra, setPlanExtra] = useState<Record<string, number>>({});
   const fileRef = useRef<HTMLInputElement>(null);
   const dirRef = useRef<HTMLInputElement>(null);
   const runId = useRef(0);
@@ -128,12 +131,12 @@ export default function App() {
     }
   };
 
-  const planKey = active ? `${active.path}|${vibe}` : "";
+  const planKey = active ? `${active.path}|${vibe}|${JSON.stringify(planExtra)}` : "";
   const plan = plans[planKey] ?? null;
   useEffect(() => {
     if (mode !== "plan" || !active || (plans[planKey] && !plans[planKey].mock)) return;
     let live = true;
-    void fetchPlan(active.path, vibe).then((p) => live && setPlans((m) => ({ ...m, [planKey]: p })));
+    void fetchPlan(active.path, vibe, planExtra).then((p) => live && setPlans((m) => ({ ...m, [planKey]: p })));
     return () => {
       live = false;
     };
@@ -157,6 +160,26 @@ export default function App() {
     return () => clearInterval(t);
   }, [playing, plan]);
   const curStep = mode === "plan" && plan && stepIdx !== null ? plan.steps[stepIdx] : null;
+  const toggleMeasure = () => {
+    setMeasure((m) => (m === "off" ? "pick" : "off"));
+    setMeasuredPx(null);
+  };
+  const applyLength = async (m: number) => {
+    if (!active || measuredPx === null) return;
+    const q = selected?.proof.question ?? specs[0]?.q;
+    if (!q) return;
+    setAsking(true);
+    try {
+      const [pr] = await setScale(active.path, measuredPx, m, [q]);
+      if (pr) setSelected({ path: active.path, proof: pr });
+      setPlans({});
+    } catch (e) {
+      setAskErr((e as Error).message);
+    } finally {
+      setAsking(false);
+      setMeasure("off");
+    }
+  };
   const seg = <Seg mode={mode} onMode={setMode} />;
 
   const selFloor = selected ? floors.find((f) => f.key === selected.path) : undefined;
@@ -219,8 +242,17 @@ export default function App() {
             drawingOn={drawingOn}
             setDrawingOn={setDrawingOn}
             theme={theme}
+            measure={measure}
+            onMeasureToggle={toggleMeasure}
+            onMeasured={(px) => {
+              setMeasuredPx(Math.hypot(px[1][0] - px[0][0], px[1][1] - px[0][1]));
+              setMeasure("enter");
+            }}
+            onApplyLength={(m) => void applyLength(m)}
+            hasQuestion={!!(selected || specs.length)}
           />
           <Ask
+            onSetSize={toggleMeasure}
             active={active}
             chips={active ? chipsFor(active.path) : []}
             selected={selected && active && selected.path === active.path ? selected.proof : null}
@@ -233,7 +265,6 @@ export default function App() {
           {mode === "plan" ? (
             <BuildPanel
               plan={plan}
-              loading={false}
               vibe={vibe}
               onVibe={setVibe}
               stepIdx={stepIdx}
@@ -251,6 +282,8 @@ export default function App() {
               }}
               seg={seg}
               hasDrawing={!!active}
+              onSetSize={toggleMeasure}
+              onInput={(k, v) => setPlanExtra((x) => ({ ...x, [k]: v }))}
             />
           ) : (
           <Findings

@@ -38,6 +38,7 @@ export interface Geometry {
   credit?: string | null;
   wall_note?: string | null;
   check?: ScanCheck | null;
+  cost?: { ms: number; cpu_s?: number; llm_calls: number; usd: number; note?: string | null } | null;
 }
 export interface ScanView {
   n: number;
@@ -83,7 +84,7 @@ export async function fetchSamples(): Promise<Sample[]> {
 /* ---------- build plan ---------- */
 export type PhaseName = "site" | "foundation" | "floor" | "walls" | "openings" | "services" | "finishes" | "roof";
 export interface PlanBasis { value: string | number; unit?: string | null; tag: string; source?: string | null }
-export interface PlanItem { id: string; group: string; item: string; qty: number | string; unit: string; tag: string; basis: string; step?: string }
+export interface PlanItem { id: string; group: string; item: string; qty: number | string | null; unit: string; tag: string; basis: string; step?: string; per?: string }
 export interface PlanStep { n: number; id: string; title: string; why: string; needs: string[]; phase: PhaseName }
 export interface BuildPlan {
   building: { type: string; label: string; confidence: string; evidence: string[] };
@@ -92,17 +93,30 @@ export interface BuildPlan {
   basis: Record<string, PlanBasis>;
   checklist: PlanItem[];
   steps: PlanStep[];
+  open_inputs?: unknown[];
   /** true when the engine endpoint was unreachable and the local sample shape is shown */
   mock?: boolean;
 }
 
-export async function fetchPlan(path: string, vibe: string): Promise<BuildPlan> {
+export async function fetchPlan(path: string, vibe: string, extra: Record<string, number | string> = {}): Promise<BuildPlan> {
   try {
-    const res = await fetch(`${BASE}/plan?path=${q1(path)}&vibe=${encodeURIComponent(vibe)}`);
+    const more = Object.entries(extra).map(([k, v]) => `&${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`).join("");
+    const res = await fetch(`${BASE}/plan?path=${q1(path)}&vibe=${encodeURIComponent(vibe)}${more}`);
     if (res.ok) return (await res.json()) as BuildPlan;
   } catch {
     /* fall through to the local sample */
   }
   const m = (await import("./mockPlan.json")).default as unknown as BuildPlan;
   return { ...m, vibe, mock: true };
+}
+
+/** User-measured scale: two image-pixel points and the real length between them. Returns the recomputed answers. */
+export async function setScale(path: string, pxLength: number, lengthM: number, questions: string[]): Promise<ProofObject[]> {
+  const res = await fetch(`${BASE}/scale`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path, anchors: [{ kind: "user", px_length: pxLength, length_m: lengthM }], questions }),
+  });
+  if (!res.ok) throw new Error(`scale failed (${res.status})`);
+  return (await res.json()) as ProofObject[];
 }

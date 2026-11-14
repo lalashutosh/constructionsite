@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { ChevronDown, ChevronRight, CircleCheck, CircleMinus, FolderUp, LayoutGrid, Moon, Play, Square, Sun, TriangleAlert, Upload, X } from "lucide-react";
+import { ChevronDown, ChevronRight, CircleCheck, CircleMinus, FolderUp, LayoutGrid, Moon, Play, Ruler, Square, Sun, TriangleAlert, Upload, X } from "lucide-react";
 import { imageUrl, type BuildPlan, type Geometry, type Sample, type ScanCheck } from "./api";
-import { fmtCost, fmtNum, findingTitle, tierSentence, verdict, voterWord, type FindingSpec } from "./logic";
+import { answerDisplay, fmtCost, fmtNum, findingTitle, tierSentence, verdict, voterWord, type FindingSpec } from "./logic";
 import type { ProofObject } from "./types";
 import { PlumbViewer, THEMES, type Phase } from "./viewer3d";
 
@@ -95,7 +95,13 @@ export function ViewerPane(p: {
   drawingOn: boolean;
   setDrawingOn: (b: boolean) => void;
   theme: ThemeName;
+  measure: "off" | "pick" | "enter";
+  onMeasureToggle: () => void;
+  onMeasured: (px: [number, number][]) => void;
+  onApplyLength: (m: number) => void;
+  hasQuestion: boolean;
 }) {
+  const [len, setLen] = useState("");
   const host = useRef<HTMLDivElement>(null);
   const viewer = useRef<PlumbViewer | null>(null);
   const hoverCb = useRef(p.onHover);
@@ -111,6 +117,15 @@ export function ViewerPane(p: {
   }, []);
 
   useEffect(() => viewer.current?.setTheme(THEMES[p.theme]), [p.theme]);
+  const measCb = useRef(p.onMeasured);
+  measCb.current = p.onMeasured;
+  const mFloor = p.active?.key ?? null;
+  useEffect(() => {
+    if (p.measure === "pick") setLen("");
+  }, [p.measure]);
+  useEffect(() => {
+    viewer.current?.setMeasure(p.measure !== "off" ? mFloor : null, (px) => measCb.current(px));
+  }, [p.measure === "off", mFloor]); // eslint-disable-line react-hooks/exhaustive-deps
   const ready = p.floors.filter((f) => f.geo);
   const sig = ready.map((f) => f.key).join("|");
   useEffect(() => {
@@ -151,6 +166,24 @@ export function ViewerPane(p: {
         </div>
       )}
       {a && (
+        <button className={`rulerbtn ${p.measure !== "off" ? "on" : ""}`} onClick={p.onMeasureToggle} aria-label="Set real size" data-tip="Set real size: click two points, then type the length">
+          <Ruler {...ic} />
+        </button>
+      )}
+      {p.measure !== "off" && (
+        <div className="measure">
+          {p.measure === "pick" ? (
+            <span>Click two points on the drawing</span>
+          ) : (
+            <form onSubmit={(e) => { e.preventDefault(); const n = Number(len); if (n > 0) p.onApplyLength(n); }}>
+              <label>Real length <input type="number" step="any" min="0" autoFocus value={len} onChange={(e) => setLen(e.target.value)} aria-label="Real length in metres" /> m</label>
+              <button className="primary" type="submit" disabled={!(Number(len) > 0)}>Apply</button>
+            </form>
+          )}
+          <button className="linkbtn" onClick={p.onMeasureToggle}>Cancel</button>
+        </div>
+      )}
+      {a && (
         <label className="dtoggle" title="Show or hide the drawing under the model">
           <span>Drawing</span>
           <span className="seg2">
@@ -185,13 +218,14 @@ export function ViewerPane(p: {
         <span><i className="sw win" />windows</span>
         <span><i className="sw pin" />evidence</span>
       </div>
+      {a?.geo?.cost && <div className="readcost mono">Read once in {(a.geo.cost.ms / 1000).toFixed(1)} s{a.geo.cost.llm_calls > 0 ? ` · ${a.geo.cost.llm_calls} LLM review${a.geo.cost.llm_calls > 1 ? "s" : ""}` : ""} · ${a.geo.cost.usd.toFixed(4)}</div>}
       <div className="credit" title={credit}>{a ? credit : ""}</div>
     </div>
   );
 }
 
 /* ---------- ask ---------- */
-export function Ask(p: { active: Floor | null; chips: string[]; selected: ProofObject | null; asking: boolean; err: string | null; onAsk: (q: string) => void }) {
+export function Ask(p: { onSetSize: () => void; active: Floor | null; chips: string[]; selected: ProofObject | null; asking: boolean; err: string | null; onAsk: (q: string) => void }) {
   const [q, setQ] = useState("");
   const send = (t: string) => {
     setQ(t);
@@ -217,19 +251,32 @@ export function Ask(p: { active: Floor | null; chips: string[]; selected: ProofO
         ))}
       </div>
       {p.err && <div className="errline" role="alert">Engine problem: {p.err}</div>}
-      {p.selected && v ? (
-        <div className={`answer ${v.tier} ${p.asking ? "stale" : ""}`}>
-          <div className="aq" title={p.selected.question}>{p.selected.question}</div>
-          <div className="aval">
-            <span className="big mono">{p.selected.tier === "grey" || p.selected.value === null || p.selected.value === undefined ? "–" : fmtNum(p.selected.value)}</span>
-            {p.selected.tier !== "grey" && p.selected.unit && p.selected.unit !== "count" && <span className="unit mono">{p.selected.unit}</span>}
+      {p.selected && v ? (() => {
+        const d = answerDisplay(p.selected);
+        const sizeNote = p.selected.assumptions.some((a) => a.key === "scale_px_per_m" && a.tag === "defaulted")
+          ? (p.selected.notes.find((n) => /sizes assume/i.test(n))?.match(/sizes assume (?:typical )?([\d.]+ m doors)/i)?.[1] ?? null)
+          : null;
+        return (
+          <div className={`answer ${v.tier} ${p.asking ? "stale" : ""}`}>
+            <div className="aq" title={p.selected.question}>{p.selected.question}</div>
+            {d.big !== null && (
+              <div className="aval">
+                <span className={`big mono ${d.small ? "t" : ""}`}>{d.big}</span>
+                {d.unit && <span className="unit mono">{d.unit}</span>}
+                {d.parts && <span className="parts mono">{d.parts}</span>}
+              </div>
+            )}
+            <div className="arow">
+              <span className={`status ${v.tier}`}><TierIcon tier={v.tier} />{v.pill}</span>
+              <span className="cost mono">{fmtCost(p.selected)}</span>
+            </div>
+            {p.selected.reliability_note && v.tier === "amber" && <p className="muted sm clip" title={p.selected.reliability_note}>{p.selected.reliability_note}</p>}
+            {sizeNote && (
+              <p className="sm muted">Sizes assume {sizeNote} · <button className="linkbtn" onClick={p.onSetSize}>Set real size</button></p>
+            )}
           </div>
-          <div className="arow">
-            <span className={`status ${v.tier}`}><TierIcon tier={v.tier} />{v.pill}</span>
-            <span className="cost mono">{fmtCost(p.selected)}</span>
-          </div>
-        </div>
-      ) : (
+        );
+      })() : (
         <div className="answer empty-a">{p.active ? "Pick a finding, or ask a question." : "Open a drawing to start."}</div>
       )}
     </div>
@@ -299,10 +346,11 @@ export function Findings(p: {
             <li key={s.key}>
               <button className={`frow ${v.tier} ${sel ? "sel" : ""}`} onClick={() => p.onSelect(st.proof!)}>
                 <span className={`ficon ${v.tier}`}><TierIcon tier={v.tier} /></span>
-                <span>
+                <span className="ftext">
                   <b>{findingTitle(s, st.proof)}</b>
-                  <small>{v.word} · {v.detail}</small>
+                  <small>{v.tier === "amber" && v.rel !== null ? v.detail : `${v.word} · ${v.detail}`}</small>
                 </span>
+                {v.rel !== null && v.tier === "amber" && <span className="relbar" aria-hidden="true"><i style={{ width: `${Math.round(v.rel * 100)}%` }} /></span>}
               </button>
             </li>
           );
@@ -470,9 +518,9 @@ export function Seg({ mode, onMode }: { mode: "findings" | "plan"; onMode: (m: "
 }
 
 /* ---------- build plan ---------- */
+const GROUP_ORDER = ["Structure", "Openings", "Electrical", "Plumbing", "Finishes", "Fit-out"];
 export function BuildPanel(p: {
   plan: BuildPlan | null;
-  loading: boolean;
   vibe: string;
   onVibe: (v: string) => void;
   stepIdx: number | null;
@@ -481,20 +529,28 @@ export function BuildPanel(p: {
   onPlay: () => void;
   seg: ReactNode;
   hasDrawing: boolean;
+  onSetSize: () => void;
+  onInput: (key: string, value: number) => void;
 }) {
-  const [view, setView] = useState<"steps" | "list">("steps");
+  const [view, setView] = useState<"steps" | "list">("list");
   const [open, setOpen] = useState<string | null>(null);
   const [evOpen, setEvOpen] = useState(false);
+  const [it, setIt] = useState("");
   const pl = p.plan;
   const groups = new Map<string, BuildPlan["checklist"]>();
   pl?.checklist.forEach((c) => groups.set(c.group, [...(groups.get(c.group) ?? []), c]));
+  const ordered = [...groups].sort((a, b) => {
+    const ia = GROUP_ORDER.indexOf(a[0]);
+    const ib = GROUP_ORDER.indexOf(b[0]);
+    return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+  });
   return (
     <div className="findings panel">
       {p.seg}
       {!p.hasDrawing ? (
         <div className="muted pad">Open a drawing to get a build plan.</div>
       ) : !pl ? (
-        <div className="muted pad row"><span className="spin sm" /> Working out the build plan…</div>
+        <div className="muted pad row"><span className="spin" /> Working out the build plan…</div>
       ) : (
         <>
           <div className="bhead">
@@ -510,9 +566,9 @@ export function BuildPanel(p: {
               ))}
             </div>
             <div className="subseg">
-              <button className={view === "steps" ? "on" : ""} onClick={() => setView("steps")}>Steps</button>
-              <button className={view === "list" ? "on" : ""} onClick={() => setView("list")}>Checklist</button>
-              <button className="play" onClick={p.onPlay}>{p.playing ? <><Square {...ic} size={12} /> Stop</> : <><Play {...ic} size={12} /> Play</>}</button>
+              <button className={view === "list" ? "on" : ""} onClick={() => setView("list")}>Materials</button>
+              <button className={view === "steps" ? "on" : ""} onClick={() => setView("steps")}>Build steps</button>
+              <button className="play" onClick={() => { setView("steps"); p.onPlay(); }}>{p.playing ? <><Square {...ic} size={12} /> Stop</> : <><Play {...ic} size={12} /> Play</>}</button>
             </div>
           </div>
           {view === "steps" ? (
@@ -528,19 +584,37 @@ export function BuildPanel(p: {
             </ol>
           ) : (
             <div className="flist">
-              {[...groups].map(([g, items]) => (
+              {ordered.map(([g, items]) => (
                 <div key={g} className="cgroup">
                   <h3>{g}</h3>
-                  {items.map((c) => (
-                    <div key={c.id}>
-                      <button className="crow" onClick={() => setOpen(open === c.id ? null : c.id)} aria-expanded={open === c.id}>
-                        <span className="cit">{c.item}</span>
-                        <span className="mono cq">{typeof c.qty === "number" ? fmtNum(c.qty) : c.qty} <small>{c.unit}</small></span>
-                        <span className={`tag ${c.tag}`}>{c.tag}</span>
-                      </button>
-                      {open === c.id && <p className="cbasis muted">{c.basis}</p>}
-                    </div>
-                  ))}
+                  {items.map((c) => {
+                    const needsIt = c.qty === null && (c.per === "it_load_kw" || /it.?load/i.test(c.basis));
+                    const src = c.per ? pl.basis[c.per]?.source : null;
+                    return (
+                      <div key={c.id}>
+                        <div className="crow">
+                          <button className="cit" onClick={() => setOpen(open === c.id ? null : c.id)} aria-expanded={open === c.id}>{c.item}</button>
+                          {c.qty === null ? (
+                            needsIt ? (
+                              <form className="itin" onSubmit={(e) => { e.preventDefault(); const n = Number(it); if (n > 0) p.onInput("it_load_kw", n); }}>
+                                <span className="muted sm">needs your input</span>
+                                <input type="number" step="any" min="0" value={it} onChange={(e) => setIt(e.target.value)} aria-label="IT load in kW" className="mono" /> <span className="muted sm">kW</span>
+                                <button className="linkbtn" type="submit">Apply</button>
+                              </form>
+                            ) : (
+                              <span className="sm">needs real size · <button className="linkbtn" onClick={p.onSetSize}>Set real size</button></span>
+                            )
+                          ) : (
+                            <>
+                              <span className="mono cq">{typeof c.qty === "number" ? fmtNum(c.qty) : c.qty} <small>{c.unit}</small></span>
+                              <span className={`tag ${c.tag}`}>{c.tag}</span>
+                            </>
+                          )}
+                        </div>
+                        {open === c.id && <p className="cbasis muted">{c.basis}{src ? <><br />source: {src}</> : null}</p>}
+                      </div>
+                    );
+                  })}
                 </div>
               ))}
             </div>

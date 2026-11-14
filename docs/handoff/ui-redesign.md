@@ -26,3 +26,11 @@ Drawings icon -> pick sample -> findings fill in -> click a finding -> pins appe
 - Software GL in headless screenshots is slow; real GPUs run at 60 fps.
 - The "Reader" count in the scan-check line is 2 when any view carries an agreement score, otherwise the number of distinct readers.
 - Old fixtures-mode components, derive.ts, geometry.ts, timeline.ts, Lab.tsx were deleted; `public/fixtures` and `scripts/copy-fixtures.mjs` are left in place but unused.
+
+## Round 3 additions
+- Findings show `reliability` ("84% reliable" plus a 34 px hairline bar); "single check" wording removed; query-computed answers say "Computed from a query · check the parts".
+- Answer headline by kind (integer, 1 decimal + m²/m/m³, text word at 34 px with compared parts for yes/no); never a bare dash. USD with 4 decimals plus LLM calls; one-time read cost under the viewer from `/api/geometry` `cost`.
+- Set real size: ruler icon on the viewer or the "Set real size" link under an answer that assumes door sizes (assumption `scale_px_per_m`, tag defaulted). Click two points on the drawing, type metres, POST `/api/scale`, shows the recomputed answer.
+- Build plan opens on the Materials checklist (grouped, qty + unit, tag, tap for basis and `source`); qty null shows "needs real size" or an IT-load input that refetches `/api/plan?it_load_kw=`. Build steps and Play are a second view.
+- 3D: pins are a 5 px dot, 1 px leader and a compact mono tag (overlapping tags collapse to the dot, number on hover); 1 turn per 60 s rotation that pauses on drag and resumes after 3 s; staggered build-up on load (~1.2 s); idle layer separation (6 s cycle) after 6 s without interaction; all of it off under `prefers-reduced-motion`.
+- Known: the measure tool's first click right after toggling can be missed in automated runs; the planner LLM sometimes fails on a free-form question (engine side), shown as a refusal.

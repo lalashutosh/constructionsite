@@ -130,6 +130,8 @@ export interface ProofObject {
   notes: string[];
   query_spec?: Record<string, unknown> | null;
   refusal?: string | null;
+  reliability?: number | null;
+  reliability_note?: string | null;
 }
 
 export type SheetType =
