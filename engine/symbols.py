@@ -349,6 +349,8 @@ def _checklist(abs_path: str, sha: str, facts, llm) -> dict:
     unnamed = [k for k in range(len(reps)) if not names.get(k + 1)][:8]
     if unnamed and llm is not None:                   # second pass: each unnamed type alone, with more context
         strong = llm[-1] if isinstance(llm, (list, tuple)) else llm
+        think0 = getattr(strong, "no_think", True)
+        strong.no_think = True                       # one symbol: answer directly (thinking took minutes per call)
         for k in unnamed:
             png1 = _contact_sheet(g, st, [reps[k]], ppm)
             got, u1 = _ask_names(png1, 1, strong)
@@ -356,6 +358,7 @@ def _checklist(abs_path: str, sha: str, facts, llm) -> dict:
             if got.get(1):
                 names[k + 1] = got[1]
                 agree_n[k + 1] = "named alone (second pass)"
+        strong.no_think = think0
     rejected = []
     for k, r in enumerate(reps):                    # code verifies each name against the measured size
         nm = names.get(k + 1)
@@ -545,6 +548,13 @@ def _summary(abs_path: str, sha: str, facts, words: list[dict], fp, ck: dict) ->
             titles.append((r["h"], t))
     titles.sort(key=lambda x: (-bool(re.search(r"\b(PLAN|ELEVATION|SECTION)\W*$", x[1].upper())), -x[0]))
     title = titles[0][1].title() if titles else None
+    if title:                                       # an OCR fragment first ('Ond Floor Plan'): the floor the sheet names
+        from engine import sheet_lookup as _SL
+        first = title.split()[0]
+        if not _SL._english(first) and first.upper() not in TITLE_WORDS:
+            fl = _SL.this_floor(_SL.rows(words))
+            words_ = {0: "Basement", 1: "First", 2: "Second", 3: "Third", 4: "Fourth", 5: "Fifth"}
+            title = " ".join(([words_[fl]] if fl in words_ else []) + title.split()[1:])
     disc = LY.discipline(words)
     Wx = max((w["box"][2] for w in words), default=1)
     Hy = max((w["box"][3] for w in words), default=1)
@@ -651,5 +661,21 @@ def enrich(abs_path: str, sha: str, facts, ck: dict) -> dict:
         _add_printed(ck, words, g)
         ck["totals"].sort(key=lambda t: -t["count"])
     fp = next((e for e in facts.elements if e.kind == "footprint" and e.attrs.get("px_per_m")), None)
+    rooms = [e for e in facts.elements if e.kind == "room" and len(e.polygon) >= 3]
+    if rooms and not ck.get("rooms"):                 # the read started before the rooms were there: rebuild the list
+        from shapely.geometry import Point, Polygon
+        rn = _room_names(rooms, [e for e in facts.elements if e.kind == "zone"])
+        polys = [(r, Polygon(r.polygon).buffer(0)) for r in rooms]
+        counts: dict[str, dict[str, int]] = {r.id: {} for r in rooms}
+        for e in ck.get("elements", []):
+            xs = [q[0] for q in e["polygon"]]; ys = [q[1] for q in e["polygon"]]
+            c = Point(sum(xs) / len(xs), sum(ys) / len(ys))
+            rid = next((r.id for r, pp in polys if pp.contains(c)), None)
+            if rid:
+                e["room_id"] = rid
+                counts[rid][e["kind"]] = counts[rid].get(e["kind"], 0) + 1
+        ck["rooms"] = sorted([{"id": r.id, "name": rn.get(r.id, r.id), "kind": r.subtype or "room",
+                               "area_m2": r.attrs.get("area_m2"), "polygon": [list(q) for q in r.polygon],
+                               "counts": counts[r.id]} for r in rooms], key=lambda r: r["name"])
     ck["summary"] = _summary(abs_path, sha, facts, words, fp, ck)
     return ck
