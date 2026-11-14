@@ -32,10 +32,11 @@ interface Part {
   scaleY: boolean;
   layer: number;
   delayUntil: number;
+  rate: number;
 }
 /** vertical rank used by the idle layer separation */
 const LAYER: Record<string, number> = { foundation: -1, floor: 1, finishes: 1, fixtures: 1.5, walls: 2, services: 2.5, openings: 3, roof: 4, views: 0 };
-const INTRO_DELAY: Record<string, number> = { foundation: 0, floor: 120, finishes: 120, walls: 250, fixtures: 800, openings: 800 };
+const INTRO_DELAY: Record<string, number> = { foundation: 1100, floor: 1300, finishes: 1300, walls: 1500, fixtures: 2100, openings: 2100 };
 
 export interface Theme {
   name: "dark" | "light";
@@ -131,6 +132,14 @@ export class PlumbViewer {
   private measurePts: [number, number][] = [];
   private measureGroup = new THREE.Group();
   private downAt = { x: 0, y: 0, t: 0 };
+  private geos = new Map<string, Geometry>();
+  private tween: { p0: THREE.Vector3; t0: THREE.Vector3; p1: THREE.Vector3; t1: THREE.Vector3; start: number; dur: number; done?: () => void } | null = null;
+  private home = { pos: new THREE.Vector3(), target: new THREE.Vector3() };
+  private beforeScale: { pos: THREE.Vector3; target: THREE.Vector3 } | null = null;
+  private scans: { mesh: THREE.Mesh; start: number; h: number; fl: { group: THREE.Group } }[] = [];
+  private introUntil = 0;
+  private dimGroup = new THREE.Group();
+  private dims: { sprite: THREE.Sprite; born: number }[] = [];
   private stage: Phase[] | null = null;
   private drawing = true;
   private pinGroup = new THREE.Group();
@@ -175,6 +184,7 @@ export class PlumbViewer {
       this.resumeTimer = window.setTimeout(() => (this.controls.autoRotate = !this.reduce), 3000);
     });
     this.scene.add(this.measureGroup);
+    this.scene.add(this.dimGroup);
     this.camera.position.set(95, 100, 125);
     const dom = this.renderer.domElement;
     dom.addEventListener("pointermove", (e) => {
@@ -189,6 +199,7 @@ export class PlumbViewer {
     dom.addEventListener("wheel", () => (this.lastInteract = performance.now()), { passive: true });
     dom.addEventListener("pointerdown", (e) => {
       this.downAt = { x: e.clientX, y: e.clientY, t: performance.now() };
+      this.skipIntro();
     });
     dom.addEventListener("pointerup", (e) => {
       if (!this.measureKey) return;
@@ -206,6 +217,9 @@ export class PlumbViewer {
       this.raf = requestAnimationFrame(loop);
       this.controls.update();
       this.pick();
+      this.stepTween();
+      this.stepScans();
+      this.stepDims();
       if ((this.frame++ & 3) === 0) this.declutter();
       this.animateParts();
       this.renderer.render(this.scene, this.camera);
@@ -368,7 +382,7 @@ export class PlumbViewer {
       for (const p of fl.parts) {
         if (now < p.delayUntil) continue;
         const d = p.target - p.cur;
-        if (Math.abs(d) > 0.002) p.cur += d * 0.1;
+        if (Math.abs(d) > 0.002) p.cur += d * p.rate;
         else p.cur = p.target;
         p.obj.visible = p.cur > 0.01;
         if (p.scaleY) p.obj.scale.y = Math.max(0.001, p.cur);
@@ -376,6 +390,166 @@ export class PlumbViewer {
         p.obj.position.y = p.layer * gap * this.k;
       }
     }
+  }
+
+  // ---- camera tween, intro, scale mode, dimension labels
+  private flyTo(pos: THREE.Vector3, target: THREE.Vector3, dur: number, done?: () => void) {
+    if (this.reduce) {
+      this.camera.position.copy(pos);
+      this.controls.target.copy(target);
+      this.controls.update();
+      done?.();
+      return;
+    }
+    this.controls.autoRotate = false;
+    this.tween = { p0: this.camera.position.clone(), t0: this.controls.target.clone(), p1: pos.clone(), t1: target.clone(), start: performance.now(), dur, done };
+  }
+
+  private stepTween() {
+    const tw = this.tween;
+    if (!tw) return;
+    const u = Math.min(1, (performance.now() - tw.start) / tw.dur);
+    const e = 1 - Math.pow(1 - u, 3);
+    this.camera.position.lerpVectors(tw.p0, tw.p1, e);
+    this.controls.target.lerpVectors(tw.t0, tw.t1, e);
+    if (u >= 1) {
+      this.tween = null;
+      if (!this.measureKey) this.controls.autoRotate = !this.reduce;
+      tw.done?.();
+    }
+  }
+
+  private stepScans() {
+    if (!this.scans.length) return;
+    const now = performance.now();
+    for (const sc of this.scans) {
+      const u = Math.min(1, Math.max(0, (now - sc.start) / 1100));
+      sc.mesh.position.set(0, 0.8, -sc.h / 2 + sc.h * (1 - Math.pow(1 - u, 2)));
+      sc.mesh.visible = now >= sc.start;
+    }
+    if (now > this.scans[0].start + 1200) this.clearScans();
+  }
+
+  private clearScans() {
+    for (const sc of this.scans) {
+      sc.fl.group.remove(sc.mesh);
+      sc.mesh.geometry.dispose();
+      (sc.mesh.material as THREE.Material).dispose();
+    }
+    this.scans = [];
+  }
+
+  /** A click during the intro jumps straight to the finished model. */
+  private skipIntro() {
+    if (performance.now() > this.introUntil) return;
+    this.introUntil = 0;
+    this.clearScans();
+    for (const fl of this.floorGroups.values()) for (const p of fl.parts) { p.delayUntil = 0; p.cur = p.target; p.rate = 0.1; }
+    if (this.tween) {
+      const tw = this.tween;
+      this.tween = null;
+      this.camera.position.copy(tw.p1);
+      this.controls.target.copy(tw.t1);
+    }
+  }
+
+  /** Scale mode: straight top-down view, the drawing at near full opacity. Off eases back to where the camera was. */
+  setTopDown(on: boolean) {
+    const planes = [...this.floorGroups.values()].map((f) => f.plane.material as THREE.MeshBasicMaterial);
+    if (on) {
+      this.beforeScale = { pos: this.camera.position.clone(), target: this.controls.target.clone() };
+      const t = this.controls.target.clone();
+      const d = this.camera.position.distanceTo(t);
+      this.flyTo(t.clone().add(new THREE.Vector3(0, d * 1.02, 0.001)), t, 1100);
+      for (const m of planes) if (m.map) m.opacity = 0.95;
+    } else {
+      for (const m of planes) if (m.map) m.opacity = this.T.imgOpacity;
+      const b = this.beforeScale ?? this.home;
+      this.flyTo(b.pos, b.target, 1400);
+      this.beforeScale = null;
+    }
+  }
+
+  private tagTex(text: string): { t: THREE.CanvasTexture; wpx: number; hpx: number } {
+    const k = `tag:${text}:${this.T.name}`;
+    const wpx = Math.round(text.length * 7 + 14);
+    let t = this.texCache.get(k);
+    if (!t) {
+      const c = document.createElement("canvas");
+      c.width = wpx * 2;
+      c.height = 32;
+      const g = c.getContext("2d")!;
+      g.fillStyle = this.T.labelBg;
+      g.strokeStyle = "#" + this.T.accent.toString(16).padStart(6, "0");
+      g.lineWidth = 2;
+      g.beginPath();
+      g.roundRect(1, 1, c.width - 2, c.height - 2, 4);
+      g.fill();
+      g.stroke();
+      g.fillStyle = this.T.labelText;
+      g.font = "400 22px 'IBM Plex Mono', monospace";
+      g.textAlign = "center";
+      g.textBaseline = "middle";
+      g.fillText(text, c.width / 2, c.height / 2 + 1);
+      t = new THREE.CanvasTexture(c);
+      t.colorSpace = THREE.SRGBColorSpace;
+      this.texCache.set(k, t);
+    }
+    return { t, wpx, hpx: 16 };
+  }
+
+  /** Real-size labels once a scale is known: main wall lengths and room areas. ppm null removes them. */
+  setDimensions(floorKey: string | null, ppm: number | null) {
+    this.clear(this.dimGroup);
+    this.dims = [];
+    const fl = floorKey ? this.floorGroups.get(floorKey) : undefined;
+    const geo = floorKey ? this.geos.get(floorKey) : undefined;
+    if (!fl || !geo || !ppm) return;
+    const { group, w, h, H, s } = fl;
+    const items: { x: number; y: number; text: string }[] = [];
+    const walls = geo.walls
+      .map((wl) => {
+        let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+        for (const [x, y] of wl.outer) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
+        return { len: Math.max(x1 - x0, y1 - y0), cx: (x0 + x1) / 2, cy: (y0 + y1) / 2 };
+      })
+      .filter((x) => x.len / ppm >= 1.5)
+      .sort((a, b) => b.len - a.len)
+      .slice(0, 8);
+    for (const wl of walls) items.push({ x: wl.cx, y: wl.cy, text: `${(wl.len / ppm).toFixed(1)} m` });
+    const rooms = geo.rooms
+      .filter((r) => r.polygon.length >= 3)
+      .map((r) => {
+        let a2 = 0, cx = 0, cy = 0;
+        for (let i = 0; i < r.polygon.length; i++) {
+          const [x1, y1] = r.polygon[i];
+          const [x2, y2] = r.polygon[(i + 1) % r.polygon.length];
+          a2 += x1 * y2 - x2 * y1;
+          cx += x1;
+          cy += y1;
+        }
+        return { a: Math.abs(a2 / 2) / (ppm * ppm), cx: cx / r.polygon.length, cy: cy / r.polygon.length };
+      })
+      .filter((x) => x.a >= 2)
+      .sort((a, b) => b.a - a.a)
+      .slice(0, 6);
+    for (const r of rooms) items.push({ x: r.cx, y: r.cy, text: `${r.a.toFixed(1)} m²` });
+    const t0 = performance.now();
+    items.forEach((it, i) => {
+      const { t, wpx, hpx } = this.tagTex(it.text);
+      const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: t, transparent: true, opacity: 0, depthTest: false, fog: false, sizeAttenuation: false }));
+      sp.scale.set(this.spritePx(wpx), this.spritePx(hpx), 1);
+      sp.position.set((it.x - w / 2) * s, group.position.y + H * s * 0.6, (it.y - h / 2) * s);
+      sp.renderOrder = 13;
+      this.dimGroup.add(sp);
+      this.dims.push({ sprite: sp, born: t0 + i * 90 });
+    });
+  }
+
+  private stepDims() {
+    if (!this.dims.length) return;
+    const now = performance.now();
+    for (const d of this.dims) (d.sprite.material as THREE.SpriteMaterial).opacity = Math.min(1, Math.max(0, (now - d.born) / 300));
   }
 
   // ---- measure tool
@@ -389,6 +563,7 @@ export class PlumbViewer {
     // hold the model still while measuring (two exact clicks on a rotating model is impossible)
     window.clearTimeout(this.resumeTimer);
     this.controls.autoRotate = floorKey ? false : !this.reduce;
+    this.controls.enableRotate = !floorKey;
   }
 
   private measureClick() {
@@ -433,6 +608,7 @@ export class PlumbViewer {
     for (const { parts } of this.floorGroups.values()) {
       for (const p of parts) {
         const phase = PART_PHASE[p.name] ?? p.name;
+        if (performance.now() > this.introUntil) p.rate = 0.1;
         p.target = p.name === "views" ? 1 : done ? (done.has(phase) ? 1 : 0) : ["services", "roof"].includes(p.name) ? 0 : 1;
       }
     }
@@ -448,10 +624,14 @@ export class PlumbViewer {
     const sig = floors.map((f) => f.key).join("|");
     if (sig === this.signature) return;
     this.signature = sig;
+    this.geos = new Map(floors.map((f) => [f.key, f.geo]));
+    this.clearScans();
     const my = ++this.token;
     this.clear(this.root);
     this.floorGroups.clear();
     this.clearPins();
+    this.clear(this.dimGroup);
+    this.dims = [];
     const n = floors.length;
     const big = Math.max(...floors.map((f) => Math.max(f.geo.width, f.geo.height)), 1);
     const gap = n > 1 ? 30 : 0;
@@ -476,7 +656,22 @@ export class PlumbViewer {
     this.applyStage();
     if (!this.reduce) {
       const t0 = performance.now();
-      for (const fl of this.floorGroups.values()) for (const p of fl.parts) if (p.target > 0) { p.cur = 0; p.delayUntil = t0 + (INTRO_DELAY[p.name] ?? 0); }
+      this.introUntil = t0 + 2700;
+      for (const fl of this.floorGroups.values()) {
+        for (const p of fl.parts) if (p.target > 0) {
+          p.cur = 0;
+          p.delayUntil = t0 + (INTRO_DELAY[p.name] ?? 0);
+          if (p.name === "walls") p.rate = 0.04;
+        }
+        // a thin scan line sweeps the flat drawing before anything rises
+        const w = fl.w;
+        const h = fl.h;
+        const bar = new THREE.Mesh(new THREE.PlaneGeometry(w, Math.max(w, h) * 0.008), new THREE.MeshBasicMaterial({ color: this.T.accent, transparent: true, opacity: 0.95, depthWrite: false, depthTest: false }));
+        bar.rotation.x = -Math.PI / 2;
+        bar.renderOrder = 8;
+        fl.group.add(bar);
+        this.scans.push({ mesh: bar, start: t0 + 100, h, fl });
+      }
     }
     this.lastInteract = performance.now();
     // camera framing: aim at the walls' bounding box so small plans on big sheets still fill the view
@@ -498,7 +693,16 @@ export class PlumbViewer {
     }
     const dist = (170 * frac + 40) + (n - 1) * 26;
     this.controls.target.set(fx, mid, fz);
-    this.camera.position.set(fx + dist * 0.55, mid + dist * 0.5, fz + dist * 0.7);
+    const homePos = new THREE.Vector3(fx + dist * 0.55, mid + dist * 0.5, fz + dist * 0.7);
+    const homeTarget = new THREE.Vector3(fx, mid, fz);
+    this.home = { pos: homePos.clone(), target: homeTarget.clone() };
+    this.beforeScale = null;
+    if (this.reduce) this.camera.position.copy(homePos);
+    else {
+      const from = homeTarget.clone().add(homePos.clone().sub(homeTarget).multiplyScalar(1.45)).add(new THREE.Vector3(0, dist * 0.45, 0));
+      this.camera.position.copy(from);
+      this.flyTo(homePos, homeTarget, 2600);
+    }
     this.controls.autoRotate = !this.reduce;
     this.controls.update();
   }
@@ -521,7 +725,7 @@ export class PlumbViewer {
         const m = (o as THREE.Mesh).material as THREE.Material | undefined;
         if (m) mats.push({ m, base: m.opacity });
       });
-      const p: Part = { name, obj, mats, target: 1, cur: 1, scaleY: onY, layer: LAYER[name] ?? 0, delayUntil: 0 };
+      const p: Part = { name, obj, mats, target: 1, cur: 1, scaleY: onY, layer: LAYER[name] ?? 0, delayUntil: 0, rate: 0.1 };
       content.add(obj);
       parts.push(p);
       return p;

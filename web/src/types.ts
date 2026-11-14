@@ -130,6 +130,7 @@ export interface ProofObject {
   notes: string[];
   query_spec?: Record<string, unknown> | null;
   refusal?: string | null;
+  answer_text?: string | null;
   reliability?: number | null;
   reliability_note?: string | null;
 }

@@ -43,8 +43,13 @@ def main():
     if led.exists():
         rows = [json.loads(l) for l in led.read_text().splitlines() if l.strip()]
         claims["llm_ledger"] = {"calls": len(rows), "usd": round(sum(r.get("usd", 0) for r in rows), 4)}
+    (OUT / "summary_claims.json").write_text(json.dumps(claims, indent=1) + "\n")   # merged by web/scripts/copy-fixtures.mjs
     dst = ROOT / "web" / "public" / "claims.json"
-    dst.write_text(json.dumps(claims, indent=1) + "\n")
+    base = {}
+    latest = OUT / "latest" / "claims.json"
+    if latest.exists():
+        base = {k: v for k, v in json.loads(latest.read_text()).items() if k not in ("run", "commit", "reliability_cv")}
+    dst.write_text(json.dumps({**base, **claims}, indent=1) + "\n")
     print(f"wrote {dst.relative_to(ROOT)}: with siblings {claims['with_siblings'] and claims['with_siblings']['dev_pct']}%,"
           f" no siblings {claims['no_siblings'] and claims['no_siblings']['dev_pct']}%")
 

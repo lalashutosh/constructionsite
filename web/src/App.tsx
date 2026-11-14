@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ask, fetchPlan, fetchSamples, setScale, geometry, imageUrl, upload, type Geometry, type Sample, type BuildPlan } from "./api";
 import { chipsFor, findingSpecs } from "./logic";
 import type { ProofObject } from "./types";
-import { Ask, BuildPanel, Findings, Know, Rail, Drawer, Seg, ViewerPane, type ThemeName, type Floor, type FindingState, type Upload } from "./panels";
+import { HowPage } from "./how";
+import { Ask, BuildPanel, Findings, Know, Rail, Drawer, Seg, ViewerPane, type BannerItem, type ScaleState, type ThemeName, type Floor, type FindingState, type Upload } from "./panels";
 
 const EXTS = ["png", "jpg", "jpeg", "pdf", "dxf", "ifc", "svg"];
 const extOf = (n: string) => n.toLowerCase().split(".").pop() ?? "";
@@ -34,7 +35,12 @@ export default function App() {
     document.documentElement.dataset.theme = theme;
     localStorage.setItem("plumb-theme", theme);
   }, [theme]);
-  const [measure, setMeasure] = useState<"off" | "pick" | "enter">("off");
+  const [scale, setScaleState] = useState<ScaleState>("off");
+  const [ppmByPath, setPpmByPath] = useState<Record<string, number>>({});
+  const [banner, setBanner] = useState<BannerItem[] | null>(null);
+  const [flash, setFlash] = useState<string[]>([]);
+  const [why, setWhy] = useState(false);
+  const [page, setPage] = useState<"work" | "how">("work");
   const [measuredPx, setMeasuredPx] = useState<number | null>(null);
   const [planExtra, setPlanExtra] = useState<Record<string, number>>({});
   const fileRef = useRef<HTMLInputElement>(null);
@@ -160,24 +166,43 @@ export default function App() {
     return () => clearInterval(t);
   }, [playing, plan]);
   const curStep = mode === "plan" && plan && stepIdx !== null ? plan.steps[stepIdx] : null;
-  const toggleMeasure = () => {
-    setMeasure((m) => (m === "off" ? "pick" : "off"));
+  const startScale = () => {
+    setPage("work");
+    setBanner(null);
     setMeasuredPx(null);
+    setScaleState("pick");
   };
+  const cancelScale = () => setScaleState("off");
   const applyLength = async (m: number) => {
     if (!active || measuredPx === null) return;
     const q = selected?.proof.question ?? specs[0]?.q;
     if (!q) return;
+    const path = active.path;
     setAsking(true);
     try {
-      const [pr] = await setScale(active.path, measuredPx, m, [q]);
-      if (pr) setSelected({ path: active.path, proof: pr });
-      setPlans({});
+      const before = plans[planKey] ?? (await fetchPlan(path, vibe, planExtra));
+      const [pr] = await setScale(path, measuredPx, m, [q]);
+      if (pr) setSelected({ path, proof: pr });
+      const after = await fetchPlan(path, vibe, planExtra);
+      setPlans({ [planKey]: after });
+      setPpmByPath((x) => ({ ...x, [path]: measuredPx / m }));
+      const want: [string, string][] = [["floor_area_m2", "floor area"], ["wall_length_m", "wall length"], ["paint_l", "paint"], ["dry_area_m2", "flooring"], ["wet_tiles", "wet-floor tiles"]];
+      const items: BannerItem[] = [];
+      for (const [k, label] of want) {
+        const b = after.basis[k];
+        if (b && typeof b.value === "number" && b.value > 0) items.push({ label, value: b.value, unit: k === "wet_tiles" ? "pcs" : (b.unit ?? "").replace("m2", "m²") });
+      }
+      setBanner(items);
+      const old = new Map(before.checklist.map((c) => [c.id, c.qty]));
+      setFlash(after.checklist.filter((c) => c.qty !== null && old.get(c.id) !== c.qty).map((c) => c.id));
+      setScaleState("payoff");
+      window.setTimeout(() => setScaleState("off"), 5200);
+      window.setTimeout(() => setBanner(null), 9000);
     } catch (e) {
       setAskErr((e as Error).message);
+      setScaleState("off");
     } finally {
       setAsking(false);
-      setMeasure("off");
     }
   };
   const seg = <Seg mode={mode} onMode={setMode} />;
@@ -193,6 +218,8 @@ export default function App() {
         drawerOpen={drawer}
         theme={theme}
         onTheme={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
+        howOn={page === "how"}
+        onHow={() => setPage((p) => (p === "how" ? "work" : "how"))}
       />
       <input
         ref={fileRef}
@@ -224,6 +251,9 @@ export default function App() {
           onClose={() => setDrawer(false)}
         />
       )}
+      {page === "how" ? (
+        <HowPage />
+      ) : (
       <main className="grid">
         <section className="col left">
           <ViewerPane
@@ -242,23 +272,31 @@ export default function App() {
             drawingOn={drawingOn}
             setDrawingOn={setDrawingOn}
             theme={theme}
-            measure={measure}
-            onMeasureToggle={toggleMeasure}
+            scale={scale}
+            scaled={!!(active && ppmByPath[active.path])}
+            ppm={active ? (ppmByPath[active.path] ?? null) : null}
+            banner={banner}
+            applying={asking}
+            onScaleStart={startScale}
+            onScaleCancel={cancelScale}
             onMeasured={(px) => {
               setMeasuredPx(Math.hypot(px[1][0] - px[0][0], px[1][1] - px[0][1]));
-              setMeasure("enter");
+              setScaleState("enter");
             }}
             onApplyLength={(m) => void applyLength(m)}
-            hasQuestion={!!(selected || specs.length)}
+            onWhyRead={() => {
+              setSelected(null);
+              setWhy(true);
+            }}
           />
           <Ask
-            onSetSize={toggleMeasure}
             active={active}
             chips={active ? chipsFor(active.path) : []}
             selected={selected && active && selected.path === active.path ? selected.proof : null}
             asking={asking}
             err={askErr}
             onAsk={(q) => void submit(q)}
+            onWhy={() => setWhy(true)}
           />
         </section>
         <section className="col right">
@@ -282,35 +320,44 @@ export default function App() {
               }}
               seg={seg}
               hasDrawing={!!active}
-              onSetSize={toggleMeasure}
+              onSetSize={startScale}
               onInput={(k, v) => setPlanExtra((x) => ({ ...x, [k]: v }))}
+              scaled={!!(active && ppmByPath[active.path])}
+              flash={flash}
             />
           ) : (
-          <Findings
-            seg={seg}
-            check={active?.geo?.check ?? null}
-            active={active}
-            specs={specs}
-            states={active ? (findings[active.path] ?? {}) : {}}
-            floors={floors}
-            activeKey={activeKey}
-            onPickFloor={setActiveKey}
-            selectedId={selected?.proof.id ?? null}
-            onSelect={(p) => active && setSelected({ path: active.path, proof: p })}
-          />
+            <Findings
+              seg={seg}
+              active={active}
+              specs={specs}
+              states={active ? (findings[active.path] ?? {}) : {}}
+              floors={floors}
+              activeKey={activeKey}
+              onPickFloor={setActiveKey}
+              selectedId={selected?.proof.id ?? null}
+              onSelect={(p) => active && setSelected({ path: active.path, proof: p })}
+              onWhy={(p) => {
+                if (active) setSelected({ path: active.path, proof: p });
+                setWhy(true);
+              }}
+            />
           )}
-          <Know
-            proof={selected && active && selected.path === active.path ? selected.proof : null}
-            floor={selFloor ?? null}
-            hoverIdx={hoverIdx}
-            onHover={setHoverIdx}
-            showPins={showPins}
-            setShowPins={setShowPins}
-            imgUrl={active ? imageUrl(active.path) : ""}
-            check={active?.geo?.check ?? null}
-          />
+          {why && (
+            <Know
+              proof={selected && active && selected.path === active.path ? selected.proof : null}
+              floor={selFloor ?? null}
+              hoverIdx={hoverIdx}
+              onHover={setHoverIdx}
+              showPins={showPins}
+              setShowPins={setShowPins}
+              imgUrl={active ? imageUrl(active.path) : ""}
+              check={active?.geo?.check ?? null}
+              onClose={() => setWhy(false)}
+            />
+          )}
         </section>
       </main>
+      )}
     </div>
   );
 }

@@ -22,6 +22,9 @@ if (existsSync(claimsSrc)) {
     if (k === "run" || k === "commit" || k === "reliability_cv") continue;
     keep[k] = v;
   }
+  // merge the cross-run summary (with/without siblings, per source, router, LLM ledger) from scripts/make_claims.py
+  const summary = join(here, "..", "..", "evalkit", "out", "summary_claims.json");
+  if (existsSync(summary)) Object.assign(keep, JSON.parse(readFileSync(summary, "utf8")));
   writeFileSync(join(here, "..", "public", "claims.json"), JSON.stringify(keep, null, 1));
   console.log("claims copied");
 }

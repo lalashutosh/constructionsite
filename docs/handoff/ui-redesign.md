@@ -34,3 +34,11 @@ Drawings icon -> pick sample -> findings fill in -> click a finding -> pins appe
 - Build plan opens on the Materials checklist (grouped, qty + unit, tag, tap for basis and `source`); qty null shows "needs real size" or an IT-load input that refetches `/api/plan?it_load_kw=`. Build steps and Play are a second view.
 - 3D: pins are a 5 px dot, 1 px leader and a compact mono tag (overlapping tags collapse to the dot, number on hover); 1 turn per 60 s rotation that pauses on drag and resumes after 3 s; staggered build-up on load (~1.2 s); idle layer separation (6 s cycle) after 6 s without interaction; all of it off under `prefers-reduced-motion`.
 - Known: the measure tool's first click right after toggling can be missed in automated runs; the planner LLM sometimes fails on a free-form question (engine side), shown as a refusal.
+
+## Round 4: one story
+- Layout 70 / 30, base text 15 px, titles 24 px, answer sentence 26 px. The 55 px number and the always-visible HOW WE KNOW panel are gone; "Why?" (answer bar, each finding, the story line) slides a sheet over the right column.
+- Story: Reading the drawing -> Found N floor plans · checked by 2 readers + 2 AI reviewers -> Built in 3D. On open a scan line sweeps the flat drawing, walls rise (~2.5 s), camera eases into the orbit; a click skips it. Findings stream in as the engine's `answer_text` sentences (numbers bold) with a reliability word.
+- Set real size: big button on the viewer. Camera goes top-down, drawing near full opacity, "Click both ends of a wall or door you know", two taps, "How long is this? __ m", POST /api/scale, then dimension labels (wall lengths, room m²), a count-up banner from the refetched `/api/plan` basis, changed checklist rows flash, camera eases back. Until set, the build plan says sizes come from a typical 0.9 m door.
+- How it works: rail book icon, 4 steps with SVG figures, numbers strip read only from `/claims.json`.
+- `web/public/claims.json` changed schema during this round (flat single-run keys, no with/without siblings, no per-source accuracy). The page handles both the old nested and the flat schema; per-source and with/without numbers appear only if the file carries them again.
+- `scripts/shot.mjs` drives the measure flow with raw pointerdown/pointerup events (no pointermove). `scripts/shot-how.mjs` re-shoots only the how page.

@@ -172,3 +172,19 @@ export function tierSentence(p: ProofObject): string | null {
   if (!n) return null;
   return `Final rating: ${n.replace(/^tier:\s*/, "").replace(/voters/g, "checks")}.`;
 }
+
+/** The sentence shown as the answer: the engine's answer_text, else a plain fallback from the same fields. */
+export function sentenceOf(p: ProofObject): string {
+  if (p.answer_text) return p.answer_text;
+  if (p.tier === "grey" || p.value === null || p.value === undefined) return `Can't answer: ${p.refusal ?? "no reason given"}.`;
+  const d = answerDisplay(p);
+  return `${d.big ?? ""}${d.unit ? ` ${d.unit}` : ""}`.trim() || "No answer.";
+}
+
+/** One short reliability phrase for lists and the answer line. */
+export function reliabilityWord(p: ProofObject): string {
+  const v = verdict(p);
+  if (v.tier === "green") return `Verified · ${v.detail}`;
+  if (v.tier === "grey") return "Can't answer";
+  return v.rel !== null ? `${Math.round(v.rel * 100)}% reliable` : p.query_spec ? "Computed from a query" : "Needs a look";
+}
