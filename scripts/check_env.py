@@ -45,6 +45,8 @@ def main() -> int:
         if not p:
             (hard if tool == "git" else soft).append(f"{tool} not found")
 
+    sys.path.insert(0, str(ROOT))
+    import engine  # noqa: F401  (puts a repo-local tesseract on PATH when none is installed system-wide)
     t = shutil.which("tesseract")
     if t:
         langs = set(run(["tesseract", "--list-langs"]).split())
