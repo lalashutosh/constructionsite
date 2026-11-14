@@ -267,6 +267,44 @@ async def scale(body: ScaleBody):
             for q in qs]
 
 
+class CheckAnswerBody(PathRef):
+    id: str
+    answer: str
+    value: Optional[float] = None
+
+
+def _checks_target(path: str):
+    from engine.pipeline import _abs
+    return _abs(path), _sha(path)
+
+
+@app.get("/api/checks")
+async def checks(path: str):
+    """Confidence meter + yes/no questions (docs/decisions/checks-api.md)."""
+    from engine.scale import checks as C
+    body = PathRef(path=path)
+    p = _resolve(body)
+    ap, sha = _checks_target(p)
+    try:
+        return await asyncio.to_thread(C.get_checks, ap, sha, p)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+
+
+@app.post("/api/checks/answer")
+async def checks_answer(body: CheckAnswerBody):
+    """yes -> the candidate becomes a user-confirmed scale anchor; no -> rejected, next candidate asked."""
+    from engine.scale import checks as C
+    p = _resolve(body)
+    ap, sha = _checks_target(p)
+    try:
+        return await asyncio.to_thread(C.answer, ap, sha, p, body.id, body.answer, body.value)
+    except KeyError:
+        raise HTTPException(404, f"unknown check id: {body.id}")
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+
+
 @app.post("/api/override", response_model=ProofObject)
 async def override(body: OverrideBody):
     """User verdict on one element (Skeptic Duel: "Is this a door? Yes / No") -> recompute the answer.

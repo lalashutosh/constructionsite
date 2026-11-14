@@ -74,6 +74,11 @@ def _long_side_px(poly) -> float:
 
 def anchor(facts: SheetFacts, abs_path: str, sha: str) -> Optional[ScaleAnchor]:
     """One `dimension` anchor (tag specified) or None."""
+    # BIG SHEETS: opening labels / plain mm values are a small-plan (Finnish floor plan) cue. On a 34x22 in sheet the
+    # OCR'd numbers (room numbers, elevations) matched random room outlines and gave 610.7 px/m 'specified' on a sheet
+    # whose note says 1/2" = 1'-0" (246.06). Scale on big sheets comes from engine.scale.sheet_scale instead.
+    if max(facts.width_px or 0, facts.height_px or 0) >= 2400:
+        return None
     CACHE.mkdir(parents=True, exist_ok=True)
     f = CACHE / f"{sha}-v2.json"
     if f.exists():

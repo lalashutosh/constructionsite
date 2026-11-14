@@ -314,6 +314,26 @@ def _printed_dims_anchor(facts: SheetFacts) -> Optional[ScaleAnchor]:
         return None
 
 
+def _sheet_anchors(facts: SheetFacts) -> tuple[list[ScaleAnchor], bool]:
+    """Anchors read from the sheet's own notes / scale bar / dimension strings (engine/scale/sheet_scale.py)."""
+    try:
+        import pathlib
+        from engine import cache as facts_cache
+        from engine.pipeline import _abs
+        from engine.scale import sheet_scale
+        if "vector" in facts.extras or not facts.provenance.file:
+            return [], False
+        ap = _abs(facts.provenance.file)
+        if pathlib.Path(ap).suffix.lower() not in (".png", ".jpg", ".jpeg", ".webp", ".pdf"):
+            return [], False
+        if max(facts.width_px or 0, facts.height_px or 0) < 700 and pathlib.Path(ap).suffix.lower() != ".pdf":
+            return [], False                      # small floor-plan scans: handled by printed_dims / label areas
+        out, st = sheet_scale.anchors_for(ap, facts.provenance.sha256 or facts_cache.sha256_file(ap))
+        return out, bool(st["cons"]["winner"] or st["users"])
+    except Exception:  # noqa: BLE001
+        return [], False
+
+
 def label_area_candidates(facts: SheetFacts) -> list[dict]:
     """Room areas printed in the room labels ('MH 10.5', 'TUPA 18.5'), as read by the vision label reader
     (cache/labels/<sha>.json; no network here). Each label inside exactly one room polygon gives
@@ -397,14 +417,17 @@ def solve(facts: SheetFacts, user_anchors: tuple[dict[str, Any], ...] = ()) -> S
     la = _label_area_anchor(facts)
     if la is not None:
         anchors.append(la)
+    sa, has_sheet = _sheet_anchors(facts)
+    anchors += sa
     dp = _door_prior_anchor(facts)
     # a measurement printed on the drawing beats the 0.9 m door guess; the guess is kept only as a fallback
-    if dp is not None and pd is None and la is None:
+    if dp is not None and pd is None and la is None and not has_sheet:
         anchors.append(dp)
     for ua in user_anchors:
         anchors.append(_user_anchor(ua))
 
-    combined = _combine(anchors)
+    live = [a for a in anchors if "REJECTED:" not in (a.note or "")]   # sheet consensus rejects stay on the receipt only
+    combined = _combine(live)
     if combined.px_per_m is None:
         return ScaleInfo(px_per_m=None, rel_sigma=None, anchors=[], widths_relative=False, needs_user=True)
 
