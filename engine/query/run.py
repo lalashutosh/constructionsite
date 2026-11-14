@@ -203,7 +203,7 @@ def _agg(els: list[Element], spec: dict, facts: SheetFacts, px_per_m, res: Resul
         return [e.label or e.id for e in els]
     vals: list[float] = []
     for e in els:
-        if agg in ("sum_area", "max_area"):
+        if agg in ("sum_area", "max_area", "avg_area"):
             v = _area_m2(e, px_per_m)
         elif agg == "sum_length":
             v = _length_m(e, px_per_m)
@@ -216,6 +216,8 @@ def _agg(els: list[Element], spec: dict, facts: SheetFacts, px_per_m, res: Resul
         vals.append(v)
     if agg == "max_area":
         return max(vals) if vals else 0.0
+    if agg == "avg_area":
+        return float(sum(vals) / len(vals)) if vals else None
     return float(sum(vals))
 
 
@@ -223,7 +225,8 @@ def run(spec: dict, facts: SheetFacts, px_per_m: Optional[float] = None) -> Resu
     validate(spec)
     rules = list(spec.get("rules") or [])
     els = select(spec, facts)
-    unit = {"sum_area": "m2", "max_area": "m2", "sum_length": "m"}.get(spec["aggregate"], "count")
+    unit = {"sum_area": "m2", "max_area": "m2", "avg_area": "m2", "sum_length": "m",
+            "argmax_area": "label", "argmin_area": "label"}.get(spec["aggregate"], "count")
     if spec["aggregate"] == "sum_attr":
         unit = next((u for suf, u in (("_m3", "m3"), ("_m2", "m2"), ("_m", "m")) if spec["attr"].endswith(suf)), "count")
     res = Result(unit=unit)
@@ -233,6 +236,23 @@ def run(spec: dict, facts: SheetFacts, px_per_m: Optional[float] = None) -> Resu
         if note:
             res.notes.append(note)
     res.evidence_ids = [e.id for e in els]
+    if spec["aggregate"] in ("argmax_area", "argmin_area"):
+        scored = [(a, e) for e in els if (a := _area_m2(e, px_per_m)) is not None]
+        unit_word = "m2"
+        if not scored:                     # no scale: comparing rooms of ONE drawing needs only relative areas
+            scored = [(p.area, e) for e in els if (p := _poly(e)) is not None and p.area > 0]
+            unit_word = "px2 (relative, no scale needed to compare)"
+        if not scored:
+            res.needs_scale = bool(els)
+            return res
+        a, e = (max if spec["aggregate"] == "argmax_area" else min)(scored, key=lambda t: t[0])
+        num = e.attrs.get("number")
+        name = e.label or (e.subtype or e.kind).replace("_", " ")
+        res.value = f"{name}" + (f" ({num})" if num and num != e.label else "")
+        res.notes.append(f"{len(scored)} candidates compared by area; chosen {a:.2f} {unit_word}")
+        res.groups = {"area": round(a, 2)}
+        res.evidence_ids = [e.id]
+        return res
     if spec.get("group_by"):
         from engine.query.graph import apartment_of
         amap = apartment_of(facts) if spec["group_by"] == "apartment" else {}
@@ -251,6 +271,6 @@ def run(spec: dict, facts: SheetFacts, px_per_m: Optional[float] = None) -> Resu
             res.value = 1
         res.value = int(res.value)
         res.runs = [res.value]
-    if res.needs_scale and spec["aggregate"] in ("sum_area", "max_area", "sum_length") and not px_per_m:
+    if res.needs_scale and spec["aggregate"] in ("sum_area", "max_area", "avg_area", "sum_length") and not px_per_m:
         res.value = None
     return res

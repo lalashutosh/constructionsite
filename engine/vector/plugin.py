@@ -163,10 +163,19 @@ def extract(path: str, allow_siblings: bool = True):
                 raise ValueError("pdf has no vector paths or text (scanned?): use the raster route")
     rel = str(abs_path.relative_to(root)) if abs_path.is_relative_to(root) else path
     lic, credit = credits.lookup(root, rel)
+    elements, el_note = [], None
+    if fmt == "dxf":
+        try:
+            from engine.vector.elements import from_dxf
+            elements = from_dxf(str(abs_path))
+            el_note = "elements in DXF units (metres); for the query engine / planner"
+        except Exception as e:  # noqa: BLE001  (elements are a bonus; exact voters do not need them)
+            el_note = f"elements unavailable: {type(e).__name__}"
     sheet_type = "schedule" if "/opening_design/" in rel.replace("\\", "/") and "schedule" in rel.lower() else "floor_plan"
     return SheetFacts(provenance=Provenance(file=path, fmt=fmt, license=lic, credit=credit),
-                      sheet_type=sheet_type, legible=True,
-                      extras={"vector": {"fmt": fmt, "read_from": rel, "allow_siblings": allow_siblings}})
+                      sheet_type=sheet_type, legible=True, elements=elements,
+                      extras={"vector": {"fmt": fmt, "read_from": rel, "allow_siblings": allow_siblings,
+                                         "elements_note": el_note}})
 
 
 def register() -> None:

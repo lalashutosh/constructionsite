@@ -252,11 +252,43 @@ class TemplateClassifier:
             return None if name == "unknown" else name
 
 
+# ----------------------------------------------------------------------------- complex questions
+# Wording that turns a simple count/area into a different question. When a question is NOT a known dataset template
+# and carries one of these, a fixed intent would answer the wrong question confidently ("average room area in
+# apartment B" is not apartment B's net area), so it goes to the planner (or abstains when the LLM is off).
+COMPLEX = re.compile(
+    r"\b(average|mean|median|per\s+(room|apartment|floor)|each|which|largest|biggest|smallest|widest|longest|"
+    r"more\s+(\w+\s+)?than|fewer\s+(\w+\s+)?than|less\s+(\w+\s+)?than|compared?|minus|difference|ratio|percent|%|"
+    r"contain(s|ing)?|with\s+(a|an|no|at\s+least)|without\s+(a|an|any)|that\s+have|have\s+no|has\s+no|"
+    r"and\s+(the\s+)?\w+\s+(in\s+total|together|combined)|in\s+total|combined|"
+    r"durchschnitt|welche[rs]?|größte|grösste|mehr\s+als|moyenne|quel(le)?s?|plus\s+grand|plus\s+de|"
+    r"media|quale|più\s+grande|keskimäär\w*|mikä|suurin)\b", re.I)
+_TEMPLATES: Optional[set] = None
+
+
+def _known_template(q: str) -> bool:
+    global _TEMPLATES
+    if _TEMPLATES is None:
+        _TEMPLATES = {t for t, _, _, _ in _label_rows()}
+    return normalise(q) in _TEMPLATES
+
+
+def is_complex(q: str) -> bool:
+    return bool(COMPLEX.search(unicodedata.normalize("NFKC", q))) and not _known_template(q)
+
+
 # ----------------------------------------------------------------------------- public
 def route(question: str, path: str, *, classifier: Optional[TemplateClassifier] = None) -> Route:
     from evalkit import intents as I
 
     r = I.classify(question, path)
+    if is_complex(question):
+        if classifier is not None:
+            return Route("unknown", {}, "count", r.lang, "complex")      # planner drafts a query for it
+        if r.name == "unknown":
+            return Route("unknown", {}, "count", r.lang, "complex")
+        # LLM off: keep the fixed intent but say the question may ask more than the template answers
+        return Route(r.name, dict(r.params), kind_of(r.name), r.lang, "regex-complex")
     if r.name != "unknown":
         return Route(r.name, dict(r.params), kind_of(r.name), r.lang, "regex")
     norm = normalise(question)

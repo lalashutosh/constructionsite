@@ -57,3 +57,12 @@ def test_lexicon_routes_paraphrases():
 def test_lexicon_abstains_on_area_of_counted_object():
     # an area question about a kitchen must never become the kitchen COUNT
     assert route("What is the floor area of the kitchen?", "data/cubicasa5k/x.png").intent != "kitchens"
+
+
+def test_complex_questions_are_not_hijacked_by_simple_intents():
+    from engine.router import is_complex
+    assert is_complex("What is the average room area in apartment B?")
+    assert is_complex("Are there more windows than doors?")
+    assert is_complex("Which room is the largest?")
+    assert not is_complex("How many windows are drawn on this floor plan?")   # dataset template
+    assert not is_complex("How big is apartment B in square metres, without balconies?")

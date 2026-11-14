@@ -71,6 +71,8 @@ def _agree(a: float, b: float, kind: str) -> bool:
 
 def pick_value(results: list, kind: str):
     """Exact-source voter wins; else the median voter (ties -> smaller TTA spread)."""
+    if kind == "text":                          # "which room is largest?" -> a name
+        return next((r.voter.value for r in results if isinstance(r.voter.value, str)), None)
     scored = [r for r in results if isinstance(r.voter.value, (int, float))]
     if not scored:
         return None
@@ -164,6 +166,11 @@ class PipelineEngine:
         stage = progress or (lambda s: None)
         rt = route_question(question, path, classifier=self.classifier)
         po = self._ask(path, question, rt, allow_siblings, benchmark, stage)
+        if rt.layer == "regex-complex":       # LLM off and the question asks more than the matched template
+            if po.tier == Tier.green:
+                po.tier = Tier.amber
+            po.notes.append(f"this answers the simpler question '{rt.intent}'; the question asks more "
+                            "(turn the planner on: LLM_PROVIDER=verda)")
         po.cost.ms = (time.perf_counter() - t0) * 1000
         for f in ("llm_calls", "tokens_in", "tokens_out", "usd"):
             setattr(po.cost, f, getattr(po.cost, f) + getattr(rt.cost, f))
@@ -265,6 +272,7 @@ class PipelineEngine:
         planner_cost = Cost()
         if not results and self.llm is not None and rt.intent == "unknown":
             results, planner_cost = self._plan_vote(ctx, question, facts, po, notes)
+            kind = po.kind                      # the planner decides the answer's kind (count / area / text)
         for r in results:
             r.voter.runs = list(r.voter.runs)
         po.voters = [r.voter for r in results]
@@ -482,8 +490,17 @@ class PipelineEngine:
         elif res.unit == "count":
             po.kind = "count"
         notes.append("answer computed by code from an LLM-drafted query_spec")
-        v = int(res.value) if po.kind == "count" else float(res.value)
-        return [VoterResult(Voter(name="planner_query", value=v, element_ids=res.evidence_ids, runs=[v],
+        for n in res.notes:
+            notes.append(f"query: {n}")
+        if res.groups:
+            notes.append("query parts: " + ", ".join(f"{k}={v}" for k, v in res.groups.items()))
+        if isinstance(res.value, str):                  # "which room ..." -> a name, not a number
+            po.kind = "text"
+            v = res.value
+        else:
+            v = int(res.value) if po.kind == "count" else float(res.value)
+        return [VoterResult(Voter(name="planner_query", value=v, element_ids=res.evidence_ids,
+                              runs=[] if isinstance(v, str) else [v],
                                   note="LLM-drafted spec executed by the query engine"),
                             evidence=[by[i] for i in res.evidence_ids if i in by], unit=res.unit)], cost
 
