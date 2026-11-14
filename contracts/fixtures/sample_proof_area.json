@@ -1,0 +1,152 @@
+{
+  "id": "demo-area",
+  "question": "What is the floor area?",
+  "intent": "floor_area",
+  "kind": "area",
+  "value": 20.0,
+  "unit": "m2",
+  "interval": {
+    "lo": 12.4,
+    "hi": 31.0
+  },
+  "tier": "amber",
+  "evidence": [
+    {
+      "id": "room1",
+      "kind": "room",
+      "subtype": "living",
+      "polygon": [
+        [
+          40.0,
+          40.0
+        ],
+        [
+          440.0,
+          40.0
+        ],
+        [
+          440.0,
+          540.0
+        ],
+        [
+          40.0,
+          540.0
+        ],
+        [
+          40.0,
+          40.0
+        ]
+      ],
+      "label": "OH",
+      "conf": 0.9,
+      "attrs": {}
+    }
+  ],
+  "voters": [
+    {
+      "name": "polygon_shoelace",
+      "value": 20.0,
+      "element_ids": [
+        "room1"
+      ],
+      "runs": [],
+      "note": null
+    },
+    {
+      "name": "printed_area",
+      "value": 20.0,
+      "element_ids": [],
+      "runs": [],
+      "note": "label '20.0 m2' inside room1"
+    }
+  ],
+  "scale": {
+    "px_per_m": 100.0,
+    "rel_sigma": 0.12,
+    "anchors": [
+      {
+        "kind": "printed_area",
+        "px_per_m": 100.0,
+        "rel_sigma": 0.02,
+        "tag": "specified",
+        "note": "printed 20.0 m2 equals polygon at 100 px/m",
+        "element_ids": [
+          "room1"
+        ]
+      },
+      {
+        "kind": "door_prior",
+        "px_per_m": 100.0,
+        "rel_sigma": 0.12,
+        "tag": "defaulted",
+        "note": null,
+        "element_ids": []
+      }
+    ],
+    "widths_relative": false,
+    "needs_user": false
+  },
+  "assumptions": [
+    {
+      "key": "scale",
+      "value": 100.0,
+      "unit": "px/m",
+      "tag": "specified",
+      "source": "printed label",
+      "depends_on": []
+    }
+  ],
+  "decisions_open": [
+    {
+      "key": "door_leaf_m",
+      "question": "Door leaf width?",
+      "options": [
+        {
+          "value": 0.8,
+          "label": "0.8 m",
+          "total_delta": null,
+          "fits": true,
+          "note": null
+        },
+        {
+          "value": 0.9,
+          "label": "0.9 m",
+          "total_delta": null,
+          "fits": true,
+          "note": null
+        },
+        {
+          "value": 1.0,
+          "label": "1.0 m",
+          "total_delta": null,
+          "fits": false,
+          "note": "opening too narrow without widening"
+        }
+      ],
+      "default": 0.9,
+      "tag": "open",
+      "impact": 0.0,
+      "decide_by": null,
+      "affects": []
+    }
+  ],
+  "provenance": {
+    "file": "data/cubicasa5k/SYNTHETIC-DEMO.png",
+    "sha256": null,
+    "page": null,
+    "revision": null,
+    "resolved_from": null,
+    "fmt": "png",
+    "license": "SYNTHETIC demo fixture",
+    "credit": "Synthetic fixture, not a real drawing"
+  },
+  "cost": {
+    "ms": 40.0,
+    "tokens_in": 0,
+    "tokens_out": 0,
+    "usd": 0.0,
+    "llm_calls": 0
+  },
+  "notes": [],
+  "refusal": null
+}

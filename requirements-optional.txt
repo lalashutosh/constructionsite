@@ -1,0 +1,5 @@
+# Install only when the owning agent needs them. Pin after it works: pip freeze > requirements.lock
+torch            # CPU build is enough; pretrained plan model, if weights are reachable
+torchvision
+ifcopenshell     # IFC path (vector agent, Wave 3)
+a2a-sdk[http-server]   # A2A shell (integrator, Wave 3). Follow the INSTALLED SDK's own examples, do not hardcode method names.

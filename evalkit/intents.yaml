@@ -1,0 +1,184 @@
+# English intent patterns. Matched top-to-bottom, first match wins, case-insensitive.
+# `source` constrains the match to a given data/<source> folder (optional; omit for any source).
+# Named regex groups become Intent.params. See evalkit/intents.py for how this file is consumed.
+# NOTE: patterns are YAML *single*-quoted strings so backslashes stay literal regex escapes;
+# a literal single quote inside a pattern must be doubled ('').
+
+intents:
+  # ---- cubicasa5k: the 12 fixed count intents (no params) ----
+  - name: windows
+    kind: count
+    source: cubicasa5k
+    pattern: 'how many windows are (shown|drawn) on (this|the) floor plan'
+  - name: floors
+    kind: count
+    source: cubicasa5k
+    pattern: 'how many floors? \(storeys\) does this floor plan show'
+  - name: toilets
+    kind: count
+    source: cubicasa5k
+    pattern: 'how many toilet bowls \(wc seats\) are drawn on this floor plan'
+  - name: sinks
+    kind: count
+    source: cubicasa5k
+    pattern: 'how many sinks and wash basins'
+  - name: showers_baths
+    kind: count
+    source: cubicasa5k
+    pattern: 'how many showers and bathtubs are drawn on this floor plan'
+  - name: doors
+    kind: count
+    source: cubicasa5k
+    pattern: 'how many doors are shown on this floor plan'
+  - name: saunas
+    kind: count
+    source: cubicasa5k
+    pattern: 'how many saunas are on this floor plan'
+  - name: kitchens
+    kind: count
+    source: cubicasa5k
+    pattern: 'how many kitchens \(including kitchenettes'
+  - name: bedrooms
+    kind: count
+    source: cubicasa5k
+    pattern: 'how many bedrooms \(makuuhuone'
+  - name: wc_rooms
+    kind: count
+    source: cubicasa5k
+    pattern: 'how many separate wc rooms'
+  - name: bathrooms
+    kind: count
+    source: cubicasa5k
+    pattern: 'how many bathrooms or washrooms'
+  - name: balconies
+    kind: count
+    source: cubicasa5k
+    pattern: 'how many balconies \(parveke'
+
+  # ---- swiss_dwellings ----
+  - name: apartments
+    kind: count
+    source: swiss_dwellings
+    pattern: 'how many apartments \(residential units\) are shown on this floor plan'
+  - name: doors
+    kind: count
+    source: swiss_dwellings
+    pattern: 'how many doors \(interior doors and entrance doors together\) are drawn'
+  - name: windows
+    kind: count
+    source: swiss_dwellings
+    pattern: 'how many windows are drawn on this floor plan'
+  - name: toilets
+    kind: count
+    source: swiss_dwellings
+    pattern: 'how many toilets \(wc\) are drawn on this floor plan'
+  - name: washbasins
+    kind: count
+    source: swiss_dwellings
+    pattern: 'how many washbasins are drawn on this floor plan'
+  - name: bathtubs
+    kind: count
+    source: swiss_dwellings
+    pattern: 'how many bathtubs are drawn on this floor plan'
+  - name: showers
+    kind: count
+    source: swiss_dwellings
+    pattern: 'how many showers are drawn on this floor plan'
+  - name: room_labelled
+    kind: count
+    source: swiss_dwellings
+    pattern: 'how many rooms labelled ''(?P<label>.+)'' are there on this floor'
+  - name: room_area_labelled
+    kind: area
+    source: swiss_dwellings
+    pattern: 'total net area in m. of all rooms labelled ''(?P<label>.+)'' on this floor'
+  - name: total_net_area
+    kind: area
+    source: swiss_dwellings
+    pattern: 'total net floor area in m. of all numbered indoor rooms on this floor'
+  - name: apartment_net_area
+    kind: area
+    source: swiss_dwellings
+    pattern: 'net floor area of apartment (?P<letter>[A-Z]) in m.'
+  - name: room_area
+    kind: area
+    source: swiss_dwellings
+    pattern: 'net floor area of room (?P<room>[\w.\-]+) \(''(?P<label>.+)''\) in m'
+
+  # ---- ifc_models ----
+  - name: room_net_area
+    kind: area
+    source: ifc_models
+    pattern: 'net floor area of the room ''(?P<room>[^'']+)'' on ''(?P<storey>[^'']+)'''
+  - name: total_net_area_storey
+    kind: area
+    source: ifc_models
+    pattern: 'total net floor area of all rooms \(spaces\) on ''(?P<storey>[^'']+)'''
+  - name: walls_side_area_storey
+    kind: area
+    source: ifc_models
+    pattern: 'total net side area of all walls on ''(?P<storey>[^'']+)'''
+  - name: walls_length_storey
+    kind: length
+    source: ifc_models
+    pattern: 'total length of all walls on ''(?P<storey>[^'']+)'''
+  - name: walls_volume_storey
+    kind: volume
+    source: ifc_models
+    pattern: 'total net volume of all walls on ''(?P<storey>[^'']+)'''
+  - name: slabs_volume_storey
+    kind: volume
+    source: ifc_models
+    pattern: 'total net volume of all slabs on ''(?P<storey>[^'']+)'''
+  - name: doors_on_storey
+    kind: count
+    source: ifc_models
+    pattern: 'how many doors are shown on the floor plan of ''(?P<storey>[^'']+)'''
+  - name: count_on_storey
+    kind: count
+    source: ifc_models
+    pattern: 'how many (?P<element>\w+(?: \(spaces\))?) are shown on the floor plan of ''(?P<storey>[^'']+)'''
+  - name: count_in_model
+    kind: count
+    source: ifc_models
+    pattern: 'how many (?P<element>[\w ()]+?) are there in the model ''(?P<model>[^'']+)'''
+
+  # ---- opening_design: door-schedule style ----
+  - name: door_schedule_total
+    kind: count
+    source: opening_design
+    pattern: 'how many doors \(door numbers\) are listed in the door schedule'
+  - name: door_schedule_by_type
+    kind: count
+    source: opening_design
+    pattern: 'how many doors in the door schedule are door type (?P<type>\w+)'
+  - name: door_schedule_by_material
+    kind: count
+    source: opening_design
+    pattern: '\(material (?P<material>[\w\-]+)\)'
+  - name: door_schedule_by_frame
+    kind: count
+    source: opening_design
+    pattern: 'frames? \((?P<frame>[\w\- ]+?)\)'
+  - name: door_schedule_by_note
+    kind: count
+    source: opening_design
+    pattern: 'carry note (?P<note>[A-Z])'
+  - name: door_schedule_by_width
+    kind: count
+    source: opening_design
+    pattern: 'are (?P<width>\d+''-\d+")\s*(wide|high)'
+  - name: door_schedule_total_rooms
+    kind: count
+    source: opening_design
+    pattern: 'how many rooms are listed in the finish room schedule'
+  - name: room_schedule_area
+    kind: area
+    source: opening_design
+    pattern: 'what is the (total )?area of (the )?room(s)? (?P<room>[^()]+)?\(?(?P<room_name>[\w &]+)?\)?.* in the finish room schedule'
+
+  # ---- ifc_bench: free-form text, one catch-all ----
+  - name: text_freeform
+    kind: text
+    source: ifc_bench
+    pattern: '.+'

@@ -1,0 +1,13 @@
+# Budget vibe: minimise quantities within code minimums. No prices, no brands.
+ceiling_height_m: {value: 2.4, unit: m, source: assumption}
+paint_coats: {value: 1, unit: count, source: assumption}
+paint_coverage_m2_per_l: {value: 10.0, unit: m2/l, source: assumption}
+tile_size_m: {value: [0.2, 0.2], unit: m, source: assumption}
+tile_waste_frac: {value: 0.12, unit: fraction, source: assumption}
+lux_target: {value: 200, unit: lux, source: assumption}
+lumens_per_fitting: {value: 1200, unit: lm, source: assumption}
+utilisation_factor: {value: 0.55, unit: fraction, source: assumption}
+carpet_roll_width_m: {value: 3.66, unit: m, source: assumption}
+carpet_waste_frac: {value: 0.12, unit: fraction, source: assumption}
+door_leaf_width_m: {value: 0.8, unit: m, source: assumption}
+door_finish_class: {value: economy-paint-grade, unit: null, source: assumption}

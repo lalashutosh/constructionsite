@@ -1,0 +1,165 @@
+map:
+  cubicasa5k||kuinka monta erillistä wc-tilaa pohjapiirustuksessa on?: wc_rooms
+  cubicasa5k||kuinka monta ikkunaa pohjapiirustuksessa on?: windows
+  cubicasa5k||kuinka monta keittiötä (myös keittokomerot, avo- ja tupakeittiöt sekä apukeittiöt) pohjapiirustuksessa on?: kitchens
+  cubicasa5k||kuinka monta kerrosta pohjapiirustuksessa on esitetty?: floors
+  ? cubicasa5k||kuinka monta kylpy- tai pesuhuonetta (esim. kh, kph, ph, pesuh, sh)
+    pohjapiirustuksessa on, erillisiä wc-tiloja lukuun ottamatta?
+  : bathrooms
+  cubicasa5k||kuinka monta makuuhuonetta (mh) pohjapiirustuksessa on?: bedrooms
+  ? cubicasa5k||kuinka monta ovea pohjapiirustuksessa on? laske oviaukot, joissa on
+    ovi; pelkkiä oviaukkoja ilman ovilehteä ei lasketa.
+  : doors
+  cubicasa5k||kuinka monta parveketta (myös lasitetut parvekkeet) pohjapiirustuksessa on?: balconies
+  ? cubicasa5k||kuinka monta pesu- ja tiskiallasta (keittiö ja kylpytilat yhteensä;
+    kaksoisallas lasketaan yhdeksi) pohjapiirustukseen on piirretty?
+  : sinks
+  cubicasa5k||kuinka monta saunaa pohjapiirustuksessa on?: saunas
+  cubicasa5k||kuinka monta suihkua ja kylpyammetta pohjapiirustukseen on piirretty yhteensä?: showers_baths
+  cubicasa5k||kuinka monta wc-istuinta pohjapiirustukseen on piirretty?: toilets
+  'ifc_models||hvad er den samlede længde af alle vægge på #q# i meter?': walls_length_storey
+  'ifc_models||hvad er det samlede nettoareal af alle rum på #q# i m²?': total_net_area_storey
+  'ifc_models||hvad er det samlede nettosideareal af alle vægge på #q# i m²?': walls_side_area_storey
+  'ifc_models||hvad er det samlede nettovolumen af alle dæk og plader på #q# i m³?': slabs_volume_storey
+  'ifc_models||hvad er det samlede nettovolumen af alle vægge på #q# i m³?': walls_volume_storey
+  'ifc_models||hvad er nettoarealet af rummet #q# på #q# i m²?': room_net_area
+  'ifc_models||hvor mange bjælker er der i modellen #q#?': count_in_model
+  'ifc_models||hvor mange døre er der i modellen #q#?': count_in_model
+  'ifc_models||hvor mange døre er vist på plantegningen for #q#?': doors_on_storey
+  'ifc_models||hvor mange rum er der i modellen #q#?': count_in_model
+  'ifc_models||hvor mange rum er vist på plantegningen for #q#?': count_on_storey
+  'ifc_models||hvor mange søjler er der i modellen #q#?': count_in_model
+  'ifc_models||hvor mange søjler er vist på plantegningen for #q#?': count_on_storey
+  'ifc_models||hvor mange trapper er der i modellen #q#?': count_in_model
+  'ifc_models||hvor mange trapper er vist på plantegningen for #q#?': count_on_storey
+  'ifc_models||hvor mange vinduer er der i modellen #q#?': count_in_model
+  'ifc_models||hvor mange vinduer er vist på plantegningen for #q#?': count_on_storey
+  'ifc_models||hvor mange vægge er der i modellen #q#?': count_in_model
+  'ifc_models||hvor mange vægge er vist på plantegningen for #q#?': count_on_storey
+  'ifc_models||kui suur on kõigi ruumide netopõrandapind kokku korrusel #q# (m²)?': total_net_area_storey
+  'ifc_models||kui suur on ruumi #q# netopõrandapind korrusel #q# (m²)?': room_net_area
+  'ifc_models||mitu akent on mudelis #q#?': count_in_model
+  'ifc_models||mitu posti on mudelis #q#?': count_in_model
+  'ifc_models||mitu posti on näidatud korruse #q# plaanil?': count_on_storey
+  'ifc_models||mitu ruumi on mudelis #q#?': count_in_model
+  'ifc_models||mitu ruumi on näidatud korruse #q# plaanil?': count_on_storey
+  'ifc_models||mitu seina on mudelis #q#?': count_in_model
+  'ifc_models||mitu seina on näidatud korruse #q# plaanil?': count_on_storey
+  'ifc_models||mitu tala on mudelis #q#?': count_in_model
+  'ifc_models||mitu treppi on mudelis #q#?': count_in_model
+  'ifc_models||mitu treppi on näidatud korruse #q# plaanil?': count_on_storey
+  'ifc_models||mitu ust on mudelis #q#?': count_in_model
+  'ifc_models||mitu ust on näidatud korruse #q# plaanil?': doors_on_storey
+  'ifc_models||wie groß ist das gesamte netto-volumen aller decken und bodenplatten im geschoss #q# in m³?': slabs_volume_storey
+  'ifc_models||wie groß ist das gesamte netto-volumen aller wände im geschoss #q# in m³?': walls_volume_storey
+  'ifc_models||wie groß ist die gesamte netto-seitenfläche aller wände im geschoss #q# in m²?': walls_side_area_storey
+  'ifc_models||wie lang sind alle wände im geschoss #q# zusammen, in metern?': walls_length_storey
+  'ifc_models||wie viele fenster enthält das modell #q#?': count_in_model
+  'ifc_models||wie viele fenster sind im grundriss #q# dargestellt?': count_on_storey
+  'ifc_models||wie viele räume enthält das modell #q#?': count_in_model
+  'ifc_models||wie viele räume sind im grundriss #q# dargestellt?': count_on_storey
+  'ifc_models||wie viele treppen enthält das modell #q#?': count_in_model
+  'ifc_models||wie viele träger enthält das modell #q#?': count_in_model
+  'ifc_models||wie viele türen enthält das modell #q#?': count_in_model
+  'ifc_models||wie viele wände enthält das modell #q#?': count_in_model
+  swiss_dwellings||combien d#q#étage ?: apartments
+  swiss_dwellings||combien de baignoires sont dessinées sur ce plan ?: bathtubs
+  swiss_dwellings||combien de douches sont dessinées sur ce plan ?: showers
+  swiss_dwellings||combien de fenêtres sont dessinées sur ce plan ?: windows
+  swiss_dwellings||combien de lavabos sont dessinés sur ce plan ?: washbasins
+  'swiss_dwellings||combien de pièces portant la désignation #q# y a-t-il à cet étage ?': room_labelled
+  'swiss_dwellings||combien de pièces portant la désignation #q#escalier » y a-t-il à cet étage ?': room_labelled
+  swiss_dwellings||combien de portes (portes intérieures et portes d'entrée confondues) sont dessinées sur ce plan ?: doors
+  swiss_dwellings||combien de wc sont dessinés sur ce plan ?: toilets
+  'swiss_dwellings||qual è la superficie netta del locale # (#q#) in m²?': room_area
+  ? swiss_dwellings||qual è la superficie netta dell'appartamento a in m² (somma di
+    tutti i locali, esclusi balconi, logge, terrazze e altri spazi esterni)?
+  : apartment_net_area
+  ? swiss_dwellings||qual è la superficie netta dell'appartamento b in m² (somma di
+    tutti i locali, esclusi balconi, logge, terrazze e altri spazi esterni)?
+  : apartment_net_area
+  ? swiss_dwellings||qual è la superficie netta dell'appartamento c in m² (somma di
+    tutti i locali, esclusi balconi, logge, terrazze e altri spazi esterni)?
+  : apartment_net_area
+  ? swiss_dwellings||qual è la superficie netta dell'appartamento d in m² (somma di
+    tutti i locali, esclusi balconi, logge, terrazze e altri spazi esterni)?
+  : apartment_net_area
+  ? swiss_dwellings||qual è la superficie netta dell'appartamento e in m² (somma di
+    tutti i locali, esclusi balconi, logge, terrazze e altri spazi esterni)?
+  : apartment_net_area
+  ? swiss_dwellings||qual è la superficie netta dell'appartamento g in m² (somma di
+    tutti i locali, esclusi balconi, logge, terrazze e altri spazi esterni)?
+  : apartment_net_area
+  'swiss_dwellings||qual è la superficie netta totale in m² di tutti i locali denominati #q# in questo piano?': room_area_labelled
+  ? swiss_dwellings||qual è la superficie netta totale in m² di tutti i locali interni
+    numerati di questo piano (esclusi balconi, logge, terrazze e altri spazi esterni,
+    cavedi e vuoti)?
+  : total_net_area
+  swiss_dwellings||quante docce sono disegnate in questa pianta?: showers
+  swiss_dwellings||quante finestre sono disegnate in questa pianta?: windows
+  swiss_dwellings||quante porte (porte interne e porte d'ingresso insieme) sono disegnate in questa pianta?: doors
+  swiss_dwellings||quante vasche da bagno sono disegnate in questa pianta?: bathtubs
+  swiss_dwellings||quanti appartamenti (unità abitative) sono rappresentati in questa pianta?: apartments
+  swiss_dwellings||quanti lavabi sono disegnati in questa pianta?: washbasins
+  'swiss_dwellings||quanti locali con la denominazione #q# ci sono in questo piano?': room_labelled
+  swiss_dwellings||quanti wc sono disegnati in questa pianta?: toilets
+  ? swiss_dwellings||quelle est la surface nette de l'appartement a en m² (somme de
+    toutes ses pièces, hors balcons, loggias, terrasses et autres espaces extérieurs)
+    ?
+  : apartment_net_area
+  ? swiss_dwellings||quelle est la surface nette de l'appartement b en m² (somme de
+    toutes ses pièces, hors balcons, loggias, terrasses et autres espaces extérieurs)
+    ?
+  : apartment_net_area
+  ? swiss_dwellings||quelle est la surface nette de l'appartement c en m² (somme de
+    toutes ses pièces, hors balcons, loggias, terrasses et autres espaces extérieurs)
+    ?
+  : apartment_net_area
+  ? swiss_dwellings||quelle est la surface nette de l'appartement d en m² (somme de
+    toutes ses pièces, hors balcons, loggias, terrasses et autres espaces extérieurs)
+    ?
+  : apartment_net_area
+  ? swiss_dwellings||quelle est la surface nette de l'appartement f en m² (somme de
+    toutes ses pièces, hors balcons, loggias, terrasses et autres espaces extérieurs)
+    ?
+  : apartment_net_area
+  ? swiss_dwellings||quelle est la surface nette de l'appartement h en m² (somme de
+    toutes ses pièces, hors balcons, loggias, terrasses et autres espaces extérieurs)
+    ?
+  : apartment_net_area
+  'swiss_dwellings||quelle est la surface nette de la pièce # (#q#) en m² ?': room_area
+  'swiss_dwellings||quelle est la surface nette de la pièce # (#q#escalier ») en m² ?': room_area
+  'swiss_dwellings||quelle est la surface nette totale en m² de toutes les pièces désignées #q# à cet étage ?': room_area_labelled
+  ? swiss_dwellings||quelle est la surface nette totale en m² de toutes les pièces
+    intérieures numérotées de cet étage (hors balcons, loggias, terrasses et autres
+    espaces extérieurs, gaines et vides) ?
+  : total_net_area
+  'swiss_dwellings||wie gross ist die gesamte nettofläche in m² aller räume mit der bezeichnung #q# in diesem geschoss?': room_area_labelled
+  ? swiss_dwellings||wie gross ist die gesamte nettogeschossfläche in m² aller nummerierten
+    innenräume dieses geschosses (ohne balkone, loggien, terrassen und andere aussenräume,
+    schächte und lufträume)?
+  : total_net_area
+  'swiss_dwellings||wie gross ist die nettofläche von raum # (#q#) in m²?': room_area
+  swiss_dwellings||wie gross ist die nettofläche von raum u# (#q#) in m²?: room_area
+  ? swiss_dwellings||wie gross ist die nettowohnfläche von wohnung a in m² (summe
+    aller räume ohne balkone, loggien, terrassen und andere aussenräume)?
+  : apartment_net_area
+  ? swiss_dwellings||wie gross ist die nettowohnfläche von wohnung b in m² (summe
+    aller räume ohne balkone, loggien, terrassen und andere aussenräume)?
+  : apartment_net_area
+  ? swiss_dwellings||wie gross ist die nettowohnfläche von wohnung c in m² (summe
+    aller räume ohne balkone, loggien, terrassen und andere aussenräume)?
+  : apartment_net_area
+  swiss_dwellings||wie viele badewannen sind auf diesem grundriss eingezeichnet?: bathtubs
+  swiss_dwellings||wie viele duschen sind auf diesem grundriss eingezeichnet?: showers
+  swiss_dwellings||wie viele fenster sind auf diesem grundriss eingezeichnet?: windows
+  swiss_dwellings||wie viele lavabos sind auf diesem grundriss eingezeichnet?: washbasins
+  'swiss_dwellings||wie viele räume mit der bezeichnung #q# gibt es in diesem geschoss?': room_labelled
+  swiss_dwellings||wie viele türen (innentüren und eingangstüren zusammen) sind auf diesem grundriss eingezeichnet?: doors
+  swiss_dwellings||wie viele wcs sind auf diesem grundriss eingezeichnet?: toilets
+  swiss_dwellings||wie viele wohnungen sind auf diesem grundriss dargestellt?: apartments
+meta:
+  n_localized_candidates: 3838
+  n_localized_covered: 3838
+  n_pairs_formed: 108
+  pairing_pct: 100.0

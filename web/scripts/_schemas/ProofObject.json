@@ -1,0 +1,758 @@
+{
+  "$defs": {
+    "Assumption": {
+      "properties": {
+        "key": {
+          "title": "Key",
+          "type": "string"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "title": "Value"
+        },
+        "unit": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Unit"
+        },
+        "tag": {
+          "$ref": "#/$defs/Tag"
+        },
+        "source": {
+          "title": "Source",
+          "type": "string"
+        },
+        "depends_on": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Depends On",
+          "type": "array"
+        }
+      },
+      "required": [
+        "key",
+        "value",
+        "tag",
+        "source"
+      ],
+      "title": "Assumption",
+      "type": "object"
+    },
+    "Cost": {
+      "properties": {
+        "ms": {
+          "default": 0.0,
+          "title": "Ms",
+          "type": "number"
+        },
+        "tokens_in": {
+          "default": 0,
+          "title": "Tokens In",
+          "type": "integer"
+        },
+        "tokens_out": {
+          "default": 0,
+          "title": "Tokens Out",
+          "type": "integer"
+        },
+        "usd": {
+          "default": 0.0,
+          "title": "Usd",
+          "type": "number"
+        },
+        "llm_calls": {
+          "default": 0,
+          "title": "Llm Calls",
+          "type": "integer"
+        },
+        "planner_calls": {
+          "default": 0,
+          "title": "Planner Calls",
+          "type": "integer"
+        }
+      },
+      "title": "Cost",
+      "type": "object"
+    },
+    "Decision": {
+      "properties": {
+        "key": {
+          "title": "Key",
+          "type": "string"
+        },
+        "question": {
+          "title": "Question",
+          "type": "string"
+        },
+        "options": {
+          "items": {
+            "$ref": "#/$defs/Option"
+          },
+          "title": "Options",
+          "type": "array"
+        },
+        "default": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "title": "Default"
+        },
+        "tag": {
+          "$ref": "#/$defs/Tag",
+          "default": "open"
+        },
+        "impact": {
+          "default": 0.0,
+          "title": "Impact",
+          "type": "number"
+        },
+        "decide_by": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Decide By"
+        },
+        "affects": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Affects",
+          "type": "array"
+        }
+      },
+      "required": [
+        "key",
+        "question",
+        "options",
+        "default"
+      ],
+      "title": "Decision",
+      "type": "object"
+    },
+    "Element": {
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "title": "Kind",
+          "type": "string"
+        },
+        "subtype": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Subtype"
+        },
+        "polygon": {
+          "items": {
+            "maxItems": 2,
+            "minItems": 2,
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "type": "array"
+          },
+          "title": "Polygon",
+          "type": "array"
+        },
+        "label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Label"
+        },
+        "conf": {
+          "default": 1.0,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Conf",
+          "type": "number"
+        },
+        "attrs": {
+          "additionalProperties": true,
+          "title": "Attrs",
+          "type": "object"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "polygon"
+      ],
+      "title": "Element",
+      "type": "object"
+    },
+    "Interval": {
+      "properties": {
+        "lo": {
+          "title": "Lo",
+          "type": "number"
+        },
+        "hi": {
+          "title": "Hi",
+          "type": "number"
+        }
+      },
+      "required": [
+        "lo",
+        "hi"
+      ],
+      "title": "Interval",
+      "type": "object"
+    },
+    "Option": {
+      "properties": {
+        "value": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "title": "Value"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "total_delta": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Total Delta"
+        },
+        "fits": {
+          "default": true,
+          "title": "Fits",
+          "type": "boolean"
+        },
+        "note": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Note"
+        }
+      },
+      "required": [
+        "value",
+        "label"
+      ],
+      "title": "Option",
+      "type": "object"
+    },
+    "Provenance": {
+      "properties": {
+        "file": {
+          "title": "File",
+          "type": "string"
+        },
+        "sha256": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sha256"
+        },
+        "page": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Page"
+        },
+        "revision": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Revision"
+        },
+        "resolved_from": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Resolved From"
+        },
+        "fmt": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fmt"
+        },
+        "license": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "License"
+        },
+        "credit": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Credit"
+        }
+      },
+      "required": [
+        "file"
+      ],
+      "title": "Provenance",
+      "type": "object"
+    },
+    "ScaleAnchor": {
+      "properties": {
+        "kind": {
+          "enum": [
+            "scale_bar",
+            "dimension",
+            "printed_ratio",
+            "printed_area",
+            "door_prior",
+            "user"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "px_per_m": {
+          "title": "Px Per M",
+          "type": "number"
+        },
+        "rel_sigma": {
+          "title": "Rel Sigma",
+          "type": "number"
+        },
+        "tag": {
+          "$ref": "#/$defs/Tag"
+        },
+        "note": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Note"
+        },
+        "element_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Element Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "kind",
+        "px_per_m",
+        "rel_sigma",
+        "tag"
+      ],
+      "title": "ScaleAnchor",
+      "type": "object"
+    },
+    "ScaleInfo": {
+      "properties": {
+        "px_per_m": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Px Per M"
+        },
+        "rel_sigma": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rel Sigma"
+        },
+        "anchors": {
+          "items": {
+            "$ref": "#/$defs/ScaleAnchor"
+          },
+          "title": "Anchors",
+          "type": "array"
+        },
+        "widths_relative": {
+          "default": false,
+          "title": "Widths Relative",
+          "type": "boolean"
+        },
+        "needs_user": {
+          "default": false,
+          "title": "Needs User",
+          "type": "boolean"
+        }
+      },
+      "title": "ScaleInfo",
+      "type": "object"
+    },
+    "Tag": {
+      "enum": [
+        "drawn",
+        "specified",
+        "chosen",
+        "defaulted",
+        "open"
+      ],
+      "title": "Tag",
+      "type": "string"
+    },
+    "Tier": {
+      "enum": [
+        "green",
+        "amber",
+        "grey"
+      ],
+      "title": "Tier",
+      "type": "string"
+    },
+    "Voter": {
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Value"
+        },
+        "element_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Element Ids",
+          "type": "array"
+        },
+        "runs": {
+          "items": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              }
+            ]
+          },
+          "title": "Runs",
+          "type": "array"
+        },
+        "note": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Note"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "Voter",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "id": {
+      "title": "Id",
+      "type": "string"
+    },
+    "question": {
+      "title": "Question",
+      "type": "string"
+    },
+    "intent": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Intent"
+    },
+    "kind": {
+      "default": "count",
+      "enum": [
+        "count",
+        "area",
+        "length",
+        "volume",
+        "text",
+        "other"
+      ],
+      "title": "Kind",
+      "type": "string"
+    },
+    "value": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Value"
+    },
+    "unit": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Unit"
+    },
+    "interval": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Interval"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "tier": {
+      "$ref": "#/$defs/Tier",
+      "default": "amber"
+    },
+    "evidence": {
+      "items": {
+        "$ref": "#/$defs/Element"
+      },
+      "title": "Evidence",
+      "type": "array"
+    },
+    "voters": {
+      "items": {
+        "$ref": "#/$defs/Voter"
+      },
+      "title": "Voters",
+      "type": "array"
+    },
+    "scale": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ScaleInfo"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "assumptions": {
+      "items": {
+        "$ref": "#/$defs/Assumption"
+      },
+      "title": "Assumptions",
+      "type": "array"
+    },
+    "decisions_open": {
+      "items": {
+        "$ref": "#/$defs/Decision"
+      },
+      "title": "Decisions Open",
+      "type": "array"
+    },
+    "provenance": {
+      "$ref": "#/$defs/Provenance"
+    },
+    "cost": {
+      "$ref": "#/$defs/Cost"
+    },
+    "notes": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Notes",
+      "type": "array"
+    },
+    "query_spec": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Query Spec"
+    },
+    "refusal": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Refusal"
+    }
+  },
+  "required": [
+    "id",
+    "question",
+    "provenance"
+  ],
+  "title": "ProofObject",
+  "type": "object"
+}

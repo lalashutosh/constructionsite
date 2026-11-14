@@ -1,0 +1,17 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+node_modules/
+web/dist/
+data
+evalkit/out/*
+!evalkit/out/.gitkeep
+.claude/worktrees/
+.pytest_cache/
+.DS_Store
+*.log
+logs/
+cache/
+weights/
+fakebin/

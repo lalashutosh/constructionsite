@@ -1,0 +1,396 @@
+{
+  "$defs": {
+    "Element": {
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "title": "Kind",
+          "type": "string"
+        },
+        "subtype": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Subtype"
+        },
+        "polygon": {
+          "items": {
+            "maxItems": 2,
+            "minItems": 2,
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "type": "array"
+          },
+          "title": "Polygon",
+          "type": "array"
+        },
+        "label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Label"
+        },
+        "conf": {
+          "default": 1.0,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Conf",
+          "type": "number"
+        },
+        "attrs": {
+          "additionalProperties": true,
+          "title": "Attrs",
+          "type": "object"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "polygon"
+      ],
+      "title": "Element",
+      "type": "object"
+    },
+    "Provenance": {
+      "properties": {
+        "file": {
+          "title": "File",
+          "type": "string"
+        },
+        "sha256": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sha256"
+        },
+        "page": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Page"
+        },
+        "revision": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Revision"
+        },
+        "resolved_from": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Resolved From"
+        },
+        "fmt": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fmt"
+        },
+        "license": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "License"
+        },
+        "credit": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Credit"
+        }
+      },
+      "required": [
+        "file"
+      ],
+      "title": "Provenance",
+      "type": "object"
+    },
+    "ScaleAnchor": {
+      "properties": {
+        "kind": {
+          "enum": [
+            "scale_bar",
+            "dimension",
+            "printed_ratio",
+            "printed_area",
+            "door_prior",
+            "user"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "px_per_m": {
+          "title": "Px Per M",
+          "type": "number"
+        },
+        "rel_sigma": {
+          "title": "Rel Sigma",
+          "type": "number"
+        },
+        "tag": {
+          "$ref": "#/$defs/Tag"
+        },
+        "note": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Note"
+        },
+        "element_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Element Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "kind",
+        "px_per_m",
+        "rel_sigma",
+        "tag"
+      ],
+      "title": "ScaleAnchor",
+      "type": "object"
+    },
+    "ScaleInfo": {
+      "properties": {
+        "px_per_m": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Px Per M"
+        },
+        "rel_sigma": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rel Sigma"
+        },
+        "anchors": {
+          "items": {
+            "$ref": "#/$defs/ScaleAnchor"
+          },
+          "title": "Anchors",
+          "type": "array"
+        },
+        "widths_relative": {
+          "default": false,
+          "title": "Widths Relative",
+          "type": "boolean"
+        },
+        "needs_user": {
+          "default": false,
+          "title": "Needs User",
+          "type": "boolean"
+        }
+      },
+      "title": "ScaleInfo",
+      "type": "object"
+    },
+    "Tag": {
+      "enum": [
+        "drawn",
+        "specified",
+        "chosen",
+        "defaulted",
+        "open"
+      ],
+      "title": "Tag",
+      "type": "string"
+    }
+  },
+  "description": "What an extractor knows about ONE sheet. Questions are answered from this, never from pixels again.",
+  "properties": {
+    "provenance": {
+      "$ref": "#/$defs/Provenance"
+    },
+    "sheet_type": {
+      "default": "unknown",
+      "enum": [
+        "floor_plan",
+        "elevation",
+        "section",
+        "site_plan",
+        "detail",
+        "multi_view",
+        "schedule",
+        "not_a_plan",
+        "unknown"
+      ],
+      "title": "Sheet Type",
+      "type": "string"
+    },
+    "legible": {
+      "default": true,
+      "title": "Legible",
+      "type": "boolean"
+    },
+    "legibility_note": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Legibility Note"
+    },
+    "width_px": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Width Px"
+    },
+    "height_px": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Height Px"
+    },
+    "language": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Language"
+    },
+    "elements": {
+      "items": {
+        "$ref": "#/$defs/Element"
+      },
+      "title": "Elements",
+      "type": "array"
+    },
+    "scale": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ScaleInfo"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "printed_areas": {
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Printed Areas",
+      "type": "array"
+    },
+    "extras": {
+      "additionalProperties": true,
+      "title": "Extras",
+      "type": "object"
+    }
+  },
+  "required": [
+    "provenance"
+  ],
+  "title": "SheetFacts",
+  "type": "object"
+}

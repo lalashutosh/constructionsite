@@ -1,0 +1,14 @@
+# Standard vibe: unremarkable, code-minimum defaults. No prices, no brands.
+# Every value is editable; `source: assumption` means "we picked this, you can override it".
+ceiling_height_m: {value: 2.5, unit: m, source: assumption}
+paint_coats: {value: 2, unit: count, source: assumption}
+paint_coverage_m2_per_l: {value: 8.0, unit: m2/l, source: assumption}
+tile_size_m: {value: [0.3, 0.3], unit: m, source: assumption}
+tile_waste_frac: {value: 0.10, unit: fraction, source: assumption}
+lux_target: {value: 300, unit: lux, source: assumption}
+lumens_per_fitting: {value: 1500, unit: lm, source: assumption}
+utilisation_factor: {value: 0.60, unit: fraction, source: assumption}
+carpet_roll_width_m: {value: 4.0, unit: m, source: assumption}
+carpet_waste_frac: {value: 0.10, unit: fraction, source: assumption}
+door_leaf_width_m: {value: 0.9, unit: m, source: assumption}
+door_finish_class: {value: standard-paint-grade, unit: null, source: assumption}

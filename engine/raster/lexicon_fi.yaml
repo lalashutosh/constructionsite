@@ -1,0 +1,41 @@
+# OCR label -> room category HYPOTHESES (Finnish cubicasa5k abbreviations).
+# These are hypotheses: engine/count/devcheck.py confirms/tunes each mapping against
+# questions.jsonl answers, never against what the abbreviation "should" mean (AGENTS.md rule 2).
+# Token matching (engine/raster/ocr.py): uppercase, strip non [A-ZÅÄÖ0-9], strip a trailing
+# room-number digit (e.g. "MH1" -> "MH"), then exact-match against the lists below.
+bedroom:
+  - MH          # makuuhuone
+  - MH1
+  - MH2
+living:
+  - OH          # olohuone
+  - OLOHUONE
+kitchen:
+  - K
+  - KEITT
+  - KEITTIO
+  - TUPAK        # tupakeittio (open/utility kitchen)
+  - AK           # apukeittio
+bathroom:       # KH/KPH/PH/PESUH/SH, NOT separate WC rooms (question template excludes WC)
+  - KH
+  - KPH
+  - PH
+  - PESUH
+  - PESUHUONE
+  - SH
+wc:
+  - WC
+sauna:
+  - S
+  - SAUNA
+storage:
+  - VAR
+  - VARASTO
+  - KOMERO
+entry:
+  - ET
+  - ETEINEN
+  - AULA
+balcony:
+  - PARVEKE
+  - PARV

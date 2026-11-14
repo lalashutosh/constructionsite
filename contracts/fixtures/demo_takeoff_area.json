@@ -1,0 +1,122 @@
+{
+  "id": "demo-area",
+  "question": "What is the floor area?",
+  "intent": "floor_area",
+  "kind": "area",
+  "value": 20.0,
+  "unit": "m2",
+  "interval": {
+    "lo": 19.210884860934286,
+    "hi": 20.789115139065718
+  },
+  "tier": "green",
+  "evidence": [
+    {
+      "id": "room1",
+      "kind": "room",
+      "subtype": "living",
+      "polygon": [
+        [
+          40.0,
+          40.0
+        ],
+        [
+          440.0,
+          40.0
+        ],
+        [
+          440.0,
+          540.0
+        ],
+        [
+          40.0,
+          540.0
+        ],
+        [
+          40.0,
+          40.0
+        ]
+      ],
+      "label": "OH",
+      "conf": 0.9,
+      "attrs": {}
+    }
+  ],
+  "voters": [
+    {
+      "name": "polygon_shoelace",
+      "value": 20.0,
+      "element_ids": [
+        "room1"
+      ],
+      "runs": [],
+      "note": null
+    },
+    {
+      "name": "printed_area",
+      "value": 20.0,
+      "element_ids": [],
+      "runs": [],
+      "note": "label '20.0 m2'"
+    }
+  ],
+  "scale": {
+    "px_per_m": 100.00000000000004,
+    "rel_sigma": 0.019727878476642875,
+    "anchors": [
+      {
+        "kind": "printed_area",
+        "px_per_m": 100.0,
+        "rel_sigma": 0.02,
+        "tag": "specified",
+        "note": "printed '20.0 m2' matches room room1 at 100.00 px/m",
+        "element_ids": [
+          "room1"
+        ]
+      },
+      {
+        "kind": "door_prior",
+        "px_per_m": 100.0,
+        "rel_sigma": 0.12,
+        "tag": "defaulted",
+        "note": "median of 7 detected door leaves = 90.0 px, assumed 0.9 m",
+        "element_ids": [
+          "d0",
+          "d1",
+          "d2",
+          "d3",
+          "d4",
+          "d5",
+          "d6"
+        ]
+      }
+    ],
+    "widths_relative": false,
+    "needs_user": false
+  },
+  "assumptions": [],
+  "decisions_open": [],
+  "provenance": {
+    "file": "data/cubicasa5k/SYNTHETIC-DEMO.png",
+    "sha256": null,
+    "page": null,
+    "revision": null,
+    "resolved_from": null,
+    "fmt": "png",
+    "license": "SYNTHETIC demo fixture",
+    "credit": "Synthetic fixture, not a real drawing"
+  },
+  "cost": {
+    "ms": 4.3026329985877965,
+    "tokens_in": 0,
+    "tokens_out": 0,
+    "usd": 0.0,
+    "llm_calls": 0,
+    "planner_calls": 0
+  },
+  "notes": [
+    "vibe=standard (does not change floor area; affects materials.py quantities)"
+  ],
+  "query_spec": null,
+  "refusal": null
+}
