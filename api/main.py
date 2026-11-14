@@ -60,6 +60,7 @@ class PathRef(BaseModel):
 class AskBody(PathRef):
     question: str
     benchmark: bool = False
+    selected_id: Optional[str] = None      # element selected in the viewer: "this room" means it
     questions: Optional[list[str]] = None
 
 
@@ -172,6 +173,11 @@ async def upload(file: UploadFile = File(...)) -> dict:
 @app.post("/api/ask", response_model=ProofObject)
 async def ask(body: AskBody):
     path = _resolve(body)
+    from engine import selected
+    if selected.applies(body.question, body.selected_id):
+        po = await asyncio.to_thread(selected.answer, engine(), path, body.question, body.selected_id)
+        if po is not None:
+            return po
     return await asyncio.to_thread(engine().ask, path, body.question, allow_siblings=body.allow_siblings,
                                    benchmark=body.benchmark)
 
@@ -686,6 +692,14 @@ async def geometry(path: str):
                      "note": "reading the drawing + 3D walls + scan check, paid once per file (cached by sha256)"}
         g.update(path=path, coords=coords, credit=(facts.provenance.credit if facts else None),
                  reader_version=facts_cache.READER_VERSION)
+        if facts is not None and coords == "pixels":     # deep mode + layers (envelope / walls / furniture / piping)
+            try:
+                from engine import symbols, layers as LY
+                g["deep"] = symbols.deep_info(facts.extras.get("profile") or {},
+                                              sum(1 for e in facts.elements if e.kind == "room"))
+                g["layers"] = LY.layers(str(f), facts, g)
+            except Exception as e:  # noqa: BLE001
+                g["layers_error"] = f"{type(e).__name__}: {e}"
         if facts is not None and coords == "pixels":     # printed evidence solved the scale: sizes show by default
             try:
                 sc = engine()._scale(facts, sha)
@@ -898,6 +912,27 @@ def _printed_findings(p: str, facts) -> list[dict]:
                          notes=["read from the sheet's own print (OCR words; boxes show each value)"])
         out.append({"intent": f["kind"], "question": f["title"], "proof": json.loads(po.model_dump_json())})
     return out
+
+
+@app.get("/api/checklist")
+async def checklist(path: str):
+    """Deep read of a big sheet: every symbol type discovered by repetition (code), named once by two vision reviewers
+    (size-checked by code), counted by clustering + template matching; rooms named individually; totals per kind.
+    Cached per drawing; the first call can take minutes on a huge sheet (deep.eta_s says how long, up front)."""
+    p = _resolve(PathRef(path=path))
+    eng = engine()
+
+    def run():
+        from engine import symbols
+        from engine.pipeline import _abs
+        facts = eng.analyze(p)
+        ap = _abs(p)
+        sha = facts.provenance.sha256 or facts_cache.sha256_file(ap)
+        revs = _reviewers()
+        if revs:
+            revs[-1].no_think, revs[-1].timeout = False, 240
+        return symbols.checklist(ap, sha, facts, llm=revs)
+    return await asyncio.to_thread(run)
 
 
 @app.post("/api/decide")
