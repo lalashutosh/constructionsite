@@ -88,7 +88,8 @@ jobs:
           size: "1"
           image: ubuntu-24.04
           network: |
-            {}
+            default: deny
+            presets: [pypi, github]
       - name: Allowed package source is reachable
         run: curl -sS --max-time 20 -o /dev/null -w "pypi.org %{http_code}\n" https://pypi.org/simple/pip/
       - name: Arbitrary host is blocked
