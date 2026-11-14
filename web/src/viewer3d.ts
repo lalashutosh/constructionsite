@@ -193,6 +193,9 @@ export class PlumbViewer {
     dom.addEventListener("pointerup", (e) => {
       if (!this.measureKey) return;
       if (Math.hypot(e.clientX - this.downAt.x, e.clientY - this.downAt.y) > 5 || performance.now() - this.downAt.t > 500) return;
+      // aim from THIS click, not the last pointermove (taps and clicks without a prior move missed the drawing)
+      const r = dom.getBoundingClientRect();
+      this.mouse.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
       this.measureClick();
     });
     this.ro = new ResizeObserver(() => this.resize());
@@ -383,6 +386,9 @@ export class PlumbViewer {
     this.measurePts = [];
     this.clear(this.measureGroup);
     this.renderer.domElement.style.cursor = floorKey ? "crosshair" : "grab";
+    // hold the model still while measuring (two exact clicks on a rotating model is impossible)
+    window.clearTimeout(this.resumeTimer);
+    this.controls.autoRotate = floorKey ? false : !this.reduce;
   }
 
   private measureClick() {
