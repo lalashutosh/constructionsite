@@ -253,7 +253,9 @@ def _drawing_png(path: str, max_px: int = 2000) -> tuple[pathlib.Path, str, str]
     if src.suffix.lower() in (".dxf", ".ifc"):
         sib = next((src.with_suffix(e) for e in (".png", ".pdf", ".svg") if src.with_suffix(e).exists()), None)
         if sib is None:
-            raise HTTPException(404, f"no renderable sibling for {path}")
+            if not src.exists():
+                raise HTTPException(404, f"file not found: {path}")
+            return _render_cad(src, max_px)
         src = sib
     if not src.exists():
         raise HTTPException(404, f"file not found: {path}")
@@ -274,6 +276,27 @@ def _drawing_png(path: str, max_px: int = 2000) -> tuple[pathlib.Path, str, str]
                 pix.save(str(out))
         return out, "image/png", "pdf-render"
     raise HTTPException(415, f"cannot render {ext}")
+
+
+def _render_cad(src: pathlib.Path, max_px: int) -> tuple[pathlib.Path, str, str]:
+    """A .dxf / .ifc with no image beside it: we draw it ourselves (cached by sha256). Coords `dxf-render` /
+    `ifc-render`: the 3D data is built from the file's own entities in this pixel space (see /api/geometry)."""
+    kind = src.suffix.lower()[1:]
+    out = IMAGES / f"{facts_cache.sha256_file(str(src))}-{max_px}-{kind}.png"
+    if not out.exists():
+        IMAGES.mkdir(parents=True, exist_ok=True)
+        try:
+            if kind == "dxf":
+                from engine.vector import dxf_render
+                dxf_render.render(str(src), str(out), max_px)
+            else:
+                from engine.vector import ifc_render
+                ifc_render.render(str(src), str(out), max_px)
+        except HTTPException:
+            raise
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(422, f"could not draw this {kind.upper()} file: {type(e).__name__}: {e}")
+    return out, "image/png", f"{kind}-render"
 
 
 @app.get("/api/image")
@@ -315,6 +338,22 @@ async def geometry(path: str):
     def build():
         import cv2
         from engine import geometry3d
+        if coords in ("dxf-render", "ifc-render"):          # exact: walls and elements from the file's entities
+            from engine.pipeline import _abs
+            src = _abs(path)
+            t0 = __import__("time").perf_counter()
+            if coords == "dxf-render":
+                from engine.vector import dxf_render
+                g = dxf_render.geometry(src)
+            else:
+                from engine.vector import ifc_render
+                g = ifc_render.geometry(src)
+            g["cost"] = {"ms": round((__import__("time").perf_counter() - t0) * 1000), "llm_calls": 0, "usd": 0.0,
+                         "note": "3D built from the file's own entities (no image reading), cached by sha256"}
+            g.update(path=path, coords=coords, credit=None, check=None)
+            GEOM.mkdir(parents=True, exist_ok=True)
+            out.write_text(json.dumps(g))
+            return g
         img = cv2.imread(str(f), cv2.IMREAD_COLOR)
         if img is None:
             raise HTTPException(415, "image could not be read")
