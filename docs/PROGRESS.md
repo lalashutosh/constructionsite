@@ -1,7 +1,19 @@
 # Plumb: where we are
 
 Plain-language status. Updated after every milestone. Branch `p2-finish` on GitHub (`main` untouched).
-Last update: **15:20**
+Last update: **16:05**
+
+## 16:05 update: the scan is now checked by several methods + LLMs
+
+**How the image becomes 3D (and who checks it):**
+1. **Split the sheet into separate drawings** (CV): e.g. floor plan, site plan, title block.
+2. **Two wall readers per drawing:** the CubiCasa CNN and stroke tracing (pure CV); we measure how much they agree.
+3. **Two vision LLMs review it** (DeepSeek Flash + Kimi, our own endpoints): they see the sheet with both wall overlays and fill a fixed form: what each drawing is, which reader follows the walls, is anything mirrored. A flag needs **both** reviewers to agree.
+4. **Code decides:** walls only in floor plans, the better reader per drawing, plain warnings for you. The LLMs judge; they never produce numbers or geometry.
+
+Result on your archival upload: site plan and title block excluded, floor plan kept, "View 1 looks like a site plan: no walls built there". Cost ~$0.0045 per sheet, cached.
+
+**UI:** the agent is restyling with your palettes (dark: #0A1828 / #178582 / #BFA181; light: #970747 / #FFFFFF), the article's rules (no glows, gradients, emoji icons, cards-everywhere, heavy shadows, rounded-everything, neon-on-dark; IBM Plex type as hierarchy, hairlines and whitespace instead of cards, one primary button), plus scan-check labels on the 3D views and in Findings.
 
 ## 15:20 update: redesign + build plan + harder questions
 
