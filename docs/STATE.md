@@ -1,6 +1,6 @@
-STATUS: BLOCKED
+STATUS: IN_PROGRESS
 
-Next action: HUMAN FIX REQUIRED — workspace trust gate denies ALL execution (python/pytest/make/npm/git). See docs/MORNING.md. Accept the trust dialog (`cd /home/ashutosh/Downloads/plumb && claude`, accept prompt) then restart overnight.sh. After that: finish P1 raster table + ui build/screenshots, then G1 gate. No code lost; these STATE/MORNING writes are uncommitted (git exec blocked too).
+Next action: P1 — trust fixed by human. Finish raster-extractor (per-intent table, handoff) + ui-builder (build, screenshots) from what is on disk, then G1 gate.
 
 ## Checklist
 ### P0 Bootstrap
