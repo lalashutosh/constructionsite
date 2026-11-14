@@ -90,8 +90,8 @@ class NGramIndex:
 
 
 def _src(path: str) -> str:
-    parts = (path or "").split("/")
-    return parts[1] if len(parts) > 1 else ""
+    from evalkit.intents import source_of
+    return source_of(path)
 
 
 def _label_rows(exclude_lang: Optional[str] = None) -> list[tuple[str, str, str, str]]:

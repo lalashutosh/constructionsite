@@ -174,6 +174,11 @@ class PipelineEngine:
         po.cost.ms = (time.perf_counter() - t0) * 1000
         for f in ("llm_calls", "tokens_in", "tokens_out", "usd"):
             setattr(po.cost, f, getattr(po.cost, f) + getattr(rt.cost, f))
+        try:
+            from engine.answer_text import sentence
+            po.answer_text = sentence(po)
+        except Exception:  # noqa: BLE001  (the sentence is a convenience; never fail an answer over it)
+            po.answer_text = None
         bad = invariants.check(po)
         if bad:
             log.warning("invariants violated for %s: %s", path, bad)

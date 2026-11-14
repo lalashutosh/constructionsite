@@ -143,6 +143,7 @@ class ProofObject(BaseModel):
     refusal: Optional[str] = None
     reliability: Optional[float] = None          # P(correct) from a calibrator trained on DEV answers (never the model's own confidence)
     reliability_note: Optional[str] = None       # where that number comes from, in words
+    answer_text: Optional[str] = None            # one plain sentence built by code from `value` (no LLM)
 
 
 class SheetFacts(BaseModel):

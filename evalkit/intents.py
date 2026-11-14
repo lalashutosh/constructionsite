@@ -104,10 +104,27 @@ def _localized_map() -> dict[str, str]:
     return dict(data.get("map", {}))
 
 
+RASTER_EXT = (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff")
+
+
+def source_of(path: str) -> str:
+    """Dataset folder for dataset paths ('data/<source>/...'); an uploaded or outside raster image is read like a
+    scanned plan ('cubicasa5k' rules and readers), anything else ''. Uploads used to route as 'unknown' and fell
+    through to the planner, which counted model blobs instead of the labelled rooms (5 bedrooms instead of 2)."""
+    p = (path or "").replace("\\", "/")
+    parts = p.split("/")
+    if "data" in parts:
+        i = parts.index("data")
+        if i + 1 < len(parts):
+            return parts[i + 1]
+    if p.lower().endswith(RASTER_EXT):
+        return "cubicasa5k"
+    return ""
+
+
 def classify(question: str, path: str) -> Intent:
     """Public API. `path` is the questions.jsonl path (relative to DATASET_ROOT); unknown -> Intent("unknown")."""
-    parts = path.split("/")
-    source = parts[1] if len(parts) > 1 else None
+    source = source_of(path) or None
     lang = guess_lang(question)
 
     for rule in _rules():

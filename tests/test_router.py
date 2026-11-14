@@ -74,3 +74,9 @@ def test_kind_clash_and_have_a_go_to_the_planner():
     # area wording on a count-only intent is not that intent (no LLM here -> flagged fallback or unknown)
     r = route("What is the total area of all bedrooms?", "data/cubicasa5k/x.png")
     assert r.layer in ("complex", "regex-complex") or r.intent == "unknown"
+
+
+def test_uploaded_scan_routes_like_a_scanned_plan():
+    up = "/Users/x/constructionsite/cache/uploads/4f40e3.png"
+    assert route("How many bedrooms are there?", up).intent == "bedrooms"
+    assert route("How many bedrooms are there?", "data/cubicasa5k/colorful-2002.png").intent == "bedrooms"
