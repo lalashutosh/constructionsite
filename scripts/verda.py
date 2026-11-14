@@ -72,6 +72,7 @@ def main() -> int:
     ap.add_argument("--out")
     ap.add_argument("--max-tokens", type=int, default=4000)
     ap.add_argument("--ping", action="store_true")
+    ap.add_argument("--no-think", action="store_true", help="answer directly: no hidden reasoning tokens")
     ap.add_argument("--spent", action="store_true")
     a = ap.parse_args()
 
@@ -115,6 +116,9 @@ def main() -> int:
 
     body = {"model": model, "max_tokens": a.max_tokens, "temperature": 0.2,
             "messages": [{"role": "system", "content": a.system}, {"role": "user", "content": user}]}
+    if a.no_think:                       # thinking models otherwise spend max_tokens on hidden reasoning
+        body["chat_template_kwargs"] = {"thinking": False, "enable_thinking": False}
+        body["reasoning_effort"] = "low"
     data, err = None, ""
     for attempt in range(4):
         print(f"[{a.provider}:{a.model}] attempt {attempt + 1}/4 -> {base} (cold start can take minutes)"

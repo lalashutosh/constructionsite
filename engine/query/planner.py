@@ -42,6 +42,7 @@ class Plan:
     specs: list[dict]
     combine: str = "single"
     cost: Cost = field(default_factory=Cost)
+    derive: Optional[object] = None   # validated engine.takeoff.derive.DeriveSpec when the reply carried a `derive` object
 
 
 def drawing_vocabulary(facts: SheetFacts) -> dict:
@@ -78,6 +79,10 @@ def plan(question: str, facts: SheetFacts, llm: LLM) -> Plan:
                     usd=cost.usd + reply.usd, llm_calls=2, planner_calls=1)
     try:
         obj = _parse_json(reply.text)
+        derive_spec = None
+        if "derive" in obj:                    # tiles/paint/... wanted on top of the base quantity: validated, code computes
+            from engine.takeoff import derive as D
+            derive_spec = D.from_obj(obj.pop("derive"))
         if "unsupported" in obj:
             raise SpecError(f"unsupported: {str(obj['unsupported'])[:120]}")
         if "parts" in obj:
@@ -89,7 +94,7 @@ def plan(question: str, facts: SheetFacts, llm: LLM) -> Plan:
         else:
             specs, comb = [obj], "single"
         kinds = set(vocab["element_kinds"])
-        return Plan([validate(s, known_kinds=kinds) for s in specs], comb, cost)
+        return Plan([validate(s, known_kinds=kinds) for s in specs], comb, cost, derive_spec)
     except (SpecError, ValueError, KeyError, TypeError) as e:
         raise PlannerError(f"{type(e).__name__}: {e}", Cost(
             tokens_in=cost.tokens_in, tokens_out=cost.tokens_out, usd=cost.usd, llm_calls=1)) from e

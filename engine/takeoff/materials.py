@@ -29,7 +29,7 @@ def tiles_count(area_m2: float, waste_frac: float, tile_area_m2: float) -> int:
     """N = ceil( A * (1+w) / a_tile )"""
     if tile_area_m2 <= 0:
         raise ValueError("tile_area_m2 must be positive")
-    return math.ceil(area_m2 * (1.0 + waste_frac) / tile_area_m2)
+    return math.ceil(round(area_m2 * (1.0 + waste_frac) / tile_area_m2, 9))   # round: 19.8*1.1/0.09 is 242.00000000000003 in floats
 
 
 def lights_count(area_m2: float, target_lux: float, lumens_per_fitting: float, utilisation: float) -> int:

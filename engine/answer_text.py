@@ -26,7 +26,15 @@ AREA_PHRASE = {"apartment_net_area": "The apartment's net floor area is", "total
 KIND_UNIT = {"m2": "m²", "m3": "m³", "m": "m"}
 
 
+# room_type / subtype codes -> the words a person says ('living' is a code, never 'livings')
+DISPLAY = {"living": "living room", "living_room": "living room", "wc": "WC", "bath": "bathroom",
+           "other_rooms": "room", "room": "room", "storage": "storage room", "utility": "utility room",
+           "entry": "entrance", "hallway": "hallway", "dining": "dining room"}
+
+
 def _plural(word: str) -> str:
+    if word.endswith("WC"):
+        return word + "s"
     if word.endswith("y") and not word.endswith(("ay", "ey", "oy")):
         return word[:-1] + "ies"
     return word if word.endswith("s") else word + "s"
@@ -37,7 +45,8 @@ def _what(spec: dict) -> tuple[str, str]:
     sel = spec.get("select")
     sel = sel if isinstance(sel, str) else " and ".join(sel or [])
     w = spec.get("where") or {}
-    base = (w.get("room_type") or w.get("subtype") or sel or "item").replace("_", " ")
+    base = (w.get("room_type") or w.get("subtype") or sel or "item")
+    base = DISPLAY.get(str(base).casefold(), str(base)).replace("_", " ")
     if sel == "room" and (w.get("room_type") or w.get("subtype")):
         base = base if base.endswith(("room", "kitchen", "hall", "sauna", "storage")) else base
     if w.get("label"):
@@ -115,6 +124,9 @@ def sentence(po) -> Optional[str]:
             sing, plur = _what(spec)
             if spec["aggregate"] == "avg_area":
                 return f"The average {sing} area is {_num(v, po.unit)}."
+            if kind == "area" and spec["aggregate"] == "sum_area" and sing != plur and \
+                    len([e for e in po.evidence if e.kind == "room"]) == 1:
+                return f"The {sing} covers {_num(v, po.unit)}."          # one room matched: not 'the livings ... in total'
             return f"The {plur} cover {_num(v, po.unit)} in total." if kind == "area" else f"{_num(v, po.unit)} in total."
         lead = AREA_PHRASE.get(intent, "The answer is")
         return f"{lead} {_num(v, po.unit)}."
