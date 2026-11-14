@@ -34,3 +34,26 @@ def test_leave_one_language_out_report():
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps({"router_lolo": res["overall"]}) + "\n")
     assert json.loads(out.read_text())["router_lolo"] == res["overall"]
+
+
+# Paraphrases that are NOT in the dataset (router robustness; not the hard set, never used for scoring).
+PARAPHRASES = [
+    ("How many doors are there on this floor plan?", "data/swiss_dwellings/x.pdf", "doors"),
+    ("How many doors are shown on this floor plan?", "data/swiss_dwellings/x.pdf", "doors"),
+    ("How many doors are there on this floor plan?", "data/cubicasa5k/x.png", "doors"),
+    ("Count the windows in this plan.", "data/cubicasa5k/x.png", "windows"),
+    ("How many toilets are in this apartment?", "data/cubicasa5k/x.png", "toilets"),
+    ("Wie viele Türen gibt es auf diesem Grundriss?", "data/swiss_dwellings/x.pdf", "doors"),
+    ("How big is apartment B in square metres, without balconies?", "data/swiss_dwellings/x.pdf", "apartment_net_area"),
+    ("How many WCs are there?", "data/cubicasa5k/x.png", "wc_rooms"),
+]
+
+
+def test_lexicon_routes_paraphrases():
+    for q, p, want in PARAPHRASES:
+        assert route(q, p).intent == want, q
+
+
+def test_lexicon_abstains_on_area_of_counted_object():
+    # an area question about a kitchen must never become the kitchen COUNT
+    assert route("What is the floor area of the kitchen?", "data/cubicasa5k/x.png").intent != "kitchens"

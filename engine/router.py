@@ -3,6 +3,8 @@
 Layers, cheapest first, stop at the first confident hit:
   1. evalkit.intents.classify (regex + localized template table)            layer "regex"
   2. language-agnostic nearest template: char n-gram TF-IDF over evalkit/out/intent_labels.jsonl   layer "ngram"
+     (kept only when the object-noun lexicon, engine/router_lexicon.yaml, is silent or agrees)
+  2b. object-noun lexicon alone                                              layer "lexicon"
   3. optional LLM template classifier (LLM_PROVIDER != none), once per DISTINCT normalised template, cached
      in cache/templates.json and logged in Cost                              layer "llm"
   4. else intent="unknown" (the pipeline may then try the planner)           layer "none"
@@ -114,6 +116,55 @@ _INDEX: Optional[NGramIndex] = None
 _INDEX_LOCK = threading.Lock()
 
 
+# ----------------------------------------------------------------------------- layer 2b: object-noun lexicon
+LEXICON = pathlib.Path(__file__).with_name("router_lexicon.yaml")
+_LEX: Optional["Lexicon"] = None
+
+
+class Lexicon:
+    """Hand-written multilingual object nouns + kind cues (engine/router_lexicon.yaml), not fitted to any question
+    set. Covers the case where the template n-gram layer is weakest: a short paraphrase sits closer to a short
+    template of the WRONG object ("how many doors are there" ~ "how many windows are drawn"). Abstains unless
+    exactly one kind and one concept-to-intent mapping apply."""
+
+    def __init__(self, path: pathlib.Path = LEXICON):
+        import yaml
+        d = yaml.safe_load(path.read_text(encoding="utf-8"))
+        self.kinds = [(k, re.compile(v, re.I)) for k, v in d["kind_cues"].items()]
+        self.concepts = [(k, re.compile(v, re.I)) for k, v in d["concepts"].items()]
+        self.table = d["intents"]
+
+    def explicit_kind(self, q: str) -> Optional[str]:
+        for k, rx in self.kinds:                      # area/length/volume cues beat the generic count cue
+            if rx.search(q):
+                return k
+        return None
+
+    def kind(self, q: str) -> str:
+        return self.explicit_kind(q) or "count"
+
+    _EXCL = re.compile(r"\b(without|except|excluding|not\s+counting|ohne|au(ss|ß)er|sans|hors|senza|esclus\w*|eccetto|"
+                       r"lukuun\s+ottamatta|ilman|v\.a\.|välja\s+arvatud|uden|undtagen|utom|utan)\b[^.;?!]*", re.I)
+
+    def winner(self, norm_q: str, source: str) -> Optional[str]:
+        table = (self.table.get(source) or {}).get(self.kind(norm_q))
+        if not table:
+            return None
+        norm_q = self._EXCL.sub(" ", norm_q)        # "... without balconies": the excluded noun is not the subject
+        for name, rx in self.concepts:
+            if rx.search(norm_q):
+                return table.get(name)                # first (most specific) concept decides, or abstains
+        return None
+
+
+def _lexicon() -> Optional[Lexicon]:
+    global _LEX
+    with _INDEX_LOCK:
+        if _LEX is None and LEXICON.exists():
+            _LEX = Lexicon()
+    return _LEX
+
+
 def _index() -> Optional[NGramIndex]:
     global _INDEX
     with _INDEX_LOCK:
@@ -140,7 +191,7 @@ def _params_from_quotes(intent: str, q: str) -> dict:
 
 
 def lolo_accuracy() -> dict:
-    """Leave-one-language-out accuracy of layer 2 over distinct templates: for each language L, index every
+    """Leave-one-language-out accuracy of layers 2+2b (n-gram, overridden by the lexicon) over distinct templates: for each language L, index every
     other language and classify L's templates. Returns {"overall": acc, "per_language": {lang: {acc, n}}}."""
     rows = _label_rows()
     langs = sorted({r[3] for r in rows})
@@ -151,7 +202,12 @@ def lolo_accuracy() -> dict:
         if not train or not test:
             continue
         idx = NGramIndex(train)
-        ok = sum(1 for t, i, s in test if idx.nearest(t, s)[0] == i)
+        lex = _lexicon()                       # hand-written, not learned: no leakage across languages
+        ok = 0
+        for t, i, s in test:
+            n = idx.nearest(t, s)[0]
+            k = lex.winner(t, s) if lex is not None else None
+            ok += int((n if (k is None or k == n) else k) == i)
         per[L] = {"acc": round(ok / len(test), 4), "n": len(test)}
         right += ok
         tot += len(test)
@@ -205,11 +261,17 @@ def route(question: str, path: str, *, classifier: Optional[TemplateClassifier] 
         return Route(r.name, dict(r.params), kind_of(r.name), r.lang, "regex")
     norm = normalise(question)
     idx = _index()
+    lex = _lexicon()
+    kw_name = lex.winner(norm, _src(path)) if (lex is not None and norm) else None
     if idx is not None and norm:
         name, sim = idx.nearest(norm, _src(path))
-        if sim >= NGRAM_THRESHOLD:
+        cue = lex.explicit_kind(norm) if lex is not None else None
+        kind_ok = cue is None or cue == kind_of(name)  # "area of the kitchen" is not the kitchen count
+        if sim >= NGRAM_THRESHOLD and kind_ok and (kw_name is None or kw_name == name):
             params = _params_from_quotes(name, question)
             return Route(name, params, kind_of(name), r.lang, "ngram")
+    if kw_name is not None:
+        return Route(kw_name, _params_from_quotes(kw_name, question), kind_of(kw_name), r.lang, "lexicon")
     if classifier is not None:
         cost = Cost()
         name = classifier.classify(question, cost)
