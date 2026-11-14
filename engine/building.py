@@ -67,7 +67,7 @@ def _level_from_llm(llm, image_png: bytes) -> Optional[tuple[int, str]]:
     return None
 
 
-DOC_TYPES = ("floor_plan", "site_plan", "roof_plan", "reflected_ceiling_plan", "section", "elevation", "detail",
+DOC_TYPES = ("floor_plan", "foundation_plan", "enlarged_plan", "site_plan", "roof_plan", "reflected_ceiling_plan", "section", "elevation", "detail",
              "schedule", "render_3d", "photo", "bim_model", "cad_drawing", "specification", "other")
 SHEET = re.compile(r"\b([A-Z]{1,2})[- ]?(\d{3})\b")
 NAME_RULES = [  # filename / title words -> doc type (fallback when the LLM is off)
@@ -88,6 +88,9 @@ CLASSIFY_SYSTEM = (
     "the scan check sees as a site plan is a site plan sheet; a '3D View' is a render, never a floor; sheet prefixes "
     "A=architectural, S=structural, M/E/P=services; a .ifc file is a BIM model; .dwg is a CAD drawing. Floor plans need "
     "a level: 0 = ground/first floor as printed (use the printed floor names), -1 = basement, null if not stated. "
+    "Footing / foundation plans are foundation_plan, partial or enlarged plans are enlarged_plan: neither is a storey. "
+    "Several plans of the SAME storey (revisions, phases, dates) are alternatives, not separate floors: give them the "
+    "same level and a \"version\" note (date or phase). "
     'Reply with JSON only: {"files": [{"i": <index>, "doc_type": one of ' + "|".join(DOC_TYPES) + ', "discipline": '
     '"architectural|structural|services|interiors|other", "sheet": "<sheet number or empty>", "title": "<short title>", '
     '"level": <int or null>, "level_label": "<floor name as printed or empty>", "why": "<= 15 words"}], '
@@ -167,6 +170,7 @@ def classify(files: list[dict], sig: list[dict], scan: list[list[str]], llm=None
                               sheet=str(row.get("sheet") or out[i]["sheet"]), title=str(row.get("title") or out[i]["title"]),
                               level=lvl if row["doc_type"] == "floor_plan" else None,
                               level_label=str(row.get("level_label") or ""), why=str(row.get("why", ""))[:120],
+                              version=str(row.get("version") or ""),
                               source="AI (reasoning model) + title block + scan check")
                 parsed += 1
     return out, building[:120], f"reasoning model ({getattr(llm, 'kind', 'llm')}): {parsed}/{len(out)} files, ${usd:.4f}"
@@ -201,12 +205,28 @@ def _organise_smart(files, geometry_of, thinker, abs_of) -> dict:
         row = {"path": f["path"], "name": f.get("name") or f["path"], **c, "scan_check": scan[i],
                "ifc_storeys": sig[i].get("storeys", [])}
         (floors if c["doc_type"] == "floor_plan" else other).append({**row, "order": i})
-    known = sorted([x for x in floors if x["level"] is not None], key=lambda x: (x["level"], x["order"]))
-    unknown = [x for x in floors if x["level"] is None]
-    notes = []
-    if unknown:
-        notes.append(f"{len(unknown)} floor plan(s) have no readable floor number; kept in upload order on top")
-    ordered = known + unknown
+    # only DIFFERENT storeys stack; several plans of one storey (or of an unknown one) are alternatives
+    by_level: dict = {}
+    for x in floors:
+        by_level.setdefault(x["level"], []).append(x)
+    notes, ordered, alternatives = [], [], []
+    for lv in sorted(k for k in by_level if k is not None):
+        group = sorted(by_level[lv], key=lambda x: (x.get("version") or x["name"]))
+        ordered.append(group[-1])                       # newest version/phase stands for the storey
+        for alt in group[:-1]:
+            alternatives.append({**alt, "alternative_of": group[-1]["name"]})
+        if len(group) > 1:
+            notes.append(f"{len(group)} plans show the same storey (level {lv}): the newest is used, the rest are alternatives")
+    unknown = by_level.get(None, [])
+    if unknown and not ordered:
+        ordered.append(unknown[-1])                    # one plan to show; the others are alternatives
+        alternatives += [{**x, "alternative_of": unknown[-1]["name"]} for x in unknown[:-1]]
+        notes.append(f"{len(unknown)} plans without a storey number: shown one at a time (switch in the explorer), not stacked")
+    elif unknown:
+        alternatives += [{**x, "alternative_of": None} for x in unknown]
+        notes.append(f"{len(unknown)} plan(s) without a storey number kept out of the stack")
+    for x in alternatives:
+        x.pop("order", None)
     for k, x in enumerate(ordered):
         x["stack_index"] = k
         x["level_source"] = "title block / file name (AI)" if x["source"].startswith("AI") and x["level"] is not None \
@@ -216,7 +236,12 @@ def _organise_smart(files, geometry_of, thinker, abs_of) -> dict:
     groups: dict[str, list[str]] = {}
     for x in other:
         groups.setdefault(x["doc_type"], []).append(x["name"])
-    return {"building": building, "method": method, "floors": ordered, "other": other, "groups": groups, "notes": notes}
+    for x in ordered:
+        x["display_label"] = x["level_label"] or (f"Level {x['level']}" if x["level"] is not None else x["title"])
+    for x in other + alternatives:
+        x["display_label"] = x.get("title") or x["name"]
+    return {"building": building, "method": method, "floors": ordered, "alternatives": alternatives, "other": other,
+            "groups": groups, "notes": notes}
 
 
 def _organise_simple(files: list[dict], geometry_of: Callable[[str], dict], llm=None,
