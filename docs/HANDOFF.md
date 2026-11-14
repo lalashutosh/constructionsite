@@ -1,5 +1,36 @@
 # Handoff — where the build stands and how to continue
 
+## UPDATE 2026-11-14 ~22:45 (Abhinav's session: big Stoa sheets at full resolution) — START HERE
+
+Stress set = the 3 Stoa example sheets at FULL resolution (10200x6600 / 9934x7017; `cache/stress/{m101a,s100f,a2dorm}.png`,
+manifest with printed truth `cache/stress/manifest.json`, harness `scripts/stress_big.py` now grades each answer).
+Score: r0 1/18 -> r1 13/18 -> **r3 17/18** (`docs/stress-report-r3.md`, LLM off, 10-19 s/sheet). Gate holds: CubiCasa DEV
+400q 81.5%, Swiss 300q counts 91.3% / area 18.1% (same as before).
+- **Scale** (`engine/scale/sheet_scale.py` v2): reading-order line merge (the dorm's "SCALE : 1" = 40'-0"" was split),
+  RANSAC bar fit (a misread "38" for 8' no longer bends it), outer-tick alt readings for dimension lines crossed by
+  extension lines, ambiguous paper sizes as weaker alternatives (A-2 is a HALF-SIZE print: true 49.2 px/m, not 24.6),
+  OCR repair 55'.8" -> 55'-8". All 3 sheets within 2%.
+- **What the sheet prints** (`engine/sheet_lookup.py`, wired in `PipelineEngine._printed`): notes/tables lookup
+  ("MCC trench length" -> 4275, "west wing SF" -> 7,009 SF, "dorm rooms on this floor" -> 48 via the sheet title
+  SECOND FLOOR), equipment tags with sheet-defined abbreviations + targeted re-OCR + OCR look-alike merge (FSL-2 = FSI-2),
+  printed total area as an exact voter, overall dims VERIFIED (line measures true / equals a printed chain / a drawn line
+  of that length runs beside it), garbled notes re-read at 2x.
+- **Outline** (`engine/outline.py`): screened MEP background layer (grey 170 under black piping) or paired wall/slab-edge
+  lines; replaces the line-geometry regions/footprint in `bigsheet.extract_facts`; dropped when it contradicts verified
+  printed overall dims. 3D for construction sheets = one outline ring + labelled zones.
+- **Findings** on construction sheets (`/api/findings`, `engine/sheet_findings.py` written by the Verda worker from
+  `cache/verda/tasks/sheet_findings.md`): scale, size, area + printed area/count tables, tagged equipment, pipe sizes,
+  slab types. Grey and zero rows are never shown.
+- **Root-cause fixes**: facts + 3D caches carry `engine/cache.READER_VERSION` (uploads were stuck on stale residential
+  reads: notes as walls, "garage", CubiCasa credit); CubiCasa licence only on CubiCasa files; geometry carries
+  `px_per_m` when printed evidence solved the scale so sizes show without "Set real size"; inspector crash
+  (`size_m.area` vs API `area_m2`) fixed. Element overrides + inspector committed (`b4693e5`).
+- **Open**: slab area BY TYPE (zones inside the S-100F slab are not split reliably by isolation joints; the slab types
+  are listed from print but not measured per type); "how long is the north wing" (dimension-to-wing association);
+  per-zone legend labels on A-2 use the colour modules (kept), outline there is dropped; door/window counts on
+  construction sheets still refused; the user's DfE special-school PDF was not on disk (add to cache/stress/).
+  Bump `READER_VERSION` whenever a reader changes what facts are.
+
 ## UPDATE 2026-11-14 ~23:30 (Ashutosh's session: big sheets, scale, confidence) — START HERE
 
 Goal of this round (user): judges will use BIG, complex blueprints. (1) If a sheet has a scale, USE it so room sizes
