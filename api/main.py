@@ -396,17 +396,27 @@ def _name_geo_rooms(g: dict, img, llm, sha: str) -> None:
         labels = LR.read_labels(img, llm, sha)
         h, w = img.shape[:2]
         named = 0
+        polys = []
         for r in g.get("rooms") or []:
-            if len(r.get("polygon") or []) < 3:
+            if len(r.get("polygon") or []) >= 3:
+                try:
+                    polys.append((r, Polygon(r["polygon"])))
+                except Exception:  # noqa: BLE001
+                    pass
+        taken = set()
+        for l in labels:                     # each label names ONE room: the smallest outline that contains it
+            if not l.get("room_type") or not isinstance(l.get("x"), (int, float)) or not isinstance(l.get("y"), (int, float)):
                 continue
-            P = Polygon(r["polygon"])
-            hit = [l for l in labels if l.get("room_type") and isinstance(l.get("x"), (int, float))
-                   and isinstance(l.get("y"), (int, float)) and P.contains(Point(l["x"] / 100 * w, l["y"] / 100 * h))]
-            if hit:
-                t = hit[0]["room_type"]
-                r["label"], r["subtype"] = hit[0]["text"], {"living_room": "living"}.get(t, t)
-                r["named_by"] = "printed label (AI read, code matched)"
-                named += 1
+            pt = Point(l["x"] / 100 * w, l["y"] / 100 * h)
+            hit = [(r, P) for r, P in polys if id(r) not in taken and P.is_valid and P.contains(pt)]
+            if not hit:
+                continue
+            r, _ = min(hit, key=lambda t: t[1].area)
+            taken.add(id(r))
+            t = l["room_type"]
+            r["label"], r["subtype"] = l["text"], {"living_room": "living"}.get(t, t)
+            r["named_by"] = "printed label (AI read, code matched)"
+            named += 1
         g.setdefault("check", {}) and g["check"].setdefault("warnings", [])
         if named:
             g["room_note"] = f"{named} rooms named from their printed labels"

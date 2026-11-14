@@ -97,6 +97,7 @@ def name_rooms(facts, labels: list[dict], w: int, h: int, floors: list[dict] | N
     pts = [(Point(l["x"] / 100 * w, l["y"] / 100 * h), l) for l in labels
            if isinstance(l.get("x"), (int, float)) and isinstance(l.get("y"), (int, float))]
     out = facts.model_copy(deep=True)
+    used: set = set()
     for e in out.elements:
         if e.kind != "room" or len(e.polygon) < 3:
             continue
@@ -105,9 +106,11 @@ def name_rooms(facts, labels: list[dict], w: int, h: int, floors: list[dict] | N
         except Exception:  # noqa: BLE001
             continue
         inside = [l for p, l in pts if poly.contains(p)]
-        typed = [l for l in inside if l.get("room_type")]
+        typed = [l for l in inside if l.get("room_type") and id(l) not in used
+                 and _smallest_holder(l, out, w, h) is e]
         if typed:
             l = typed[0]
+            used.add(id(l))
             e.attrs["label_before"] = e.label
             e.attrs["subtype_before"] = e.subtype
             e.label, e.subtype = l["text"], _SUBTYPE.get(l["room_type"], l["room_type"])
@@ -120,3 +123,20 @@ def name_rooms(facts, labels: list[dict], w: int, h: int, floors: list[dict] | N
                     e.attrs["storey"] = f.get("label") or ""
                     break
     return out
+
+
+def _smallest_holder(l: dict, facts, w: int, h: int):
+    """The smallest room polygon containing label l (overlapping outlines must not all take the same name)."""
+    from shapely.geometry import Point, Polygon
+    pt = Point(l["x"] / 100 * w, l["y"] / 100 * h)
+    best, ba = None, None
+    for e in facts.elements:
+        if e.kind != "room" or len(e.polygon) < 3:
+            continue
+        try:
+            P = Polygon(e.polygon)
+        except Exception:  # noqa: BLE001
+            continue
+        if P.is_valid and P.contains(pt) and (ba is None or P.area < ba):
+            best, ba = e, P.area
+    return best
