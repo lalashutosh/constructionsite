@@ -334,3 +334,13 @@ body { font-size: 15px; }
 
 .hsteps li { grid-template-columns: 34px 1fr 420px; }
 .howin { padding-left: 90px; }
+
+.mform { display: flex; flex-direction: column; gap: 6px; }
+.mform form { display: flex; gap: var(--s1); align-items: center; }
+.measure select { background: var(--bg); color: var(--text); border: 1px solid var(--rule); border-radius: var(--r); padding: 3px 4px; font: inherit; }
+.issue { display: flex; gap: 6px; align-items: flex-start; color: var(--warn); font-size: 13px; max-width: 460px; }
+.issue svg { flex: none; margin-top: 3px; }
+.narr { flex-wrap: wrap; row-gap: 2px; max-width: 62%; }
+.warnline { flex-basis: 100%; }
+.dtoggle { top: 112px; }
+.floorpills { top: 96px; }

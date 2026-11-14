@@ -117,6 +117,24 @@ export async function setScale(path: string, pxLength: number, lengthM: number, 
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ path, anchors: [{ kind: "user", px_length: pxLength, length_m: lengthM }], questions }),
   });
+  if (res.status === 422) {
+    const j = (await res.json().catch(() => ({}))) as { detail?: ScaleIssue };
+    throw new ScaleError(j.detail ?? { message: "That measurement does not look right." });
+  }
   if (!res.ok) throw new Error(`scale failed (${res.status})`);
   return (await res.json()) as ProofObject[];
+}
+
+export interface ScaleIssue {
+  message: string;
+  median_room_m2?: number;
+  suggestion?: string | { label?: string; length_m?: number; unit?: string; value?: number } | null;
+}
+/** HTTP 422 from /api/scale: the measurement is implausible; nothing was applied. */
+export class ScaleError extends Error {
+  issue: ScaleIssue;
+  constructor(issue: ScaleIssue) {
+    super(issue.message);
+    this.issue = issue;
+  }
 }

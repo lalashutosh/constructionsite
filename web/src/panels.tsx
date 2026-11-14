@@ -122,17 +122,20 @@ export function ViewerPane(p: {
   setDrawingOn: (b: boolean) => void;
   theme: ThemeName;
   scale: ScaleState;
-  scaled: boolean;
+  scaleKind: "defaulted" | "specified" | "chosen";
+  scaleSrc: string | null;
+  scaleIssue: { message: string; label: string | null; lengthM: number | null } | null;
   ppm: number | null;
   banner: BannerItem[] | null;
   applying: boolean;
   onScaleStart: () => void;
   onScaleCancel: () => void;
   onMeasured: (px: [number, number][]) => void;
-  onApplyLength: (m: number) => void;
+  onApplyLength: (m: number, typed?: { v: number; unit: string }) => void;
   onWhyRead: () => void;
 }) {
   const [len, setLen] = useState("");
+  const [unit, setUnit] = useState<"m" | "cm" | "mm">("m");
   const [narr, setNarr] = useState<"reading" | "found" | "built">("reading");
   const host = useRef<HTMLDivElement>(null);
   const viewer = useRef<PlumbViewer | null>(null);
@@ -227,8 +230,8 @@ export function ViewerPane(p: {
       )}
       {a && p.scale === "off" && (
         <div className="scalecta">
-          <button className="ctabtn" onClick={p.onScaleStart}><Ruler {...ic} size={18} />{p.scaled ? "Change real size" : "Set real size"}</button>
-          {!p.scaled && <span>One real measurement unlocks every size.</span>}
+          <button className="ctabtn" onClick={p.onScaleStart}><Ruler {...ic} size={18} />{p.scaleKind === "specified" ? "Check real size" : p.scaleKind === "chosen" ? "Change real size" : "Set real size"}</button>
+          {p.scaleKind === "defaulted" ? <span>One real measurement unlocks every size.</span> : <span title={p.scaleSrc ?? undefined}>{p.scaleKind === "specified" ? "Sizes from measurements printed on the drawing" : "Sizes from your measurement"}</span>}
         </div>
       )}
       {measuring && (
@@ -236,10 +239,17 @@ export function ViewerPane(p: {
           {p.scale === "pick" ? (
             <p>Click both ends of a wall or door you know</p>
           ) : (
-            <form onSubmit={(e) => { e.preventDefault(); const n = Number(len); if (n > 0) p.onApplyLength(n); }}>
-              <label>How long is this? <input type="number" step="any" min="0" autoFocus value={len} onChange={(e) => setLen(e.target.value)} aria-label="Real length in metres" /> m</label>
-              <button className="primary" type="submit" disabled={!(Number(len) > 0) || p.applying}>{p.applying ? "Working…" : "Set size"}</button>
-            </form>
+            <div className="mform">
+              <form onSubmit={(e) => { e.preventDefault(); const n = Number(len); if (n > 0) p.onApplyLength(n / (unit === "cm" ? 100 : unit === "mm" ? 1000 : 1), { v: n, unit }); }}>
+                <label>How long is this? <input type="number" step="any" min="0" autoFocus value={len} onChange={(e) => setLen(e.target.value)} aria-label="Real length" />
+                  <select value={unit} onChange={(e) => setUnit(e.target.value as "m" | "cm" | "mm")} aria-label="Unit"><option value="m">m</option><option value="cm">cm</option><option value="mm">mm</option></select></label>
+                <button className="primary" type="submit" disabled={!(Number(len) > 0) || p.applying}>{p.applying ? "Working…" : "Set size"}</button>
+              </form>
+              {p.scaleIssue && (
+                <p className="issue" role="alert"><TierIcon tier="amber" /><span>Needs a look · {p.scaleIssue.message}{" "}
+                  {p.scaleIssue.label && p.scaleIssue.lengthM !== null && <button className="linkbtn" onClick={() => p.onApplyLength(p.scaleIssue!.lengthM!, { v: Number(len), unit: "cm" })}>{p.scaleIssue.label}</button>}</span></p>
+              )}
+            </div>
           )}
           <button className="linkbtn" onClick={p.onScaleCancel}>Cancel</button>
         </div>
@@ -546,7 +556,8 @@ export function BuildPanel(p: {
   hasDrawing: boolean;
   onSetSize: () => void;
   onInput: (key: string, value: number) => void;
-  scaled: boolean;
+  scaleKind: "defaulted" | "specified" | "chosen";
+  scaleSrc: string | null;
   flash: string[];
 }) {
   const [view, setView] = useState<"steps" | "list">("list");
@@ -576,7 +587,9 @@ export function BuildPanel(p: {
               <span className="muted">{evOpen ? <ChevronDown {...ic} /> : <ChevronRight {...ic} />}</span>
             </button>
             {evOpen && <ul className="evl">{pl.building.evidence.map((e) => <li key={e}>{e}</li>)}</ul>}
-            {!p.scaled && <p className="estnote">Sizes are estimated from a typical 0.9 m door. <button className="linkbtn" onClick={p.onSetSize}>Set real size</button> for exact quantities.</p>}
+            {p.scaleKind === "defaulted" && <p className="estnote">Sizes are estimated from a typical 0.9 m door. <button className="linkbtn" onClick={p.onSetSize}>Set real size</button> for exact quantities.</p>}
+            {p.scaleKind === "specified" && <p className="estnote" title={p.scaleSrc ?? undefined}>Sizes from measurements printed on the drawing. <button className="linkbtn" onClick={p.onSetSize}>Check real size</button></p>}
+            {p.scaleKind === "chosen" && <p className="estnote">Sizes from your measurement.</p>}
             {pl.mock && <div className="mocknote">Sample plan shape: the engine's plan endpoint did not answer.</div>}
             <div className="vibes">
               {pl.vibes.map((v) => (

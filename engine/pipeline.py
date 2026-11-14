@@ -223,6 +223,8 @@ class PipelineEngine:
                 notes.append(f"triage: {tr.note}")
             if tr.refuse and not refusal:
                 refusal = tr.refuse
+        if not refusal:
+            refusal = _scan_check_refusal(sha)     # the 3D scan check found no floor plan on this sheet
         capped = False
         if refusal:
             if not benchmark:
@@ -595,6 +597,26 @@ class PipelineEngine:
             return (0 if kind == "count" else None), "no prior available"
         v = int(round(v)) if kind == "count" else float(v)
         return v, f"benchmark best guess: per-{'intent' if intent in p['intent'] else 'source/type'} dev-median prior"
+
+
+def _scan_check_refusal(sha: str) -> Optional[str]:
+    """If the scan check (2 wall readers + 2 vision reviewers, api /api/geometry) already ran on this file and found
+    no floor plan, floor-plan questions do not apply. Reads the cached result only; never calls a model here."""
+    try:
+        import json as _json
+        f = ROOT / "cache" / "geometry" / f"{sha}-pixels.json"
+        if not f.exists():
+            return None
+        views = (_json.loads(f.read_text()).get("check") or {}).get("views") or []
+        types = [v.get("type") for v in views if v.get("type")]
+        src = {v.get("type_source", "") for v in views}
+        if types and "floor_plan" not in types and any("reviewer" in s for s in src):
+            shown = ", ".join(sorted({t.replace("_", " ") for t in types}))
+            return (f"this sheet shows a {shown}, not a floor plan (scan check: two AI reviewers agree), "
+                    "so floor-plan counts do not apply")
+    except Exception:  # noqa: BLE001
+        return None
+    return None
 
 
 def _scale_assumption(sc: ScaleInfo) -> Assumption:

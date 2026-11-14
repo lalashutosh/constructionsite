@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ask, fetchPlan, fetchSamples, setScale, geometry, imageUrl, upload, type Geometry, type Sample, type BuildPlan } from "./api";
+import { ask, fetchPlan, fetchSamples, setScale, ScaleError, geometry, imageUrl, upload, type Geometry, type Sample, type BuildPlan } from "./api";
 import { chipsFor, findingSpecs } from "./logic";
 import type { ProofObject } from "./types";
 import { HowPage } from "./how";
@@ -40,6 +40,7 @@ export default function App() {
   const [banner, setBanner] = useState<BannerItem[] | null>(null);
   const [flash, setFlash] = useState<string[]>([]);
   const [why, setWhy] = useState(false);
+  const [scaleIssue, setScaleIssue] = useState<{ message: string; label: string | null; lengthM: number | null } | null>(null);
   const [page, setPage] = useState<"work" | "how">("work");
   const [measuredPx, setMeasuredPx] = useState<number | null>(null);
   const [planExtra, setPlanExtra] = useState<Record<string, number>>({});
@@ -170,15 +171,17 @@ export default function App() {
     setPage("work");
     setBanner(null);
     setMeasuredPx(null);
+    setScaleIssue(null);
     setScaleState("pick");
   };
   const cancelScale = () => setScaleState("off");
-  const applyLength = async (m: number) => {
+  const applyLength = async (m: number, typed?: { v: number; unit: string }) => {
     if (!active || measuredPx === null) return;
     const q = selected?.proof.question ?? specs[0]?.q;
     if (!q) return;
     const path = active.path;
     setAsking(true);
+    setScaleIssue(null);
     try {
       const before = plans[planKey] ?? (await fetchPlan(path, vibe, planExtra));
       const [pr] = await setScale(path, measuredPx, m, [q]);
@@ -199,12 +202,36 @@ export default function App() {
       window.setTimeout(() => setScaleState("off"), 5200);
       window.setTimeout(() => setBanner(null), 9000);
     } catch (e) {
-      setAskErr((e as Error).message);
-      setScaleState("off");
+      if (e instanceof ScaleError) {
+        // implausible measurement: nothing was applied, keep the form open and offer the fix
+        const s = e.issue.suggestion;
+        let label: string | null = null;
+        let lengthM: number | null = null;
+        if (s && typeof s === "object") {
+          lengthM = typeof s.length_m === "number" ? s.length_m : null;
+          label = s.label ?? (typed ? `Use ${typed.v} ${s.unit ?? "cm"}` : null);
+        } else if (typeof s === "string") {
+          label = s;
+        }
+        if (lengthM === null && typed && typed.unit === "m" && typed.v >= 50) {
+          lengthM = typed.v / 100;
+          label = label ?? `Use ${typed.v} cm`;
+        }
+        setScaleIssue({ message: e.issue.message, label, lengthM });
+      } else {
+        setAskErr((e as Error).message);
+        setScaleState("off");
+      }
     } finally {
       setAsking(false);
     }
   };
+  // how the current sizes were obtained: defaulted (typical door), specified (printed on the drawing), chosen (you measured)
+  const scaleAsm = selected?.proof.assumptions.find((x) => x.key === "scale_px_per_m");
+  const planBasis = plan?.basis?.scale_px_per_m;
+  const scaleTag = active && ppmByPath[active.path] ? "chosen" : (scaleAsm?.tag ?? planBasis?.tag ?? "defaulted");
+  const scaleSrc = scaleAsm?.source ?? planBasis?.source ?? null;
+  const scaleKind: "defaulted" | "specified" | "chosen" = scaleTag === "specified" ? "specified" : scaleTag === "chosen" ? "chosen" : "defaulted";
   const seg = <Seg mode={mode} onMode={setMode} />;
 
   const selFloor = selected ? floors.find((f) => f.key === selected.path) : undefined;
@@ -273,7 +300,9 @@ export default function App() {
             setDrawingOn={setDrawingOn}
             theme={theme}
             scale={scale}
-            scaled={!!(active && ppmByPath[active.path])}
+            scaleKind={scaleKind}
+            scaleSrc={scaleSrc}
+            scaleIssue={scaleIssue}
             ppm={active ? (ppmByPath[active.path] ?? null) : null}
             banner={banner}
             applying={asking}
@@ -283,7 +312,7 @@ export default function App() {
               setMeasuredPx(Math.hypot(px[1][0] - px[0][0], px[1][1] - px[0][1]));
               setScaleState("enter");
             }}
-            onApplyLength={(m) => void applyLength(m)}
+            onApplyLength={(m, typed) => void applyLength(m, typed)}
             onWhyRead={() => {
               setSelected(null);
               setWhy(true);
@@ -322,7 +351,8 @@ export default function App() {
               hasDrawing={!!active}
               onSetSize={startScale}
               onInput={(k, v) => setPlanExtra((x) => ({ ...x, [k]: v }))}
-              scaled={!!(active && ppmByPath[active.path])}
+              scaleKind={scaleKind}
+              scaleSrc={scaleSrc}
               flash={flash}
             />
           ) : (
