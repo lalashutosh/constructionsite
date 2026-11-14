@@ -176,6 +176,37 @@ async def ask(body: AskBody):
                                    benchmark=body.benchmark)
 
 
+def _printed_scale_check(ppm: float, a: dict, facts) -> Optional[dict]:
+    """The drawing prints its own sizes (room areas in the labels, opening sizes): a measurement more than 30% off
+    that is refused, with the fix that matches the drawing."""
+    try:
+        from engine.scale import anchors as A
+        got = [x for x in (A._label_area_anchor(facts), A._printed_dims_anchor(facts)) if x is not None]
+    except Exception:  # noqa: BLE001
+        return None
+    if not got:
+        return None
+    pv = sorted(x.px_per_m for x in got)[len(got) // 2]
+    if abs(ppm / pv - 1) <= 0.30:
+        return None
+    ex = ""
+    try:
+        c = A.label_area_candidates(facts)
+        near = [x for x in c if abs(x["px_per_m"] / pv - 1) <= 0.15]
+        if near:
+            x = near[0]
+            ex = f" (it would make {x['text'].split()[0]} {x['m2'] * (pv / ppm) ** 2:.1f} m², the drawing prints {x['m2']:g} m²)"
+    except Exception:  # noqa: BLE001
+        pass
+    sug = None
+    if "px_length" in a:
+        L = float(a["px_length"]) / pv
+        sug = {"label": f"Use {L:.2f} m (from the sizes printed on the drawing)", "length_m": round(L, 3), "unit": "m"}
+    src = " and ".join("room areas" if x.kind == "printed_area" else "opening sizes" for x in got)
+    return {"message": f"this measurement disagrees with the {src} printed on the drawing by "
+                       f"{abs(ppm / pv - 1):.0%}{ex}", "suggestion": sug}
+
+
 def _implausible_scale(a: dict, facts) -> Optional[dict]:
     """A measurement that makes the typical room absurd is refused (a length typed in cm/mm instead of m makes
     every area 10,000x / 1,000,000x too big). Returns {message, median_room_m2, suggestion} or None."""
@@ -195,6 +226,9 @@ def _implausible_scale(a: dict, facts) -> Optional[dict]:
                 areas.append(Polygon(e.polygon).area)
             except Exception:  # noqa: BLE001
                 pass
+    printed = _printed_scale_check(ppm, a, facts)
+    if printed:
+        return printed
     if len(areas) < 2 or ppm <= 0:
         return None                                      # nothing to check against
     import statistics as _st

@@ -314,6 +314,75 @@ def _printed_dims_anchor(facts: SheetFacts) -> Optional[ScaleAnchor]:
         return None
 
 
+def label_area_candidates(facts: SheetFacts) -> list[dict]:
+    """Room areas printed in the room labels ('MH 10.5', 'TUPA 18.5'), as read by the vision label reader
+    (cache/labels/<sha>.json; no network here). Each label inside exactly one room polygon gives
+    px_per_m = sqrt(polygon px^2 / printed m^2)."""
+    import json as _json
+    import math as _math
+    import pathlib
+    import re as _re
+    sha = facts.provenance.sha256
+    if not sha or not facts.width_px or not facts.height_px:
+        return []
+    f = pathlib.Path(__file__).resolve().parents[2] / "cache" / "labels" / f"{sha}.json"
+    if not f.exists():
+        return []
+    try:
+        labels = _json.loads(f.read_text())
+        from shapely.geometry import Point, Polygon
+    except Exception:  # noqa: BLE001
+        return []
+    rooms = []
+    for e in facts.elements:
+        if e.kind == "room" and len(e.polygon) >= 3:
+            try:
+                P = Polygon(e.polygon)
+                if P.is_valid and P.area > 0:
+                    rooms.append((e, P))
+            except Exception:  # noqa: BLE001
+                pass
+    out = []
+    for l in labels:
+        m = _re.search(r"(\d{1,3}(?:[.,]\d{1,2})?)\s*(?:m2|m²|m\^2)?\s*$", str(l.get("text", "")))
+        if not m or not isinstance(l.get("x"), (int, float)) or not isinstance(l.get("y"), (int, float)):
+            continue
+        if not _re.search(r"[A-Za-zÄÖÅäöå]", l["text"]):          # a bare number is a dimension, not a room area
+            continue
+        a = float(m.group(1).replace(",", "."))
+        if not (0.8 <= a <= 400):
+            continue
+        pt = Point(l["x"] / 100 * facts.width_px, l["y"] / 100 * facts.height_px)
+        hit = [(e, P) for e, P in rooms if P.contains(pt)]
+        if len(hit) != 1:
+            continue
+        e, P = hit[0]
+        out.append({"px_per_m": _math.sqrt(P.area / a), "text": l["text"], "id": e.id, "m2": a})
+    return out
+
+
+def _label_area_anchor(facts: SheetFacts) -> Optional[ScaleAnchor]:
+    """Printed room areas that agree (>= 2 rooms within 15%) -> one 'printed_area' anchor, tag specified."""
+    import statistics as _st
+    c = label_area_candidates(facts)
+    if len(c) < 2:
+        return None
+    best = []
+    for v in sorted(x["px_per_m"] for x in c):
+        grp = [x for x in c if abs(x["px_per_m"] / v - 1) <= 0.15]
+        if len(grp) > len(best):
+            best = grp
+    if len(best) < 2 or len(best) < 0.34 * len(c):
+        return None
+    pv = _st.median(x["px_per_m"] for x in best)
+    spread = max(x["px_per_m"] for x in best) / min(x["px_per_m"] for x in best) - 1
+    return ScaleAnchor(kind="printed_area", px_per_m=pv, rel_sigma=max(0.03, spread / 2), tag=Tag.specified,
+                       note=f"room areas printed on the drawing ({', '.join(x['text'] for x in best)}) agree within "
+                            f"{spread:.0%} across {len(best)} rooms; {len(c) - len(best)} rooms disagreed "
+                            "(merged or split outlines)",
+                       element_ids=[x["id"] for x in best])
+
+
 def solve(facts: SheetFacts, user_anchors: tuple[dict[str, Any], ...] = ()) -> ScaleInfo:
     """Combine every scale anchor derivable from `facts` (+ optional user taps) into one ScaleInfo."""
     anchors: list[ScaleAnchor] = []
@@ -325,9 +394,12 @@ def solve(facts: SheetFacts, user_anchors: tuple[dict[str, Any], ...] = ()) -> S
     pd = _printed_dims_anchor(facts)
     if pd is not None:
         anchors.append(pd)
+    la = _label_area_anchor(facts)
+    if la is not None:
+        anchors.append(la)
     dp = _door_prior_anchor(facts)
     # a measurement printed on the drawing beats the 0.9 m door guess; the guess is kept only as a fallback
-    if dp is not None and pd is None:
+    if dp is not None and pd is None and la is None:
         anchors.append(dp)
     for ua in user_anchors:
         anchors.append(_user_anchor(ua))
