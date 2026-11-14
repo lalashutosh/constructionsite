@@ -1,6 +1,6 @@
 STATUS: IN_PROGRESS
 
-Next action: P1 — raster-extractor + ui-builder running (C3). When done, run G1 gate.
+Next action: P1 — raster-extractor + ui-builder were interrupted at 06:11 by the session limit (NOT running). Partial code is committed (engine/raster/, web/). Resume both from what is on disk, finish measurement/handoff and build/screenshots, then run G1 gate.
 
 ## Checklist
 ### P0 Bootstrap
