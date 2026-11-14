@@ -3,6 +3,14 @@
 Running log of what the lead session is doing, newest on top. Updated after every milestone.
 Branch: `p2-finish` (off `main` at `a1b7642`). Nothing pushed. Detailed checklist: `docs/STATE.md`.
 
+## 14:08 update
+
+- **Vector sources end to end:** pipeline DEV **97.9%** (n=2,646). Green covers 70.5% at **100%** accuracy, amber 91.3%, **0 invariant violations** (was 302). Without siblings: 79.3%.
+- Fixed: the takeoff `query_engine` voter counted 0 on files with no extracted elements, which kept every vector answer amber.
+- New API: `POST/DELETE /api/override` (user says "this is / isn't a door": voters corrected, tier recomputed) and `GET /api/image` (the real drawing for the Scan layer). 147 tests.
+- **P3 started in parallel:** a ui-builder subagent is building core demo beats 1, 2, 3, 4, 8, 9, 10, 12 in `web/` only.
+- **Tesseract:** still compiling under Rosetta (Intel Homebrew on an M1, no bottles), maybe hours. Faster option needs your OK (see chat).
+
 ## Where we are (13:59)
 
 | Phase | State |

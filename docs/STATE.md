@@ -1,6 +1,6 @@
 STATUS: IN_PROGRESS
 
-Next action: PAUSED 13:28 for handoff (see docs/HANDOFF.md). P2 vector/skeptic/integrator WIP committed (68ee2c1), unverified; resume P2: verify each, write missing handoffs (vector, skeptic), then integration pass (25) and G2. Human TODO: verify evalkit/hard_questions.jsonl (0/10).
+Next action: (interactive lead session, branch p2-finish) vector done; integrator fixes + /api/override + /api/image done; waiting on tesseract (compiling under Intel Homebrew) for skeptic/triage + cubicasa DEV runs, then integration pass (25) and G2. P3 core beats running in parallel (ui-builder subagent). Progress report: docs/PROGRESS.md. Human TODO: verify evalkit/hard_questions.jsonl (0/10).
 
 ## Checklist
 ### P0 Bootstrap
@@ -22,7 +22,7 @@ Next action: PAUSED 13:28 for handoff (see docs/HANDOFF.md). P2 vector/skeptic/i
 - [x] fix tasks for NO-GOs (none needed)
 
 ### P2 Exact sources, voters, routing
-- [ ] vector (prompts/22): IFC, DXF, schedule devchecks
+- [x] vector (prompts/22): IFC, DXF, schedule devchecks (swiss 99.3%, ifc 96.6%/98.0% related, opening 55.2%; handoff written)
 - [ ] skeptic (prompts/21): voters, triage confusion table
 - [ ] integrator (prompts/20): pipeline, router, query engine, planner, API
 - [ ] integration pass (prompts/25): DEV runs with/without siblings, hard set LLM off vs planner on
@@ -49,3 +49,8 @@ Next action: PAUSED 13:28 for handoff (see docs/HANDOFF.md). P2 vector/skeptic/i
 - 12:50 C1 restart: exec works again (trust fixed). Respawned raster-extractor (re-measure) + ui-builder (build+shots) in parallel.
 - ~13:15 C1 P1 done: ui build+19 shots; raster DEV150 50.0%->61.3% after 2 prior-fallback fixes (CLEAN 44.4->63.0, n=27). Background subagents lack Bash -> use foreground.
 - ~13:25 C1 G1 GO all 4: 94 tests, stub 6.9%, prior 37.3% DEV; raster cold 2.21s/img; ifcopenshell missing; hard set 0/10 verified.
+- 13:40 interactive session on new machine: setup (venv, optional deps, DATASET_ROOT), 139 tests; tesseract missing (brew compiling).
+- 13:55 P2 vector verified: devchecks swiss 99.3% / ifc 96.6% (98.0% related) / opening 55.2%; docs/handoff/vector.md.
+- 13:58 fixes: vector extract() (vector files fell to raster extractor), router lexicon (LOLO 0.8085->0.8511, paraphrases 6/16->23/24), skeptic voters = second opinions, invariant 2% tolerance for area (accepted CR).
+- 14:05 vector sources pipeline DEV 97.9%, green 70.5% @ 100%, amber 91.3%, 0 invariant violations (no siblings 79.3%). /api/override + /api/image added. 147 tests.
+
