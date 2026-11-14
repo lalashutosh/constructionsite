@@ -4,7 +4,7 @@ import { imageUrl, type BuildPlan, type Geometry, type Sample, type ScanCheck } 
 import { fmtCost, fmtNum, reliabilityWord, sentenceOf, tierSentence, verdict, type FindingSpec } from "./logic";
 import ProofView from "./proofview";
 import type { ProofObject } from "./types";
-import { PlumbViewer, THEMES, type Phase } from "./viewer3d";
+import { PlumbViewer, THEMES, type FloorInput, type Phase } from "./viewer3d";
 import { floorOf, sheetFloors, splitSheet } from "./sheetfloors";
 
 export type ThemeName = "dark" | "light";
@@ -207,7 +207,8 @@ export function ViewerPane(p: {
   useEffect(() => viewer.current?.setTheme(THEMES[p.theme]), [p.theme]);
   const ready = p.floors.filter((f) => f.geo);
   // several plans on one sheet ("1. KERROS", "2. KERROS") -> one floor each, stacked; tabs: All · Floor 1 · Floor 2
-  const parts = useMemo(() => ready.flatMap((f) => {
+  type Part = FloorInput & { parent: string; src: string };
+  const parts = useMemo(() => ready.flatMap((f): Part[] => {
     const sp = splitSheet(f.path, f.geo!);
     return sp.length
       ? sp.map((x) => ({ key: x.key, label: x.name, geo: x.geo, imgUrl: imageUrl(f.path), crop: x.box, parent: f.key, src: x.source }))

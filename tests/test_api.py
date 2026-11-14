@@ -1,3 +1,5 @@
+import os
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -5,8 +7,10 @@ import api.main as M
 
 
 @pytest.fixture
-def client(monkeypatch):
+def client(monkeypatch, tmp_path):
     monkeypatch.setenv("PLUMB_ENGINE", "stub")
+    if not os.environ.get("DATASET_ROOT"):          # CI has no dataset: a stand-in root so the path guard accepts data/...
+        monkeypatch.setenv("DATASET_ROOT", str(tmp_path))
     M._engine = None
     yield TestClient(M.app)
     M._engine = None
