@@ -32,21 +32,23 @@ render those pages with PyMuPDF at dpi=150. Truth: `cache/stress/truth.json`. Ha
   (thinking models otherwise return empty output and still bill).
 - `1faa0e4` .dxf/.ifc without a sibling image render + build 3D from their own entities.
 
-**WIP branches (pushed by the human, NOT merged):**
-- `wip/big-sheets` (`f97d3f2`): `engine/profile.py` (sheet profiler: residential_scan / archival_scan / cad_sheet / ...),
-  `engine/bigsheet.py` (construction sheets: walls from line geometry of the main plan view, title block/notes/schedules
-  excluded; colour-filled zones as rooms — stoa3 gets 14 rooms), routing in `engine/pipeline.py`, router phrases
-  `engine/router_sheet.yaml` (total area / overall size / scale questions), `tests/test_bigsheet.py`. Tests 286 pass.
-  **Blocker before merge:** the profiler classes 3/40 sampled CubiCasa plans and all Swiss PNGs as `cad_sheet`, which
-  skips the CubiCasa CNN -> DEV regression. Fix the profiler (CubiCasa-size residential plans must stay
-  residential_scan; Swiss PNGs with a DXF sibling resolve via siblings anyway), then run
-  `.venv/bin/python -m evalkit.run --engine pipeline --split dev --sources cubicasa5k --no-siblings` before and after
-  (must not drop). Current behaviour on construction sheets is honest refusal (doors not read on CAD sheets; rooms only
-  where enclosed/colour zones exist) — no haywire output, but few answers. Next: doors/windows on CAD sheets (arc +
-  leaf symbols at known scale), room labels from `sheet_text.words`, overall size from the scale, schedule/table values.
-- `wip/archival-walls` (`7f3ee15`): unverified wall filter for hand-drawn scans (see the 20:30 section).
+**UPDATE ~00:30 — big-sheets MERGED into p2-finish (`366fec1`, merge `268eade`, footprint `89770ae`):**
+- Merge blockers fixed: profiler needs >= 150 words for a framed sheet <= 1200 px to be `cad_sheet` (framed CubiCasa plans
+  carry 40-110); the "not read on construction sheets" refusal now yields to exact vector voters (Swiss PDF counts were
+  59.2% on the branch -> 91.3%). DEV --no-siblings, LLM off, vs pre-merge: CubiCasa 400q 77.0% = 77.0%; Swiss 300q
+  count 91.3% vs 92.2%, area 18.1% vs 19.1% (within CI). Tiles answers are live (derive hook merged).
+- Stress round 1 (`docs/stress-report-r1.md`, LLM off): 2-3.4 s, < 450 MB per sheet, no haywire. Scale exact on S-101/S-102;
+  stoa3 total area 2262 m² vs printed 26,562 SF = 2468 m² (8% low), largest zone 597 vs 566 m²; stoa3 overall length
+  93.2 m vs 98.6 m (footprint now unions all sizeable components), depth 38.6 vs 87.2 m WRONG (north wing split into its
+  own view; overall dims unreadable at 768 px); S-101 PNG 4.68x3.66 m vs PDF 5.79x4.84 m DISAGREE; rooms on S-101 are
+  slivers (total 1.0 m²); doors/windows on construction sheets honestly refused.
+- IN PROGRESS (agents launched ~00:30, may be cut off — check `git status` / `docs/handoff/big-sheets.md`):
+  (a) overall size from printed overall dimensions + joined views, PNG/PDF agreement, room labels + sliver filter,
+  round 2 on 3 more complex USACE sheets (`docs/stress-report-r2.md`); (b) the user's two NEW TASKS below
+  (engine/overrides_el.py, /api/elements/override, web inspector) — `docs/handoff/elements.md`.
+- `wip/archival-walls` (`7f3ee15`): still unverified wall filter for hand-drawn scans (see the 20:30 section).
 
-**NEW TASKS from the user (not started):**
+**NEW TASKS from the user (agent started ~00:30, see above):**
 1. **Every element must be selectable** (in 3D and on the 2D overlay: rooms, walls, doors, windows, fixtures, stairs,
    labels). Selecting one shows what it is, its size (via the solved scale), its source/tag (drawn/specified/chosen),
    confidence, and which answers it feeds. If the element has no instructions/explanation shown yet, show them
