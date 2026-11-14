@@ -125,3 +125,15 @@ def test_difference_combine():
     r = execute_plan([{"select": "window", "aggregate": "count"}, {"select": "door", "aggregate": "count"}],
                      "difference", f)
     assert r.value == 2 and r.groups == {"part1": 3, "part2": 1}
+
+
+def test_a_room_with_a_toilet_is_a_bathroom_even_if_unnamed():
+    from contracts.proof import Element, Provenance, SheetFacts
+    from engine.query.run import run
+    sq = lambda x, s: [(x, 0.0), (x + s, 0.0), (x + s, s), (x, s)]
+    f = SheetFacts(provenance=Provenance(file="f"), elements=[
+        Element(id="r1", kind="room", subtype="sauna", label="S", polygon=sq(0, 10), attrs={"area_m2": 4.0}),
+        Element(id="r2", kind="room", subtype="living", polygon=sq(20, 30), attrs={"area_m2": 30.0}),
+        Element(id="t1", kind="toilet", polygon=sq(3, 2))])
+    r = run({"select": "room", "where": {"room_type": "bathroom"}, "aggregate": "sum_area"}, f)
+    assert r.value == 4.0 and r.evidence_ids == ["r1"] and any("toilet" in n for n in r.notes)

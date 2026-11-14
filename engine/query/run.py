@@ -92,9 +92,43 @@ def _eq(a: Optional[str], b: str) -> bool:
     return (a or "").strip().casefold() == b.strip().casefold()
 
 
-def _subtype_ok(e: Element, want: str, rules: list[str]) -> bool:
+# a room TYPE asked for in words -> the names readers give it (en/fi/de/fr/it) ...
+ROOM_SYNONYMS = {
+    "bathroom": {"bathroom", "bath", "wc", "toilet", "washroom", "restroom", "kh", "kph", "ph", "pesuh", "sh", "shower",
+                 "bad", "bain", "bagno", "wet_room"},
+    "bedroom": {"bedroom", "mh", "makuuhuone", "schlafzimmer", "chambre", "camera"},
+    "kitchen": {"kitchen", "k", "kk", "keittiö", "küche", "cuisine", "cucina"},
+}
+ROOM_SYNONYMS["bathrooms"] = ROOM_SYNONYMS["bathroom"]
+# ... and the fixtures that make a room that type even when no reader named it (a toilet = a bathroom/WC)
+ROOM_BY_FIXTURE = {"bathroom": {"toilet", "shower", "bathtub"}, "bathrooms": {"toilet", "shower", "bathtub"}}
+
+
+def _rooms_with(facts: SheetFacts, fixture_kinds: set) -> set:
+    from shapely.geometry import Point
+    pts = []
+    for e in facts.elements:
+        if e.kind in fixture_kinds and e.polygon:
+            xs, ys = [p[0] for p in e.polygon], [p[1] for p in e.polygon]
+            pts.append(Point((min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2))
+    out = set()
+    for r in facts.elements:
+        if r.kind != "room":
+            continue
+        g = _poly(r)
+        if g is not None and any(g.contains(p) for p in pts):
+            out.add(r.id)
+    return out
+
+
+def _subtype_ok(e: Element, want: str, rules: list[str], wet: Optional[set] = None) -> bool:
     st = (e.subtype or "").casefold()
     w = want.casefold()
+    if w in ROOM_SYNONYMS and e.kind == "room":
+        if st in ROOM_SYNONYMS[w] or (e.label or "").strip().casefold() in ROOM_SYNONYMS[w]:
+            return True
+        if wet is not None and e.id in wet:
+            return True
     if w == "kitchen" and "kitchenettes_count" in rules:
         return st in R.KITCHEN_ALIASES
     if w == "balcony" and "glazed_balconies_count" in rules:
@@ -110,7 +144,9 @@ def select(spec: dict, facts: SheetFacts) -> list[Element]:
     els = [e for e in facts.elements if "*" in kinds or e.kind in kinds]
     for key in ("room_type", "subtype"):
         if where.get(key):
-            els = [e for e in els if _subtype_ok(e, where[key], rules)]
+            want = where[key].casefold()
+            wet = _rooms_with(facts, ROOM_BY_FIXTURE[want]) if want in ROOM_BY_FIXTURE else None
+            els = [e for e in els if _subtype_ok(e, where[key], rules, wet)]
     if where.get("label"):
         els = [e for e in els if _eq(e.label, where["label"])]
     if where.get("id"):
@@ -241,6 +277,9 @@ def run(spec: dict, facts: SheetFacts, px_per_m: Optional[float] = None) -> Resu
         if note:
             res.notes.append(note)
     res.evidence_ids = [e.id for e in els]
+    rt = ((spec.get("where") or {}).get("room_type") or "").casefold()
+    if rt in ROOM_BY_FIXTURE and els:
+        res.notes.append(f"{rt} = rooms named bath/WC/KH/PH/… or containing a toilet, shower or bathtub")
     if not els and spec["aggregate"] not in ("count", "list"):
         w = spec.get("where") or {}
         what = w.get("room_type") or w.get("subtype") or w.get("label") or spec.get("select")

@@ -257,6 +257,8 @@ def _drawing_png(path: str, max_px: int = 2000) -> tuple[pathlib.Path, str, str]
                 raise HTTPException(404, f"file not found: {path}")
             return _render_cad(src, max_px)
         src = sib
+    if src.suffix.lower() in (".pdf", ".png", ".jpg") and src.with_suffix(".dxf").exists():
+        return _render_cad(src.with_suffix(".dxf"), max_px)   # same drawing, exact: walls/rooms from its entities
     if not src.exists():
         raise HTTPException(404, f"file not found: {path}")
     ext = src.suffix.lower()
@@ -341,6 +343,8 @@ async def geometry(path: str):
         if coords in ("dxf-render", "ifc-render"):          # exact: walls and elements from the file's entities
             from engine.pipeline import _abs
             src = _abs(path)
+            if coords == "dxf-render" and not src.lower().endswith(".dxf"):
+                src = str(pathlib.Path(src).with_suffix(".dxf"))     # pdf/png drawn from its exact same-stem DXF
             t0 = __import__("time").perf_counter()
             if coords == "dxf-render":
                 from engine.vector import dxf_render
@@ -350,7 +354,14 @@ async def geometry(path: str):
                 g = ifc_render.geometry(src)
             g["cost"] = {"ms": round((__import__("time").perf_counter() - t0) * 1000), "llm_calls": 0, "usd": 0.0,
                          "note": "3D built from the file's own entities (no image reading), cached by sha256"}
-            g.update(path=path, coords=coords, credit=None, check=None)
+            credit = None
+            try:
+                from engine import siblings
+                from engine.vector import credits
+                credit = credits.lookup(siblings.dataset_root(), path)[1]
+            except Exception:  # noqa: BLE001
+                pass
+            g.update(path=path, coords=coords, credit=credit, check=None)
             GEOM.mkdir(parents=True, exist_ok=True)
             out.write_text(json.dumps(g))
             return g

@@ -518,6 +518,10 @@ class PipelineEngine:
             return facts.scale or ScaleInfo(needs_user=True)
 
     def _attach_scale(self, po: ProofObject, scale: Optional[ScaleInfo], facts: SheetFacts, value: float) -> None:
+        if "vector" in facts.extras or po.provenance.resolved_from in ("dxf", "ifc"):
+            # exact CAD/BIM read: values are already in metres; no door guess, no 'ask for a reference length'
+            po.scale = ScaleInfo(px_per_m=1.0, rel_sigma=0.001, anchors=[], widths_relative=False, needs_user=False)
+            return
         if scale is not None and scale.px_per_m:
             po.scale = scale
             if scale.rel_sigma is not None and po.kind == "area":
