@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ask, buildProject, fetchPlan, fetchSamples, setScale, ScaleError, geometry, imageUrl, upload, type Geometry, type Sample, type BuildPlan, type BuildingResult } from "./api";
+import { answerCheck, fetchChecks, MOCK_CHECKS, ask, buildProject, fetchPlan, fetchSamples, setScale, ScaleError, geometry, imageUrl, upload, type Geometry, type Sample, type BuildPlan, type BuildingResult, type Check } from "./api";
+import { ChecksBlock, kindWord, scaleBrief } from "./checks";
 import { chipsFor, findingSpecs } from "./logic";
 import type { ProofObject } from "./types";
 import { HowPage } from "./how";
@@ -66,6 +67,11 @@ export default function App() {
   const [measureTyped, setMeasureTyped] = useState<string | null>(null);
   const [measuredPx, setMeasuredPx] = useState<number | null>(null);
   const [planExtra, setPlanExtra] = useState<Record<string, number>>({});
+  const [checks, setChecks] = useState<Record<string, Check[]>>({});
+  const [hoverCheck, setHoverCheck] = useState<Check | null>(null);
+  const [checkBusy, setCheckBusy] = useState<string | null>(null);
+  const [checkNote, setCheckNote] = useState<string | null>(null);
+  const [checkErr, setCheckErr] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const dirRef = useRef<HTMLInputElement>(null);
   const runId = useRef(0);
@@ -136,6 +142,17 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active?.path, specs.length, epoch]);
 
+  // checks (scale, sheet type, plan view, units): fetched once the drawing is read
+  const geoReady = !!active?.geo;
+  useEffect(() => {
+    if (!active || !active.geo || checks[active.path]) return;
+    const path = active.path;
+    const dims = { w: active.geo.width, h: active.geo.height };
+    setCheckNote(null);
+    setCheckErr(null);
+    fetchChecks(path, dims).then((it) => setChecks((c) => ({ ...c, [path]: it }))).catch(() => { /* endpoint missing: no Checks block, nothing invented */ });
+  }, [active?.path, geoReady]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const askPath = flat?.path ?? active?.path ?? null;
   const submit = async (q: string) => {
     if (!askPath || !q.trim()) return;
@@ -150,6 +167,58 @@ export default function App() {
       setAsking(false);
     }
   };
+
+  // re-ask every standard question (and the selected one) without blanking the rows: sizes update in place
+  const reask = async (path: string) => {
+    const qs = new Map<string, string>(specs.map((s) => [s.key, s.q]));
+    const selQ = selected && selected.path === path ? selected.proof.question : null;
+    await Promise.all([...qs.entries()].map(async ([k, q]) => {
+      try {
+        const proof = await ask(path, q);
+        setFindings((f) => ({ ...f, [path]: { ...(f[path] ?? {}), [k]: { proof } } }));
+      } catch { /* keep the previous answer */ }
+    }));
+    if (selQ) {
+      try {
+        const proof = await ask(path, selQ);
+        setSelected((cur) => (cur && cur.path === path ? { path, proof } : cur));
+      } catch { /* keep */ }
+    } else {
+      setSelected((cur) => {
+        if (!cur || cur.path !== path) return cur;
+        const hit = specs.map((s) => findingsRef.current[path]?.[s.key]?.proof).find((x) => x && x.question === cur.proof.question);
+        return hit ? { path, proof: hit } : cur;
+      });
+    }
+  };
+  const findingsRef = useRef(findings);
+  findingsRef.current = findings;
+  const onCheckAnswer = async (c: Check, a: "yes" | "no") => {
+    if (!active) return;
+    const path = active.path;
+    setCheckBusy(c.id);
+    setCheckErr(null);
+    setCheckNote(null);
+    try {
+      let items = await answerCheck(path, c.id, a);
+      if (!MOCK_CHECKS) items = await fetchChecks(path).catch(() => items);
+      setChecks((m) => ({ ...m, [path]: items }));
+      setHoverCheck(null);
+      if (c.kind === "scale" || c.kind === "units") {
+        const g = await geometry(path).catch(() => null);
+        if (g) setFloors((fs) => fs.map((f) => (f.path === path ? { ...f, geo: g } : f)));
+      }
+      await reask(path);
+      setCheckNote(a === "yes" ? `${kindWord(c.kind)} confirmed: ${c.kind === "scale" || c.kind === "units" ? "areas and lengths updated" : "numbers updated"}` : `${kindWord(c.kind)}: noted, that one is ruled out`);
+      window.setTimeout(() => setCheckNote(null), 6000);
+    } catch (e) {
+      setCheckErr((e as Error).message);
+    } finally {
+      setCheckBusy(null);
+    }
+  };
+  const activeChecks = active ? (checks[active.path] ?? null) : null;
+  const scaleLine = scaleBrief(activeChecks ?? undefined);
 
   const flatName = (f: File) => (f as File & { webkitRelativePath?: string }).webkitRelativePath || f.name;
   const levelName = (f: { level?: number | null; level_label?: string | null; sheet?: string | null; display_label?: string | null }) =>
@@ -489,6 +558,7 @@ export default function App() {
             onCloseFlat={() => setFlat(null)}
             projectNote={projectNote}
             onRetryGeo={() => setFloors((fs) => fs.map((f) => (f.key === activeKey ? { ...f, geoErr: null } : f)))}
+            checkEv={hoverCheck?.evidence ?? null}
             onWhyRead={() => {
               setSelected(null);
               setWhy(true);
@@ -502,6 +572,7 @@ export default function App() {
             err={askErr}
             onAsk={(q) => void submit(q)}
             onWhy={() => setWhy(true)}
+            scaleLine={scaleLine}
           />
         </section>
         <section className="col right">
@@ -546,6 +617,8 @@ export default function App() {
               hoverIdx={hoverIdx}
               onHover={setHoverIdx}
               imgUrl={active ? imageUrl(active.path) : ""}
+              scaleLine={scaleLine}
+              checks={<ChecksBlock items={activeChecks} busyId={checkBusy} note={checkNote} err={checkErr} onAnswer={(c, ans) => void onCheckAnswer(c, ans)} onType={startScale} onHover={setHoverCheck} />}
               onSelect={(p) => active && setSelected({ path: active.path, proof: p })}
               onWhy={(p) => {
                 if (active) setSelected({ path: active.path, proof: p });

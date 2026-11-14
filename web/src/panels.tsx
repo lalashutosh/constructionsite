@@ -5,6 +5,7 @@ import { fmtCost, fmtNum, reliabilityWord, sentenceOf, tierSentence, verdict, ty
 import ProofView, { ProofCard, SeeProof, verdictLine } from "./proofview";
 import type { ProofObject } from "./types";
 import { PlumbViewer, THEMES, type FloorInput, type Phase } from "./viewer3d";
+import { pct, sizeKinds } from "./checks";
 import { floorOf, sheetFloors, splitSheet } from "./sheetfloors";
 
 export type ThemeName = "dark" | "light";
@@ -183,6 +184,8 @@ export function ViewerPane(p: {
   onCloseFlat: () => void;
   projectNote: string | null;
   onRetryGeo: () => void;
+  /** evidence boxes of the hovered check (image pixels) */
+  checkEv?: { box: [number, number, number, number]; label: string }[] | null;
 }) {
   const [tip, setTip] = useState<{ text: string; x: number; y: number } | null>(null);
   const [len, setLen] = useState("");
@@ -237,18 +240,23 @@ export function ViewerPane(p: {
   const sf = p.selFloor;
   const mapped = !!(sf?.geo && sf.geo.coords === "pixels" && p.selected && p.selected.path === sf.key);
   const proof = p.selected?.proof;
+    const cev = p.checkEv && p.active?.geo && p.active.geo.coords === "pixels" ? p.checkEv : null;
+  const pinFloor = cev ? p.active : sf;
+  const evPolys: [number, number][][] = cev
+    ? cev.map(({ box: [x0, y0, x1, y1] }) => [[x0, y0], [x1, y0], [x1, y1], [x0, y1]])
+    : mapped && p.showPins && proof ? proof.evidence.map((e) => e.polygon as [number, number][]) : [];
+  const evKey = cev ? "c" + JSON.stringify(cev) : "";
   useEffect(() => {
-    const sub = sf ? shown.filter((x) => x.parent === sf.key && x.crop) : [];
-    const pins = mapped && p.showPins && proof ? proof.evidence.flatMap((e, i) => {
-      const poly = e.polygon as [number, number][];
+    const sub = pinFloor ? shown.filter((x) => x.parent === pinFloor.key && x.crop) : [];
+    const pins = evPolys.flatMap((poly, i) => {
       if (!sub.length) return [{ idx: i + 1, polygon: poly }];
       const [cx, cy] = poly.reduce((a, [x, y]) => [a[0] + x / poly.length, a[1] + y / poly.length], [0, 0]);
       const on = sub.find((x) => cx >= x.crop![0] && cx <= x.crop![2] && cy >= x.crop![1] && cy <= x.crop![3]);
       return on ? [{ idx: i + 1, floor: on.key, polygon: poly.map(([x, y]) => [x - on.crop![0], y - on.crop![1]] as [number, number]) }] : [];
-    }) : [];
-    viewer.current?.setPins(mapped && p.showPins && sf ? sf.key : null, pins);
+    });
+    viewer.current?.setPins(evPolys.length && pinFloor ? pinFloor.key : null, pins);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sig, p.theme, mapped, p.showPins, proof?.id]);
+  }, [sig, p.theme, mapped, p.showPins, proof?.id, evKey]);
   useEffect(() => viewer.current?.setHighlight(p.hoverIdx), [p.hoverIdx]);
   useEffect(() => viewer.current?.setDrawing(p.drawingOn), [p.drawingOn, sig, p.theme]);
   useEffect(() => viewer.current?.setStage(p.stage), [p.stage, sig, p.theme]);
@@ -403,7 +411,7 @@ export function ViewerPane(p: {
 }
 
 /* ---------- ask bar ---------- */
-export function Ask(p: { active: unknown; chips: string[]; selected: ProofObject | null; asking: boolean; err: string | null; onAsk: (q: string) => void; onWhy: () => void }) {
+export function Ask(p: { active: unknown; chips: string[]; selected: ProofObject | null; asking: boolean; err: string | null; onAsk: (q: string) => void; onWhy: () => void; scaleLine?: { text: string; conf: number } | null }) {
   const [q, setQ] = useState("");
   const send = (t: string) => {
     setQ(t);
@@ -430,6 +438,7 @@ export function Ask(p: { active: unknown; chips: string[]; selected: ProofObject
             <span className={`status ${v.tier}`}><TierIcon tier={v.tier} />{reliabilityWord(pr)}</span>
             <span className="cost mono">{fmtCost(pr)}</span>
             <SeeProof onClick={p.onWhy} />
+            {p.scaleLine && sizeKinds.has(pr.kind) && <span className="scaleline mono" title="How sure the engine is about the scale these sizes use">from scale {p.scaleLine.text}, {pct(p.scaleLine.conf)}% sure</span>}
             <span className="pv-gist">{verdictLine(pr).text}.</span>
           </p>
         </div>
@@ -470,6 +479,8 @@ export function Findings(p: {
   hoverIdx?: number | null;
   onHover?: (i: number | null) => void;
   imgUrl?: string;
+  checks?: ReactNode;
+  scaleLine?: { text: string; conf: number } | null;
 }) {
   const settledP = p.specs.map((s) => p.states[s.key]).filter((x) => x && (x.proof || x.err));
   const allGrey = p.specs.length >= 3 && settledP.length === p.specs.length && settledP.every((x) => x.proof && x.proof.tier === "grey");
@@ -499,6 +510,7 @@ export function Findings(p: {
           ))}
         </div>
       )}
+      {p.checks}
       <ul className="flist">
         {!p.active && <li className="muted pad">Findings appear here once a drawing is open.</li>}
         {sameRefusal && <li className="pad muted">Plumb's counters don't cover this kind of sheet yet. Ask a question below, or open a schedule/plan from the project.</li>}
@@ -515,7 +527,7 @@ export function Findings(p: {
                 <span className={`ficon ${v.tier}`}><TierIcon tier={v.tier} /></span>
                 <span className="ftext">
                   <span className="fsent"><Sentence text={sentenceOf(pr)} /></span>
-                  <small>{reliabilityWord(pr)}{perFloor(p.active, pr)}</small>
+                  <small>{reliabilityWord(pr)}{perFloor(p.active, pr)}{p.scaleLine && sizeKinds.has(pr.kind) ? ` · from scale ${p.scaleLine.text}, ${pct(p.scaleLine.conf)}% sure` : ""}</small>
                 </span>
               </button>
               <SeeProof onClick={() => p.onWhy(pr)} />
