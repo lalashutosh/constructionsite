@@ -1,0 +1,34 @@
+{
+  "id": "demo-refusal",
+  "question": "How many doors are in this drawing?",
+  "intent": "doors",
+  "kind": "count",
+  "value": null,
+  "unit": null,
+  "interval": null,
+  "tier": "grey",
+  "evidence": [],
+  "voters": [],
+  "scale": null,
+  "assumptions": [],
+  "decisions_open": [],
+  "provenance": {
+    "file": "data/europeana/SYNTHETIC-ELEVATION.jpg",
+    "sha256": null,
+    "page": null,
+    "revision": null,
+    "resolved_from": null,
+    "fmt": "jpg",
+    "license": null,
+    "credit": "Synthetic fixture"
+  },
+  "cost": {
+    "ms": 0.0,
+    "tokens_in": 0,
+    "tokens_out": 0,
+    "usd": 0.0,
+    "llm_calls": 0
+  },
+  "notes": [],
+  "refusal": "Sheet looks like an elevation (no walls/rooms found). I will not count doors here."
+}

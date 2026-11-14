@@ -1,0 +1,412 @@
+{
+  "provenance": {
+    "file": "data/cubicasa5k/SYNTHETIC-DEMO.png",
+    "sha256": null,
+    "page": null,
+    "revision": null,
+    "resolved_from": null,
+    "fmt": "png",
+    "license": "SYNTHETIC demo fixture",
+    "credit": "Synthetic fixture, not a real drawing"
+  },
+  "sheet_type": "floor_plan",
+  "legible": true,
+  "legibility_note": null,
+  "width_px": 480,
+  "height_px": 620,
+  "language": "fi",
+  "elements": [
+    {
+      "id": "room1",
+      "kind": "room",
+      "subtype": "living",
+      "polygon": [
+        [
+          40.0,
+          40.0
+        ],
+        [
+          440.0,
+          40.0
+        ],
+        [
+          440.0,
+          540.0
+        ],
+        [
+          40.0,
+          540.0
+        ],
+        [
+          40.0,
+          40.0
+        ]
+      ],
+      "label": "OH",
+      "conf": 0.9,
+      "attrs": {}
+    },
+    {
+      "id": "d0",
+      "kind": "door",
+      "subtype": null,
+      "polygon": [
+        [
+          60.0,
+          560.0
+        ],
+        [
+          90.0,
+          560.0
+        ],
+        [
+          90.0,
+          572.0
+        ],
+        [
+          60.0,
+          572.0
+        ],
+        [
+          60.0,
+          560.0
+        ]
+      ],
+      "label": null,
+      "conf": 0.95,
+      "attrs": {
+        "width_px": 90
+      }
+    },
+    {
+      "id": "d1",
+      "kind": "door",
+      "subtype": null,
+      "polygon": [
+        [
+          110.0,
+          560.0
+        ],
+        [
+          140.0,
+          560.0
+        ],
+        [
+          140.0,
+          572.0
+        ],
+        [
+          110.0,
+          572.0
+        ],
+        [
+          110.0,
+          560.0
+        ]
+      ],
+      "label": null,
+      "conf": 0.95,
+      "attrs": {
+        "width_px": 90
+      }
+    },
+    {
+      "id": "d2",
+      "kind": "door",
+      "subtype": null,
+      "polygon": [
+        [
+          160.0,
+          560.0
+        ],
+        [
+          190.0,
+          560.0
+        ],
+        [
+          190.0,
+          572.0
+        ],
+        [
+          160.0,
+          572.0
+        ],
+        [
+          160.0,
+          560.0
+        ]
+      ],
+      "label": null,
+      "conf": 0.95,
+      "attrs": {
+        "width_px": 90
+      }
+    },
+    {
+      "id": "d3",
+      "kind": "door",
+      "subtype": null,
+      "polygon": [
+        [
+          210.0,
+          560.0
+        ],
+        [
+          240.0,
+          560.0
+        ],
+        [
+          240.0,
+          572.0
+        ],
+        [
+          210.0,
+          572.0
+        ],
+        [
+          210.0,
+          560.0
+        ]
+      ],
+      "label": null,
+      "conf": 0.55,
+      "attrs": {
+        "width_px": 70
+      }
+    },
+    {
+      "id": "d4",
+      "kind": "door",
+      "subtype": null,
+      "polygon": [
+        [
+          260.0,
+          560.0
+        ],
+        [
+          290.0,
+          560.0
+        ],
+        [
+          290.0,
+          572.0
+        ],
+        [
+          260.0,
+          572.0
+        ],
+        [
+          260.0,
+          560.0
+        ]
+      ],
+      "label": null,
+      "conf": 0.95,
+      "attrs": {
+        "width_px": 90
+      }
+    },
+    {
+      "id": "d5",
+      "kind": "door",
+      "subtype": null,
+      "polygon": [
+        [
+          310.0,
+          560.0
+        ],
+        [
+          340.0,
+          560.0
+        ],
+        [
+          340.0,
+          572.0
+        ],
+        [
+          310.0,
+          572.0
+        ],
+        [
+          310.0,
+          560.0
+        ]
+      ],
+      "label": null,
+      "conf": 0.95,
+      "attrs": {
+        "width_px": 90
+      }
+    },
+    {
+      "id": "d6",
+      "kind": "door",
+      "subtype": null,
+      "polygon": [
+        [
+          360.0,
+          560.0
+        ],
+        [
+          390.0,
+          560.0
+        ],
+        [
+          390.0,
+          572.0
+        ],
+        [
+          360.0,
+          572.0
+        ],
+        [
+          360.0,
+          560.0
+        ]
+      ],
+      "label": null,
+      "conf": 0.95,
+      "attrs": {
+        "width_px": 90
+      }
+    },
+    {
+      "id": "w0",
+      "kind": "window",
+      "subtype": null,
+      "polygon": [
+        [
+          80.0,
+          30.0
+        ],
+        [
+          150.0,
+          30.0
+        ],
+        [
+          150.0,
+          38.0
+        ],
+        [
+          80.0,
+          38.0
+        ],
+        [
+          80.0,
+          30.0
+        ]
+      ],
+      "label": null,
+      "conf": 0.9,
+      "attrs": {}
+    },
+    {
+      "id": "w1",
+      "kind": "window",
+      "subtype": null,
+      "polygon": [
+        [
+          200.0,
+          30.0
+        ],
+        [
+          270.0,
+          30.0
+        ],
+        [
+          270.0,
+          38.0
+        ],
+        [
+          200.0,
+          38.0
+        ],
+        [
+          200.0,
+          30.0
+        ]
+      ],
+      "label": null,
+      "conf": 0.9,
+      "attrs": {}
+    },
+    {
+      "id": "w2",
+      "kind": "window",
+      "subtype": null,
+      "polygon": [
+        [
+          320.0,
+          30.0
+        ],
+        [
+          390.0,
+          30.0
+        ],
+        [
+          390.0,
+          38.0
+        ],
+        [
+          320.0,
+          38.0
+        ],
+        [
+          320.0,
+          30.0
+        ]
+      ],
+      "label": null,
+      "conf": 0.9,
+      "attrs": {}
+    }
+  ],
+  "scale": {
+    "px_per_m": null,
+    "rel_sigma": null,
+    "anchors": [
+      {
+        "kind": "door_prior",
+        "px_per_m": 100.0,
+        "rel_sigma": 0.12,
+        "tag": "defaulted",
+        "note": "median door leaf 0.9 m (assumed)",
+        "element_ids": [
+          "d0",
+          "d1"
+        ]
+      }
+    ],
+    "widths_relative": true,
+    "needs_user": true
+  },
+  "printed_areas": [
+    {
+      "text": "20.0 m2",
+      "value_m2": 20.0,
+      "polygon": [
+        [
+          200,
+          260
+        ],
+        [
+          280,
+          260
+        ],
+        [
+          280,
+          280
+        ],
+        [
+          200,
+          280
+        ],
+        [
+          200,
+          260
+        ]
+      ]
+    }
+  ],
+  "extras": {}
+}

@@ -1,6 +1,6 @@
-STATUS: IN_PROGRESS
+STATUS: BLOCKED
 
-Next action: P1 — raster-extractor + ui-builder were interrupted at 06:11 by the session limit (NOT running). Partial code is committed (engine/raster/, web/). Resume both from what is on disk, finish measurement/handoff and build/screenshots, then run G1 gate.
+Next action: HUMAN FIX REQUIRED — workspace trust gate denies ALL execution (python/pytest/make/npm/git). See docs/MORNING.md. Accept the trust dialog (`cd /home/ashutosh/Downloads/plumb && claude`, accept prompt) then restart overnight.sh. After that: finish P1 raster table + ui build/screenshots, then G1 gate. No code lost; these STATE/MORNING writes are uncommitted (git exec blocked too).
 
 ## Checklist
 ### P0 Bootstrap
@@ -45,3 +45,4 @@ Next action: P1 — raster-extractor + ui-builder were interrupted at 06:11 by t
 ## Cycle log
 - 05:35 C1 P0 done: make check OK (7990 rows, tesseract eng+fin), 15 tests pass, contract OK, verda ping ok ($0.0034). Scaffolding + STATUS.md created.
 - 06:06 C3 P1: verified evaluator (stub 6.9%, prior floor 37.3% DEV, 29 tests) + takeoff (44 tests) done from C2. Spawned raster-extractor (finish measurement+claims) + ui-builder (web from scratch) in parallel.
+- 12:40 C1 BLOCKED: workspace trust gate denies all exec (python/pytest/make/npm/git) for lead AND subagents. raster-extractor+ui-builder did no real work; both stopped. Human must accept trust dialog. STATE/MORNING written to disk (uncommitted, git blocked). See docs/decisions/workspace-trust-block.md.

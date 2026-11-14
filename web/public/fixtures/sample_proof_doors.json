@@ -1,0 +1,300 @@
+{
+  "id": "demo-doors",
+  "question": "How many doors are in this apartment?",
+  "intent": "doors",
+  "kind": "count",
+  "value": 7,
+  "unit": "count",
+  "interval": null,
+  "tier": "amber",
+  "evidence": [
+    {
+      "id": "d0",
+      "kind": "door",
+      "subtype": null,
+      "polygon": [
+        [
+          60.0,
+          560.0
+        ],
+        [
+          90.0,
+          560.0
+        ],
+        [
+          90.0,
+          572.0
+        ],
+        [
+          60.0,
+          572.0
+        ],
+        [
+          60.0,
+          560.0
+        ]
+      ],
+      "label": null,
+      "conf": 0.95,
+      "attrs": {
+        "width_px": 90
+      }
+    },
+    {
+      "id": "d1",
+      "kind": "door",
+      "subtype": null,
+      "polygon": [
+        [
+          110.0,
+          560.0
+        ],
+        [
+          140.0,
+          560.0
+        ],
+        [
+          140.0,
+          572.0
+        ],
+        [
+          110.0,
+          572.0
+        ],
+        [
+          110.0,
+          560.0
+        ]
+      ],
+      "label": null,
+      "conf": 0.95,
+      "attrs": {
+        "width_px": 90
+      }
+    },
+    {
+      "id": "d2",
+      "kind": "door",
+      "subtype": null,
+      "polygon": [
+        [
+          160.0,
+          560.0
+        ],
+        [
+          190.0,
+          560.0
+        ],
+        [
+          190.0,
+          572.0
+        ],
+        [
+          160.0,
+          572.0
+        ],
+        [
+          160.0,
+          560.0
+        ]
+      ],
+      "label": null,
+      "conf": 0.95,
+      "attrs": {
+        "width_px": 90
+      }
+    },
+    {
+      "id": "d3",
+      "kind": "door",
+      "subtype": null,
+      "polygon": [
+        [
+          210.0,
+          560.0
+        ],
+        [
+          240.0,
+          560.0
+        ],
+        [
+          240.0,
+          572.0
+        ],
+        [
+          210.0,
+          572.0
+        ],
+        [
+          210.0,
+          560.0
+        ]
+      ],
+      "label": null,
+      "conf": 0.55,
+      "attrs": {
+        "width_px": 70
+      }
+    },
+    {
+      "id": "d4",
+      "kind": "door",
+      "subtype": null,
+      "polygon": [
+        [
+          260.0,
+          560.0
+        ],
+        [
+          290.0,
+          560.0
+        ],
+        [
+          290.0,
+          572.0
+        ],
+        [
+          260.0,
+          572.0
+        ],
+        [
+          260.0,
+          560.0
+        ]
+      ],
+      "label": null,
+      "conf": 0.95,
+      "attrs": {
+        "width_px": 90
+      }
+    },
+    {
+      "id": "d5",
+      "kind": "door",
+      "subtype": null,
+      "polygon": [
+        [
+          310.0,
+          560.0
+        ],
+        [
+          340.0,
+          560.0
+        ],
+        [
+          340.0,
+          572.0
+        ],
+        [
+          310.0,
+          572.0
+        ],
+        [
+          310.0,
+          560.0
+        ]
+      ],
+      "label": null,
+      "conf": 0.95,
+      "attrs": {
+        "width_px": 90
+      }
+    },
+    {
+      "id": "d6",
+      "kind": "door",
+      "subtype": null,
+      "polygon": [
+        [
+          360.0,
+          560.0
+        ],
+        [
+          390.0,
+          560.0
+        ],
+        [
+          390.0,
+          572.0
+        ],
+        [
+          360.0,
+          572.0
+        ],
+        [
+          360.0,
+          560.0
+        ]
+      ],
+      "label": null,
+      "conf": 0.95,
+      "attrs": {
+        "width_px": 90
+      }
+    }
+  ],
+  "voters": [
+    {
+      "name": "detector",
+      "value": 7,
+      "element_ids": [
+        "d0",
+        "d1",
+        "d2",
+        "d3",
+        "d4",
+        "d5",
+        "d6"
+      ],
+      "runs": [
+        7,
+        7,
+        8,
+        7,
+        7,
+        6,
+        7,
+        7
+      ],
+      "note": null
+    },
+    {
+      "name": "arc_geometry",
+      "value": 6,
+      "element_ids": [
+        "d0",
+        "d1",
+        "d2",
+        "d4",
+        "d5",
+        "d6"
+      ],
+      "runs": [],
+      "note": "d3 has no swing arc: open doorway without a leaf?"
+    }
+  ],
+  "scale": null,
+  "assumptions": [],
+  "decisions_open": [],
+  "provenance": {
+    "file": "data/cubicasa5k/SYNTHETIC-DEMO.png",
+    "sha256": null,
+    "page": null,
+    "revision": null,
+    "resolved_from": null,
+    "fmt": "png",
+    "license": "SYNTHETIC demo fixture",
+    "credit": "Synthetic fixture, not a real drawing"
+  },
+  "cost": {
+    "ms": 1620.0,
+    "tokens_in": 0,
+    "tokens_out": 0,
+    "usd": 0.0,
+    "llm_calls": 0
+  },
+  "notes": [
+    "Voters disagree on d3. Question asks for doorways fitted with a leaf."
+  ],
+  "refusal": null
+}
