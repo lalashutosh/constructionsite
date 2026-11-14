@@ -97,7 +97,7 @@ def cnn_walls(img_bgr: np.ndarray) -> Optional[tuple[list, str]]:
         _LAST_ROOMS = _rooms_to_original(indoor, v, w, h)
         mask = (arg == cc_model.ROOM_CLASSES.index("wall")).astype(np.uint8) * 255
         mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((2, 2), np.uint8))
-        out = _trace(mask, 12, 1.2, v.to_original)
+        out = _trace(mask, 40, 2.0, v.to_original)      # drop specks, straighter outlines (jagged 3D otherwise)
         return out, f"walls = CubiCasa CNN wall class, {len(out)} pieces"
     except Exception as e:  # noqa: BLE001
         return None

@@ -21,6 +21,15 @@ def execute_plan(specs: list[dict], combine: str, facts, px_per_m: Optional[floa
     out.groups = {f"part{i + 1}": r.value for i, r in enumerate(results)}
     if combine == "sum":
         out.value = None if any(v is None for v in vals) else sum(vals)
+    elif combine in ("greater", "less"):              # "are there more windows than doors?" -> Yes / No
+        a, b = (vals + [None, None])[:2]
+        if a is None or b is None:
+            out.value = None
+        else:
+            yes = a > b if combine == "greater" else a < b
+            out.value = "Yes" if yes else "No"
+            out.unit = "yes/no"
+            out.notes.append(f"compared {a} with {b}")
     elif combine in ("difference", "ratio"):           # "more windows than doors?" -> part1 - part2 (or /)
         a, b = (vals + [None, None])[:2]
         if a is None or b is None or (combine == "ratio" and not b):

@@ -52,3 +52,12 @@ def test_reviewers_decide_view_types_and_flags_need_consensus():
 def test_without_reviewers_cv_rules_still_decide():
     out = scancheck.check(_sheet(), _walls(40, 360), _walls(40, 360), None, None)
     assert out["reviewer"]["used"] is False and out["walls"]
+
+
+def test_one_reviewer_is_not_a_consensus():
+    img = _sheet()
+    vs = scancheck.views(img)
+    a = {"views": [{"n": v["n"], "type": "floor_plan", "better": "A", "walls_missing": True} for v in vs],
+         "text_mirrored": True}
+    out = scancheck.check(img, _walls(40, 360), [], None, [FakeReviewer(a, "fast")])
+    assert not any("mirrored" in w or "missing" in w for w in out["warnings"])

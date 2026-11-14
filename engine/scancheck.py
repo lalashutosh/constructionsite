@@ -145,7 +145,8 @@ def check(img: np.ndarray, walls_cnn: Optional[list], walls_trace: list, rooms_c
                 pass
     disputed: set[int] = set()
     if reviews:
-        review = {"views": {}, "text_mirrored": all(r["text_mirrored"] for r in reviews),   # consensus only
+        two = len(reviews) >= 2                         # a consensus needs at least two reviewers' answers
+        review = {"views": {}, "text_mirrored": two and all(r["text_mirrored"] for r in reviews),
                   "notes": " | ".join(r["notes"] for r in reviews if r["notes"])}
         for n in {k for r in reviews for k in r["views"]}:
             got = [r["views"][n] for r in reviews if n in r["views"]]
@@ -155,7 +156,7 @@ def check(img: np.ndarray, walls_cnn: Optional[list], walls_trace: list, rooms_c
                 disputed.add(n)
             bet = {g.get("better") for g in got}
             merged["better"] = got[-1].get("better") if len(bet) > 1 else next(iter(bet))
-            full = len(got) == len(reviews)
+            full = two and len(got) == len(reviews)
             merged["walls_missing"] = full and all(g.get("walls_missing") for g in got)
             merged["false_walls"] = full and all(g.get("false_walls") for g in got)
             merged["agree"] = len(types) == 1 and len(got) == len(reviews)
@@ -207,4 +208,5 @@ def check(img: np.ndarray, walls_cnn: Optional[list], walls_trace: list, rooms_c
     if review and review.get("text_mirrored"):
         warnings.append("Text on the sheet reads mirrored: the scan itself may be flipped")
     return {"views": vs, "walls": chosen, "warnings": warnings,
-            "reviewer": {"used": used, "models": names, "cost_usd": round(cost, 5), "notes": (review or {}).get("notes", "")}}
+            "reviewer": {"used": used, "models": names, "answered": len(reviews), "asked": len(llms),
+                         "cost_usd": round(cost, 5), "notes": (review or {}).get("notes", "")}}

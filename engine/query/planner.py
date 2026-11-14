@@ -14,8 +14,9 @@ from engine.query.run import SCHEMA, SpecError, validate
 
 SYSTEM = (
     "You translate a question about ONE architectural drawing into a JSON query spec. "
-    "Reply with JSON only: either one spec object or {\"parts\": [spec, ...], \"combine\": \"sum\"|\"list\"|\"difference\"|\"ratio\"} for multi-part questions "
-    "(difference/ratio = part1 minus/over part2, for comparisons like 'more windows than doors?'). "
+    "Reply with JSON only: either one spec object or {\"parts\": [spec, ...], \"combine\": \"sum\"|\"list\"|\"difference\"|\"ratio\"|\"greater\"|\"less\"} for multi-part "
+    "questions (greater/less = is part1 more/fewer than part2: use for yes/no comparisons like 'more windows than "
+    "doors?'; difference/ratio = part1 minus/over part2 for 'how many more'). "
     "Use aggregate argmax_area/argmin_area for 'which room is largest/smallest', avg_area for averages. "
     "NEVER include a numeric answer; only describe what to select. Use only the allowed keys, element kinds, room types and rules."
 )
@@ -60,7 +61,7 @@ def plan(question: str, facts: SheetFacts, llm: LLM) -> Plan:
     try:
         obj = _parse_json(reply.text)
         if "parts" in obj:
-            if obj.get("combine", "sum") not in ("sum", "list", "difference", "ratio"):
+            if obj.get("combine", "sum") not in ("sum", "list", "difference", "ratio", "greater", "less"):
                 raise SpecError("unknown combine")
             specs, comb = obj["parts"], obj.get("combine", "sum")
             if not isinstance(specs, list) or not specs or len(specs) > 6:

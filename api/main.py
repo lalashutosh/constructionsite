@@ -280,8 +280,14 @@ async def geometry(path: str):
         img = cv2.imread(str(f), cv2.IMREAD_COLOR)
         if img is None:
             raise HTTPException(415, "image could not be read")
+        import time as _t
+        t0, cpu0 = _t.perf_counter(), _t.process_time()
         facts = engine().analyze(path) if coords == "pixels" else None
         g = geometry3d.model(img, facts, coords, use_cnn=(coords == "pixels"), scan_check=True, llm=_reviewers())
+        rv = (g.get("check") or {}).get("reviewer") or {}
+        g["cost"] = {"ms": round((_t.perf_counter() - t0) * 1000), "cpu_s": round(_t.process_time() - cpu0, 1),
+                     "llm_calls": rv.get("asked", 0) if rv.get("used") else 0, "usd": rv.get("cost_usd", 0.0),
+                     "note": "reading the drawing + 3D walls + scan check, paid once per file (cached by sha256)"}
         g.update(path=path, coords=coords, credit=(facts.provenance.credit if facts else None))
         GEOM.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(g))

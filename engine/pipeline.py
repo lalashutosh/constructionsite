@@ -348,8 +348,11 @@ class PipelineEngine:
                 p = fn(po.model_dump(mode="json"))
             except Exception:  # noqa: BLE001
                 p = None
-            if p is not None:
+            if p is not None and po.query_spec is None:     # calibrated on fixed-intent answers only
                 notes.append(f"historically right {p:.0%} of the time at this agreement level")
+                po.reliability = round(float(p), 3)
+                po.reliability_note = (f"answers with this agreement pattern were right {p:.0%} of the time on "
+                                       "DEV drawings (calibrator trained on 600 DEV answers)")
         log.info("ask %s intent=%s kind=%s value=%s tier=%s voters=%s", path, rt.intent, kind, po.value,
                  po.tier.value, [v.name for v in po.voters])
         return po
@@ -470,7 +473,22 @@ class PipelineEngine:
         try:
             plan = planner.plan(question, facts, self.llm)
             cost = plan.cost
-            res = query.execute_plan(plan.specs, plan.combine, facts, ctx.params.get("_px_per_m"))
+            px = ctx.params.get("_px_per_m")
+            res = query.execute_plan(plan.specs, plan.combine, facts, px)
+            if res.value is None and res.needs_scale and not px:
+                # areas on a scan without a printed scale: fall back to the engine's scale (door-width prior or the
+                # user's anchors), say so, and let the user type the real size
+                sc = self._scale(facts, facts_cache.sha256_file(ctx.abs_path))
+                if sc.px_per_m:
+                    res = query.execute_plan(plan.specs, plan.combine, facts, sc.px_per_m)
+                    po.scale = sc
+                    user = any(getattr(a, "kind", "") == "user" for a in sc.anchors)
+                    po.assumptions.append(Assumption(
+                        key="scale_px_per_m", value=round(sc.px_per_m, 3), unit="px/m",
+                        tag=Tag.chosen if user else Tag.defaulted,
+                        source="your measurement" if user else "typical door width (0.9 m) on this drawing"))
+                    if not user:
+                        notes.append("no printed scale: sizes assume typical 0.9 m doors; enter a real dimension to fix")
         except Exception as e:  # noqa: BLE001
             notes.append(f"planner failed: {type(e).__name__}: {e}")
             c = getattr(e, "cost", None)
@@ -490,6 +508,8 @@ class PipelineEngine:
         elif res.unit == "count":
             po.kind = "count"
         notes.append("answer computed by code from an LLM-drafted query_spec")
+        po.reliability_note = ("computed by a query the LLM drafted (shown below); no measured reliability for "
+                               "free-form questions yet: check the parts and the highlighted elements")
         for n in res.notes:
             notes.append(f"query: {n}")
         if res.groups:

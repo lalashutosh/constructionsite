@@ -141,6 +141,8 @@ class ProofObject(BaseModel):
     notes: list[str] = Field(default_factory=list)
     query_spec: Optional[dict[str, Any]] = None  # set when the LLM planner built the query: exactly what code computed
     refusal: Optional[str] = None
+    reliability: Optional[float] = None          # P(correct) from a calibrator trained on DEV answers (never the model's own confidence)
+    reliability_note: Optional[str] = None       # where that number comes from, in words
 
 
 class SheetFacts(BaseModel):
