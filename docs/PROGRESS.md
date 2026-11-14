@@ -1,7 +1,17 @@
 # Plumb: where we are
 
 Plain-language status. Updated after every milestone. Branch `p2-finish` on GitHub (`main` untouched).
-Last update: **17:45**
+Last update: **18:15**
+
+## 18:15 update: smarter, safer, multi-floor
+
+- **Harder questions are now answered or honestly declined:** room counts, wall length and volume, shares, comparisons. Questions about direction or distance get a clear **"cannot express yet"** instead of a guess.
+- **Fixed a wrong answer:** "how many rooms" no longer answers with the number of apartments.
+- **Printed measurements now set the scale:** the walls measure **10.39 m** against the **10.40 m** printed on the plan. The old door-based guess was **39% off**.
+- **Impossible measurements are refused:** if a size would make a typical room absurd, the app says so and suggests the unit that fits (for example, "if you meant 248 cm...").
+- **Old archival scans:** walls drawn as two thin parallel lines now build correctly, and furniture no longer turns into tall pillars.
+- **Sections and elevations are not floor plans:** a sheet that shows a section gets a plain note instead of made-up floor-plan counts (a church section used to report "1 kitchen").
+- **Whole folders work:** upload a project folder and it is understood as one building. **27 of 27 files were classified in 24 s for $0.10**, and only the floor plans become floors.
 
 ## 17:45 update: the new screen is in
 

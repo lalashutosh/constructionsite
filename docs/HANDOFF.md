@@ -1,5 +1,65 @@
 # Handoff — where the build stands and how to continue
 
+## UPDATE 2026-11-14 18:20 (interactive lead session, branch `p2-finish`) — read this first
+
+**Plain-language status:** `docs/PROGRESS.md` (newest on top). Branch `p2-finish` on GitHub; `main` untouched.
+
+### Run it (Mac)
+```
+.venv/bin/python -m uvicorn api.main:app --port 8000                      # LLM off
+LLM_PROVIDER=verda .venv/bin/python -m uvicorn api.main:app --port 8000   # planner + AI reviewers on
+cd web && VITE_API=live npm run dev                                       # http://localhost:5173
+.venv/bin/python -m pytest -q                                             # 164 passed
+```
+Machine setup that is NOT in git (redo on a new machine):
+- `weights/` (CubiCasa5k CNN, 209 MB): `weights/model_best_val_loss_var.pkl` from the authors' README link
+  (Google Drive id 1gRB7ez1e4H7a9Y09lLqRuna0luZO5VRK, via `gdown`), plus the source zip of github.com/CubiCasa/CubiCasa5k
+  unpacked to `weights/_src/CubiCasa5k-master`. Without it scans fall back to route B (0 doors/windows).
+- tesseract: a system one, or the micromamba conda-forge env at `cache/tools/tess-env` (engine/__init__.py finds it).
+- `.env`: `DATASET_ROOT` must point at the local `junction-dataset-preview`; Verda keys from the team.
+- Stale caches bite: delete `cache/raster`, `cache/pipeline`, `cache/geometry` after extractor changes.
+
+### Measured (DEV, holdout untouched)
+75.0% with siblings / 70.4% without (n=6,192; prior 37.3%). Swiss count 100% / area 97.7%, IFC area 99.8%,
+CubiCasa count ~64% (weakest: windows 27%, saunas below prior, doors/bedrooms overcount). Reports:
+`evalkit/out/*w2-dev*/report.md`; UI numbers via `scripts/make_claims.py` -> `web/public/claims.json`.
+
+### What exists now (committed)
+- Engine: vector `extract()` + credits; router (regex -> lexicon `engine/router_lexicon.yaml` -> n-gram -> LLM
+  classifier restricted per source -> planner); complex / kind-clash questions go to the planner; planner (thinking
+  off, 1 retry) with argmax/avg/ratio/difference/greater, wall elements for wall questions, 'unsupported' replies;
+  answers as sentences (`answer_text`) + calibrated `reliability` (additive contract fields); printed-dimension scale
+  (`engine/scale/printed_dims.py`: WxH opening labels, >= 2 must agree, tag specified); implausible user scale refused
+  (HTTP 422 + unit suggestion); scan check (`engine/scancheck.py`: 2 wall readers + 2 vision reviewers, consensus) ->
+  non-plan sheets refuse floor-plan questions; `engine/geometry3d.py` (CNN walls <= 1600 px, line-pair reader for
+  archival scans, furniture blobs dropped); build plan (`engine/plan/`, GET /api/plan); folder -> one building
+  (`engine/building.py`, POST /api/building: a reasoning model classifies every file; Sports Complex 27/27 in 24 s, $0.10).
+- Web: one-story UI (3D hero, sentence answers, Why? sheet, Set real size with payoff + unit picker, How it works
+  page, dark/light palettes, de-slop rules). See `docs/handoff/ui-redesign.md`.
+
+### In flight when paused (NOT committed / NOT finished)
+- Raster finetune agent: `engine/raster/extract.py`, `engine/raster/ocr.py` modified (bedrooms via MH labels, saunas,
+  door overcount, windows). Unverified: run the CubiCasa DEV eval before committing
+  (`.venv/bin/python -m evalkit.run --engine pipeline --split dev --sources cubicasa5k --no-siblings`; baseline 63.8%;
+  regression case colorful-2002 must give 2 bedrooms). See `docs/handoff/raster-finetune.md` if it was written.
+- UI agent: project file explorer for folder uploads (POST /api/building), only floor plans stacked, realistic
+  low-poly fixtures (toilet / sink / bath / door leaf + swing arc / window glass / stairs).
+- QA sweep (haiku) writing `docs/qa/hard-questions-sweep.md`.
+- CRACI CI: not written yet. Plan: `.github/workflows/ci.yml`, `runs-on: craci`, `cracicorp/setup@v1` with
+  `network: {}` (all presets, other egress denied -> complete SBOM), matrix amd64 (`image: ubuntu-24.04`) + arm64
+  (`image: craci-slim-arm`), size "4"; jobs: python tests (pip install -r requirements.txt; pytest; dataset tests skip
+  without the dataset), contract check, web typecheck + build. Needs the CRACI GitHub App installed on the repo.
+
+### Next (suggested order)
+1. Verify + commit the raster finetune (eval numbers), rerun full DEV and `scripts/make_claims.py`.
+2. Commit the UI explorer/fixtures round after typecheck + build.
+3. CRACI CI workflow. 4. G2 gate write-up in docs/STATUS.md. 5. P4 pre-ship (prompts/90, 40 step 4, MORNING.md).
+Human TODOs unchanged: verify `evalkit/hard_questions.jsonl` (0/10), holdout run, ship.
+
+---
+
+## Original handoff (13:30)
+
 Written 2026-11-14 13:30 when the build was paused (Claude usage limit). Everything below is committed.
 Read this file first, then `docs/STATE.md` (the live checklist) and `AGENTS.md` (project rules).
 

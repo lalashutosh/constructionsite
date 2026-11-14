@@ -87,7 +87,7 @@ def test_plugin_registers_resolver_and_voters():
     registry.reset()
 
 
-@pytest.mark.skipif(not os.environ.get("DATASET_ROOT") and not pathlib.Path(".env").exists(), reason="dataset not available")
+@pytest.mark.skipif(not __import__("evalkit.data", fromlist=["dataset_root"]).dataset_root().joinpath("questions.jsonl").exists(), reason="dataset not available")
 def test_real_dxf_and_ifc_round_trip():
     from evalkit.data import load_questions
     from engine.vector import plugin
