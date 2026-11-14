@@ -215,6 +215,12 @@ def lolo_accuracy() -> dict:
 
 
 # ----------------------------------------------------------------------------- layer 3: LLM templates
+def intents_for(source: str) -> list[str]:
+    """Measurable intents seen on this source in the labelled templates (all known intents if the source is new)."""
+    seen = sorted({i for _, i, s, _ in _label_rows() if s == source and kind_of(i) != "text"})
+    return seen or known_intents()
+
+
 class TemplateClassifier:
     """One LLM call per DISTINCT normalised template; the answer is cached on disk. `calls` counts real calls."""
 
@@ -226,15 +232,16 @@ class TemplateClassifier:
         except Exception:  # noqa: BLE001
             self.cache = {}
 
-    def classify(self, question: str, cost: Cost) -> Optional[str]:
-        key = normalise(question)
+    def classify(self, question: str, cost: Cost, source: str = "") -> Optional[str]:
+        key = f"{source}|{normalise(question)}"       # same words can mean different things on different drawings
         with self._lock:
             if key in self.cache:
                 return self.cache[key] or None
-            names = known_intents()
+            names = intents_for(source)               # only types this kind of drawing actually has
             reply = self.llm.complete(
                 "Classify the architectural-drawing question into exactly one intent name from the list, "
-                "or 'unknown'. Reply with the name only.",
+                "or 'unknown'. Answer 'unknown' unless the question asks exactly what that intent counts or "
+                "measures (e.g. 'how many rooms' is NOT 'apartments'). Reply with the name only.",
                 f"Intents: {', '.join(names)}\nQuestion: {question}", max_tokens=12)
             self.calls += 1
             cost.llm_calls += 1
@@ -258,7 +265,9 @@ class TemplateClassifier:
 # apartment B" is not apartment B's net area), so it goes to the planner (or abstains when the LLM is off).
 COMPLEX = re.compile(
     r"\b(average|mean|median|per\s+(room|apartment|floor)|each|which|largest|biggest|smallest|widest|longest|"
+    r"facing|front|back\s+of|north|south|east|west|left|right|next\s+to|near(est)?|beside|opposite|adjacent|"
     r"more\s+(\w+\s+)?than|fewer\s+(\w+\s+)?than|less\s+(\w+\s+)?than|compared?|minus|difference|ratio|percent|%|"
+    r"share|proportion|fraction|how\s+much\s+of|"
     r"contain(s|ing)?|with\s+(a|an|no|at\s+least)|without\s+(a|an|any)|that\s+have|ha(ve|s)\s+(no|a|an|at\s+least|more|fewer)|"
     r"and\s+(the\s+)?\w+\s+(in\s+total|together|combined)|in\s+total|combined|"
     r"durchschnitt|welche[rs]?|größte|grösste|mehr\s+als|moyenne|quel(le)?s?|plus\s+grand|plus\s+de|"
@@ -310,7 +319,9 @@ def route(question: str, path: str, *, classifier: Optional[TemplateClassifier] 
         return Route(kw_name, _params_from_quotes(kw_name, question), kind_of(kw_name), r.lang, "lexicon")
     if classifier is not None:
         cost = Cost()
-        name = classifier.classify(question, cost)
+        name = classifier.classify(question, cost, _src(path))
+        if name and cue is not None and cue != kind_of(name):
+            name = None                                  # e.g. an AREA question mapped onto a COUNT type
         if name:
             return Route(name, _params_from_quotes(name, question), kind_of(name), r.lang, "llm", cost)
         return Route("unknown", {}, "count", r.lang, "none", cost)

@@ -16,6 +16,7 @@ def execute_plan(specs: list[dict], combine: str, facts, px_per_m: Optional[floa
     out = Result(unit=results[0].unit)
     out.evidence_ids = [i for r in results for i in r.evidence_ids]
     out.rule_applied = [x for r in results for x in r.rule_applied]
+    out.notes = [n for r in results for n in r.notes]
     out.needs_scale = any(r.needs_scale for r in results)
     vals = [r.value for r in results]
     out.groups = {f"part{i + 1}": r.value for i, r in enumerate(results)}

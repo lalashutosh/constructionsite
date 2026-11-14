@@ -11,6 +11,7 @@ import logging
 import os
 import pathlib
 import statistics
+import re
 import time
 from typing import Any, Callable, Optional
 
@@ -299,7 +300,7 @@ class PipelineEngine:
                                                      tag=Tag.defaulted, source="dev-median prior"))
                 tier = Tier.amber
             else:
-                return self._grey(po, "no extractor could answer this question from the drawing")
+                return self._grey(po, po.refusal or "no reader or query could answer this question from the drawing")
         if capped and tier == Tier.green:
             tier = Tier.amber
 
@@ -365,6 +366,47 @@ class PipelineEngine:
         return po
 
     # ------------------------------------------------------------------ helpers
+    def _with_walls(self, facts: SheetFacts, ctx, po: ProofObject, notes: list[str]) -> SheetFacts:
+        """Scans carry no wall elements; for wall questions add the CNN wall pieces (same walls as the 3D view) with
+        footprint area, centre-line length and volume through the drawing scale and a style ceiling height."""
+        try:
+            import cv2
+            from shapely.geometry import Polygon
+            from engine import geometry3d
+            from engine.decide.vibe import load_vibe
+            img = cv2.imread(ctx.abs_path, cv2.IMREAD_COLOR)
+            got = geometry3d.cnn_walls(img) if img is not None else None
+            if not got or not got[0]:
+                return facts
+            sc = self._scale(facts, facts_cache.sha256_file(ctx.abs_path))
+            px = sc.px_per_m
+            h = float(load_vibe("standard")["ceiling_height_m"]["value"])
+            els = list(facts.elements)
+            for i, wl in enumerate(got[0]):
+                g = Polygon(wl["outer"], wl["holes"]).buffer(0)
+                if g.area <= 0:
+                    continue
+                attrs = {"area_px": round(g.area, 1)}
+                if px:
+                    a_m2 = g.area / px ** 2
+                    # centre-line length of a band of walls ~ area / mean thickness (thickness from the outline)
+                    thick = max(1e-6, 2 * g.area / max(g.length, 1e-6))
+                    length_m = (g.area / thick) / px
+                    attrs.update(area_m2=round(a_m2, 3), length_m=round(length_m, 2), volume_m3=round(a_m2 * h, 3))
+                els.append(Element(id=f"wall_{i}", kind="wall", polygon=[tuple(p) for p in wl["outer"]], attrs=attrs))
+            if px:
+                user = any(getattr(a, "kind", "") == "user" for a in sc.anchors)
+                po.assumptions.append(Assumption(key="scale_px_per_m", value=round(px, 3), unit="px/m",
+                                                 tag=Tag.chosen if user else Tag.defaulted,
+                                                 source="your measurement" if user else "typical door width (0.9 m) on this drawing"))
+                po.assumptions.append(Assumption(key="wall_height_m", value=h, unit="m", tag=Tag.defaulted,
+                                                 source="standard style ceiling height"))
+            notes.append(f"walls: {len(got[0])} wall pieces from the 3D wall reader added for this question")
+            return facts.model_copy(update={"elements": els})
+        except Exception as e:  # noqa: BLE001
+            notes.append(f"walls unavailable: {type(e).__name__}")
+            return facts
+
     def _apply_overrides(self, results: list, sha: str, intent: str, po: ProofObject, notes: list[str]) -> None:
         """A user verdict ("this IS / is NOT a door") corrects every voter's element set: a voter that lacks a
         confirmed element gains it, a voter that has a rejected one loses it (match: IoU >= 0.3). Values change by
@@ -477,6 +519,9 @@ class PipelineEngine:
         from engine.registry import VoterResult
 
         cost = Cost()
+        if re.search(r"\bwall|partition|seinä|wand|mur\b|parete", question, re.I) and \
+                not any(e.kind == "wall" for e in facts.elements) and "vector" not in facts.extras:
+            facts = self._with_walls(facts, ctx, po, notes)
         try:
             plan = planner.plan(question, facts, self.llm)
             cost = plan.cost
@@ -498,6 +543,9 @@ class PipelineEngine:
                         notes.append("no printed scale: sizes assume typical 0.9 m doors; enter a real dimension to fix")
         except Exception as e:  # noqa: BLE001
             notes.append(f"planner failed: {type(e).__name__}: {e}")
+            m = re.search(r"unsupported: (.+)", str(e))
+            if m:
+                po.refusal = f"this question needs something the query engine cannot express yet ({m.group(1)})"
             c = getattr(e, "cost", None)
             if c is not None:  # LLM was called but the spec was rejected: account the call, no planner answer
                 po.cost = Cost(**{**po.cost.model_dump(), "llm_calls": c.llm_calls, "tokens_in": c.tokens_in,
@@ -508,9 +556,14 @@ class PipelineEngine:
         po.query_spec = plan.specs[0] if len(plan.specs) == 1 else {"parts": plan.specs, "combine": plan.combine}
         if res.value is None or isinstance(res.value, list):
             notes.append("planner spec ran but produced no scalar (needs scale or list answer)")
+            miss = next((n.split(": ", 1)[1] for n in res.notes if n.startswith("no matching elements")), None)
+            if miss:
+                po.refusal = miss                    # e.g. "no bathroom recognised on this drawing"
             return [], cost
         by = {e.id: e for e in facts.elements}
-        if po.kind not in ("area", "length", "volume") and res.unit in ("m2", "m", "m3"):
+        if res.unit == "ratio":
+            po.kind = "other"                       # a share/ratio: keep the fraction, never round to a count
+        elif po.kind not in ("area", "length", "volume") and res.unit in ("m2", "m", "m3"):
             po.kind = {"m2": "area", "m": "length", "m3": "volume"}[res.unit]
         elif res.unit == "count":
             po.kind = "count"

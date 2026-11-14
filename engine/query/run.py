@@ -211,10 +211,14 @@ def _agg(els: list[Element], spec: dict, facts: SheetFacts, px_per_m, res: Resul
         else:
             raw = e.attrs.get(spec["attr"])
             v = float(raw) if isinstance(raw, (int, float)) else None
+            if v is None:
+                res.notes.append(f"'{spec['attr']}' is not known for {e.kind} elements")
         if v is None:
             res.needs_scale = True
             continue
         vals.append(v)
+    if not vals and els:
+        return None                     # elements exist but none had the measure: unknown, not zero
     if agg == "max_area":
         return max(vals) if vals else 0.0
     if agg == "avg_area":
@@ -237,6 +241,12 @@ def run(spec: dict, facts: SheetFacts, px_per_m: Optional[float] = None) -> Resu
         if note:
             res.notes.append(note)
     res.evidence_ids = [e.id for e in els]
+    if not els and spec["aggregate"] not in ("count", "list"):
+        w = spec.get("where") or {}
+        what = w.get("room_type") or w.get("subtype") or w.get("label") or spec.get("select")
+        res.notes.append(f"no matching elements: no {what} recognised on this drawing")
+        res.value = None                          # a sum over nothing is 'not found', not a confident 0
+        return res
     if spec["aggregate"] in ("argmax_area", "argmin_area"):
         scored = [(a, e) for e in els if (a := _area_m2(e, px_per_m)) is not None]
         unit_word = "m2"

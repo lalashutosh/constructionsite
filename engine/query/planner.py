@@ -17,7 +17,12 @@ SYSTEM = (
     "Reply with JSON only: either one spec object or {\"parts\": [spec, ...], \"combine\": \"sum\"|\"list\"|\"difference\"|\"ratio\"|\"greater\"|\"less\"} for multi-part "
     "questions (greater/less = is part1 more/fewer than part2: use for yes/no comparisons like 'more windows than "
     "doors?'; difference/ratio = part1 minus/over part2 for 'how many more'). "
-    "Use aggregate argmax_area/argmin_area for 'which room is largest/smallest', avg_area for averages. "
+    "For 'what share / percentage / fraction of X is Y' use two parts with combine ratio (part1 = Y, part2 = X, "
+    "e.g. sum_area of bathrooms over sum_area of all rooms). "
+    "Use aggregate argmax_area/argmin_area for 'which room is largest/smallest', avg_area for averages; for sum_attr "
+    "use an attr listed under numeric_attrs for that kind (e.g. volume_m3). If the question needs something the schema "
+    "cannot express (direction, facing, orientation, adjacency to the entrance, cost, time), reply "
+    "{\"unsupported\": \"<short reason>\"} instead of a spec. "
     "NEVER include a numeric answer; only describe what to select. Use only the allowed keys, element kinds, room types and rules."
 )
 
@@ -42,6 +47,10 @@ def drawing_vocabulary(facts: SheetFacts) -> dict:
         "element_kinds": sorted({e.kind for e in facts.elements}),
         "room_types": sorted({e.subtype for e in facts.elements if e.kind == "room" and e.subtype}),
         "storeys": sorted({str(e.attrs["storey"]) for e in facts.elements if "storey" in e.attrs}),
+        # numeric attributes per kind, so sum_attr names a real one (walls: volume_m3, length_m, area_m2 ...)
+        "numeric_attrs": {k: sorted({a for e in facts.elements if e.kind == k for a, v in e.attrs.items()
+                                     if isinstance(v, (int, float)) and not isinstance(v, bool)})
+                          for k in sorted({e.kind for e in facts.elements})},
         "rules": sorted(R.RULES),
     }
 
@@ -64,6 +73,8 @@ def plan(question: str, facts: SheetFacts, llm: LLM) -> Plan:
                     usd=cost.usd + reply.usd, llm_calls=2, planner_calls=1)
     try:
         obj = _parse_json(reply.text)
+        if "unsupported" in obj:
+            raise SpecError(f"unsupported: {str(obj['unsupported'])[:120]}")
         if "parts" in obj:
             if obj.get("combine", "sum") not in ("sum", "list", "difference", "ratio", "greater", "less"):
                 raise SpecError("unknown combine")

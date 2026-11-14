@@ -60,6 +60,16 @@ def sentence(po) -> Optional[str]:
         if len(parts) >= 2 and len(names) == 2:
             return f"{v}: {parts[0].strip()} {names[0]} vs {parts[1].strip()} {names[1]}."
         return f"{v}."
+    if spec and "parts" in spec and spec.get("combine") == "ratio" and isinstance(v, (int, float)):
+        a, b = (_what(spec["parts"][0])[1], _what(spec["parts"][1])[1])
+        return f"The {a} are {float(v) * 100:.1f}% of the {b}" + (" (by area)." if spec["parts"][0].get("aggregate") == "sum_area" else ".")
+    if spec and "parts" in spec and spec.get("combine") == "difference" and isinstance(v, (int, float)):
+        a, b = (_what(spec["parts"][0])[1], _what(spec["parts"][1])[1])
+        n = abs(int(v)) if float(v).is_integer() else abs(v)
+        if n == 0:
+            return f"There are as many {a} as {b}."
+        word = _what(spec["parts"][0])[0] if n == 1 else a
+        return f"There {'is' if n == 1 else 'are'} {n} {'more' if v > 0 else 'fewer'} {word} than {b}."
     if spec and spec.get("aggregate") in ("argmax_area", "argmin_area"):
         sing, _ = _what(spec)
         which = "largest" if spec["aggregate"] == "argmax_area" else "smallest"
