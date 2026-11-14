@@ -255,7 +255,10 @@ def footprints(img: np.ndarray, prof: dict, words: list[dict]) -> list[Element]:
         if found is None:
             continue
         lab, i, src = found
-        pts = cv2.findNonZero((lab == i).astype(np.uint8))
+        # the building is every sizeable piece of the view, not only the biggest: wings of a T/L-shaped plan are often
+        # joined by a thin corridor that breaks the wall network into several components
+        keep = [k for k in range(1, n) if st[k][4] >= 0.15 * st[i][4]] or [i]   # n, st: the mask `found` came from
+        pts = cv2.findNonZero(np.isin(lab, keep).astype(np.uint8))
         (cx, cy), (rw, rh), ang = cv2.minAreaRect(pts)
         poly = [(float(x / s + box[0]), float(y / s + box[1])) for x, y in cv2.boxPoints(((cx, cy), (rw, rh), ang))]
         out.append(Element(id=f"footprint_{vi}", kind="footprint", subtype="wall_network_outline", polygon=poly,
