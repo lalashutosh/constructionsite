@@ -16,6 +16,11 @@ Live log: https://github.com/lalashutosh/constructionsite/issues/1 (read the lat
 - Test suite fully green: 172 passed, 3 skipped. The 2 failures listed below were stale gitignored `cache/raster` facts;
   clear `cache/raster` + `cache/pipeline` after any raster change.
 
+**Also fixed (later commit):** bathrooms found by their fixtures (a room with a toilet is a bathroom even if the
+reader tagged it 'S'); Swiss PDFs/PNGs with a same-stem .dxf are built in 3D from the DXF entities (0.8 s, exact);
+CAD/BIM answers no longer get the door-guess scale note. UI tweak left: hide/relabel "Set real size" for exact CAD
+files ("Sizes from the CAD file") — `web/src/panels.tsx` scalecta.
+
 **Still open:**
 1. Bug #1 below (archival walls): the fix is on branch `wip/archival-walls`, which was NOT pushed (not on GitHub);
    push it from Ashutosh's machine (`git push origin wip/archival-walls`) before anyone can verify/merge it.
