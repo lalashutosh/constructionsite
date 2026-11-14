@@ -83,6 +83,9 @@ def sentence(po) -> Optional[str]:
             return f"There are as many {a} as {b}."
         word = _what(spec["parts"][0])[0] if n == 1 else a
         return f"There {'is' if n == 1 else 'are'} {n} {'more' if v > 0 else 'fewer'} {word} than {b}."
+    if spec and spec.get("aggregate") == "each_area" and isinstance(v, str):
+        items = [x.strip() for x in v.split(";") if x.strip()]
+        return ("; ".join(x[0].upper() + x[1:] for x in items) + ".") if items else None
     if spec and spec.get("aggregate") in ("argmax_area", "argmin_area"):
         sing, _ = _what(spec)
         which = "largest" if spec["aggregate"] == "argmax_area" else "smallest"

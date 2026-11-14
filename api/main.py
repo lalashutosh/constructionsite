@@ -382,7 +382,7 @@ def _reviewers():
     out = []
     for kind in ("fast", "strong"):
         r = L.VerdaLLM(L.provider(), kind)
-        r.no_think = True
+        r.no_think = kind == "fast"          # the strong reviewer THINKS (a build costs well under a cent; worth it)
         out.append(r)
     return out
 

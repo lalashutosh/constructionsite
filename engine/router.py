@@ -288,6 +288,17 @@ def is_complex(q: str) -> bool:
     return bool(COMPLEX.search(unicodedata.normalize("NFKC", q))) and not _known_template(q)
 
 
+# a COUNT answer only for wording that asks to count; "size of both bedrooms" mentions bedrooms but is not a count
+COUNT_CUE = re.compile(
+    r"\b(how\s+many|number\s+of|count|counts|is\s+there|are\s+there|any|total\s+number|quantity|"
+    r"montako|kuinka\s+monta|onko|wie\s+viele|anzahl|gibt\s+es|combien|nombre\s+de|y\s+a-t-il|quant[ie]|ci\s+sono|"
+    r"hur\s+många|hvor\s+mange)\b", re.I)
+
+
+def _not_a_count(question: str, name: str) -> bool:
+    return kind_of(name) == "count" and not COUNT_CUE.search(question) and not _known_template(question)
+
+
 # ----------------------------------------------------------------------------- public
 def route(question: str, path: str, *, classifier: Optional[TemplateClassifier] = None) -> Route:
     from evalkit import intents as I
@@ -297,6 +308,8 @@ def route(question: str, path: str, *, classifier: Optional[TemplateClassifier] 
     cue = lex.explicit_kind(normalise(question)) if lex is not None else None
     kind_clash = (r.name != "unknown" and cue is not None and cue != kind_of(r.name)
                   and not _known_template(question))      # "total AREA of bedrooms" is not the bedroom COUNT
+    if r.name != "unknown" and _not_a_count(question, r.name):
+        kind_clash = True
     if is_complex(question) or kind_clash:
         if classifier is not None:
             return Route("unknown", {}, "count", r.lang, "complex")      # planner drafts a query for it
@@ -314,9 +327,12 @@ def route(question: str, path: str, *, classifier: Optional[TemplateClassifier] 
         name, sim = idx.nearest(norm, _src(path))
         cue = lex.explicit_kind(norm) if lex is not None else None
         kind_ok = cue is None or cue == kind_of(name)  # "area of the kitchen" is not the kitchen count
-        if sim >= NGRAM_THRESHOLD and kind_ok and (kw_name is None or kw_name == name):
+        if sim >= NGRAM_THRESHOLD and kind_ok and (kw_name is None or kw_name == name) and \
+                not (classifier is not None and _not_a_count(question, name)):
             params = _params_from_quotes(name, question)
             return Route(name, params, kind_of(name), r.lang, "ngram")
+    if kw_name is not None and classifier is not None and _not_a_count(question, kw_name):
+        return Route("unknown", {}, "count", r.lang, "complex")       # mentions a room type, asks something else
     if kw_name is not None:
         return Route(kw_name, _params_from_quotes(kw_name, question), kind_of(kw_name), r.lang, "lexicon")
     if classifier is not None:

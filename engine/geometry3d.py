@@ -169,7 +169,34 @@ def model(img: np.ndarray, facts: Optional[Any] = None, coords: str = "pixels", 
                 out["windows"].append(_el(e))
             elif e.kind not in ("label", "floor_blob"):
                 out["fixtures"].append(_el(e))
+    if coords == "pixels":
+        try:                                   # stair flights from tread lines; never breaks the 3D
+            from engine.raster import stairs as _stairs
+            for k, f in enumerate(_stairs.detect(img, walls=None)):
+                out["fixtures"].append({"id": f"stairs-{k}", "kind": "stairs", "subtype": None,
+                                        "label": f"stairs ({f['attrs']['treads']} treads)",
+                                        "polygon": f["polygon"], "conf": f["conf"], "attrs": f["attrs"]})
+        except Exception:
+            pass
     return out
+
+
+def _drop_stairs_in_walls(out: dict, shape) -> None:
+    """Hatching inside thick walls looks like treads: a 'flight' that lies mostly inside the chosen walls is not one."""
+    st = [f for f in out["fixtures"] if f.get("kind") == "stairs"]
+    if not st or not out.get("walls"):
+        return
+    m = np.zeros(shape[:2], np.uint8)
+    for wl in out["walls"]:
+        cv2.fillPoly(m, [np.array(wl["outer"], np.int32)], 1)
+    keep_ids = set()
+    for f in st:
+        b = np.zeros(shape[:2], np.uint8)
+        cv2.fillPoly(b, [np.array(f["polygon"], np.int32)], 1)
+        area = int(b.sum())
+        if area and (b & m).sum() / area < 0.4:
+            keep_ids.add(f["id"])
+    out["fixtures"] = [f for f in out["fixtures"] if f.get("kind") != "stairs" or f["id"] in keep_ids]
 
 
 def _trace_full(img: np.ndarray) -> tuple[list, str]:
@@ -195,7 +222,8 @@ def _checked(img, facts, coords, use_cnn, llm) -> dict:
     aud = None
     try:                                                    # AI audit of the built rooms; code verifies each action
         from engine import room_audit
-        aud = room_audit.audit(img, out["rooms"], llm if isinstance(llm, (list, tuple)) else [llm])
+        aud = room_audit.audit(img, out["rooms"], llm if isinstance(llm, (list, tuple)) else [llm],
+                               stairs=[f for f in out["fixtures"] if f.get("kind") == "stairs"])
         if aud["drop"] or aud["add"]:
             out["rooms"] = [r for r in out["rooms"] if r["id"] not in set(aud["drop"])] + aud["add"]
     except Exception:  # noqa: BLE001  (the audit is optional)
@@ -203,10 +231,13 @@ def _checked(img, facts, coords, use_cnn, llm) -> dict:
     chk = scancheck.check(img, wa, wb, _LAST_ROOMS, llm, cuts=(aud or {}).get("cuts"),
                           plan_labels=(aud or {}).get("plan_labels"))
     if aud:
-        chk["audit"] = {k: aud[k] for k in ("used", "answered", "cost_usd", "drop", "actions", "issues")}
+        chk["audit"] = {k: aud[k] for k in ("used", "answered", "cost_usd", "drop", "actions", "issues", "drop_stairs")}
         chk["audit"]["added"] = [r["id"] for r in aud["add"]]
         chk["warnings"] += [f"AI audit: {a}" for a in aud["actions"]]
     out["walls"] = chk.pop("walls")
+    _drop_stairs_in_walls(out, img.shape)
+    if aud and aud.get("drop_stairs"):
+        out["fixtures"] = [f for f in out["fixtures"] if f.get("id") not in set(aud["drop_stairs"])]
     out["wall_note"] = "walls chosen per view by the scan check (two readers + reviewer)"
     out["check"] = chk
     return out

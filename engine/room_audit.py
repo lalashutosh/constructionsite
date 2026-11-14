@@ -30,16 +30,19 @@ SYSTEM = (
     '"plans": <how many separate floor plans are drawn on this sheet>, '
     '"cuts": [{{"axis": "x"|"y", "at": <0-100 %, the empty strip between two plans>}}], '
     '"plan_labels": ["<floor title of each plan in left-to-right / top-to-bottom order, e.g. 1. kerros>"], '
+    '"stairs": [{{"id": "S1", "real": true|false}}], '
     '"issues": ["<= 12 words each: anything clearly wrong with the shapes>"]}}. '
-    "real=false ONLY when the shape sits on text, a title block, legend, logo, scale bar, dimension lines or empty "
+    "Boxes marked S1, S2 ... are where the machine thinks a STAIRCASE is: real=false if it is wall hatching, a radiator, "
+    "a sauna bench, text or anything that is not a stair. "
+    "For rooms, real=false ONLY when the shape sits on text, a title block, legend, logo, scale bar, dimension lines or empty "
     "paper outside the building. Balconies and terraces (PARVEKE, TERASSI) are real. Room labels may be Nordic "
     "abbreviations: {gloss}. Never count or measure anything."
 )
 
 
-def _overlay(img: np.ndarray, rooms: list[dict]) -> tuple[bytes, float]:
+def _overlay(img: np.ndarray, rooms: list[dict], stairs: list[dict] | None = None) -> tuple[bytes, float]:
     h, w = img.shape[:2]
-    s = min(1.0, 1400.0 / max(h, w))
+    s = min(1.0, 1800.0 / max(h, w))
     canvas = cv2.resize(img, (int(w * s), int(h * s))) if s < 1 else img.copy()
     over = canvas.copy()
     rng = np.random.default_rng(7)
@@ -54,6 +57,12 @@ def _overlay(img: np.ndarray, rooms: list[dict]) -> tuple[bytes, float]:
         cx, cy = int(P[:, 0].mean()), int(P[:, 1].mean())
         cv2.putText(canvas, str(i), (cx - 10, cy + 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 255), 5)
         cv2.putText(canvas, str(i), (cx - 10, cy + 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 180), 2)
+    for i, f in enumerate(stairs or [], 1):
+        P = (np.array(f["polygon"]) * s).astype(np.int32)
+        cv2.polylines(canvas, [P], True, (200, 0, 200), 3)
+        x, y = int(P[:, 0].min()), int(P[:, 1].min()) - 6
+        cv2.putText(canvas, f"S{i}", (x, max(14, y)), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 5)
+        cv2.putText(canvas, f"S{i}", (x, max(14, y)), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (200, 0, 200), 2)
     return cv2.imencode(".png", canvas)[1].tobytes(), s
 
 
@@ -105,22 +114,23 @@ def _flood_region(img: np.ndarray, x: float, y: float) -> Optional[list[list[flo
     return [[float(p[0][0]), float(p[0][1])] for p in c] if len(c) >= 3 else None
 
 
-def audit(img: np.ndarray, rooms: list[dict], llms: list) -> dict:
+def audit(img: np.ndarray, rooms: list[dict], llms: list, stairs: list[dict] | None = None) -> dict:
     """Returns {"used", "cost_usd", "drop": [room ids], "add": [room dicts], "cuts": [{axis, at(0-1)}],
     "plan_labels", "issues", "actions"}. `rooms` are geometry room dicts (id, subtype, label, polygon)."""
     from engine import label_reader as LR
-    out = {"used": False, "cost_usd": 0.0, "drop": [], "add": [], "cuts": [], "plan_labels": [], "issues": [],
+    out = {"used": False, "cost_usd": 0.0, "drop": [], "drop_stairs": [], "add": [], "cuts": [], "plan_labels": [], "issues": [],
            "actions": [], "answered": 0}
     llms = [L for L in (llms or []) if L is not None and hasattr(L, "complete_vision")]
     if not llms:
         return out
     rooms = [r for r in rooms if len(r.get("polygon") or []) >= 3]
-    png, _ = _overlay(img, rooms)
+    stairs = stairs or []
+    png, _ = _overlay(img, rooms, stairs)
     sys = SYSTEM.format(gloss=LR.glossary_text(40))
     got = []
     for L in llms:
         try:
-            r = L.complete_vision(sys, f"{len(rooms)} numbered rooms.", png, max_tokens=1800)
+            r = L.complete_vision(sys, f"{len(rooms)} numbered rooms.", png, max_tokens=1800 if getattr(L, "no_think", True) else 9000)
             out["cost_usd"] += r.usd
             out["used"] = True
             p = _parse(r.text)
@@ -142,6 +152,14 @@ def audit(img: np.ndarray, rooms: list[dict], llms: list) -> dict:
                 why = "; ".join(str(v.get("why", "")) for v in vs if v.get("why"))
                 out["drop"].append(r["id"])
                 out["actions"].append(f"removed room {i} ({r.get('subtype') or 'room'}): both reviewers: {why}")
+    # 1b. stair flights both reviewers reject (hatching, radiators, benches look like treads)
+    if len(got) >= 2 and stairs:
+        sv = [{str(x.get("id", "")).upper(): x for x in (g.get("stairs") or []) if isinstance(x, dict)} for g in got]
+        for i, f in enumerate(stairs, 1):
+            vs = [v.get(f"S{i}") for v in sv]
+            if all(v is not None and v.get("real") is False for v in vs):
+                out["drop_stairs"].append(f["id"])
+                out["actions"].append(f"removed stairs S{i}: both reviewers say it is not a staircase")
     # 2. printed labels that no room covers -> a closed region at that point, if the label is a room word
     from shapely.geometry import Point, Polygon
     polys = []

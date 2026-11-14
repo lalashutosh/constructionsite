@@ -135,7 +135,7 @@ def _in_box(wl: dict, box) -> bool:
 
 def _review_image(img, vs, wa, wb) -> bytes:
     h, w = img.shape[:2]
-    s = min(1.0, 1400.0 / max(h, w))
+    s = min(1.0, 1800.0 / max(h, w))
     canvas = cv2.resize(img, (int(w * s), int(h * s))) if s < 1 else img.copy()
     over = canvas.copy()
     for walls, col in ((wa, (230, 120, 30)), (wb, (30, 140, 255))):        # A blue, B orange (BGR)
@@ -203,7 +203,8 @@ def check(img: np.ndarray, walls_cnn: Optional[list], walls_trace: list, rooms_c
         png = _review_image(img, vs, wa, wb)
         for L in llms:                       # independent reviewers, same picture, same fixed form
             try:
-                r = L.complete_vision(REVIEW_SYSTEM, f"There are {len(vs)} numbered views.", png, max_tokens=700)
+                r = L.complete_vision(REVIEW_SYSTEM, f"There are {len(vs)} numbered views.", png,
+                                      max_tokens=700 if getattr(L, "no_think", True) else 8000)
                 cost += r.usd
                 used = True
                 p = _parse(r.text)

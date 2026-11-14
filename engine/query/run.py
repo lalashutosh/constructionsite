@@ -307,7 +307,7 @@ def run(spec: dict, facts: SheetFacts, px_per_m: Optional[float] = None) -> Resu
     rules = list(spec.get("rules") or [])
     els = select(spec, facts)
     unit = {"sum_area": "m2", "max_area": "m2", "avg_area": "m2", "sum_length": "m",
-            "argmax_area": "label", "argmin_area": "label", "argmax_group": "label",
+            "argmax_area": "label", "argmin_area": "label", "argmax_group": "label", "each_area": "label",
             "argmin_group": "label"}.get(spec["aggregate"], "count")
     if spec["aggregate"] == "sum_attr":
         unit = next((u for suf, u in (("_m3", "m3"), ("_m2", "m2"), ("_m", "m")) if spec["attr"].endswith(suf)), "count")
@@ -326,6 +326,18 @@ def run(spec: dict, facts: SheetFacts, px_per_m: Optional[float] = None) -> Resu
         what = w.get("room_type") or w.get("subtype") or w.get("label") or spec.get("select")
         res.notes.append(f"no matching elements: no {what} recognised on this drawing")
         res.value = None                          # a sum over nothing is 'not found', not a confident 0
+        return res
+    if spec["aggregate"] == "each_area":                 # "size of both bedrooms respectively"
+        scored = [(a, e) for e in els if (a := _area_m2(e, px_per_m)) is not None]
+        if not scored:
+            res.needs_scale = bool(els)
+            return res
+        scored.sort(key=lambda t: -t[0])
+        res.value = "; ".join(f"{describe_room(e, [x for _, x in scored], facts)}: {a:.1f} m²" for a, e in scored)
+        res.unit = "label"
+        res.groups = {e.id: round(a, 2) for a, e in scored}
+        res.evidence_ids = [e.id for _, e in scored]
+        res.notes.append(f"{len(scored)} rooms, each measured separately")
         return res
     if spec["aggregate"] in ("argmax_area", "argmin_area"):
         scored = [(a, e) for e in els if (a := _area_m2(e, px_per_m)) is not None]

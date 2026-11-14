@@ -95,9 +95,10 @@
     "argmin_area",
     "avg_area",
     "argmax_group",
-    "argmin_group"
+    "argmin_group",
+    "each_area"
    ],
-   "description": "argmax_area/argmin_area answer WHICH element (its label) is largest/smallest; avg_area is the mean area; argmax_group/argmin_group need group_by and answer WHICH group has the most/fewest selected elements"
+   "description": "argmax_area/argmin_area answer WHICH element (its label) is largest/smallest; avg_area is the mean area; argmax_group/argmin_group need group_by and answer WHICH group has the most/fewest selected elements; each_area lists every selected room with its own area ('size of each/both bedrooms', 'respectively')"
   },
   "attr": {
    "type": "string",
