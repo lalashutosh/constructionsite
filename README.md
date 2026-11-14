@@ -39,13 +39,11 @@ that a hosted runner can't:
 - **Native amd64 and arm64.** The Python suite runs twice in a matrix: `image: ubuntu-24.04` (amd64) and
   `image: craci-slim-arm` (native arm64, no QEMU). Plumb ships to laptops on both architectures (most judges' Macs are
   arm64), so both run the full suite on real hardware.
-- **Locked egress on every job → complete SBOMs.** Each job starts with `cracicorp/setup@v1` and `network: {}`: all
-  built-in package sources (PyPI, npm, GitHub) are allowed and recorded, everything else is blocked. CRACI generates the
-  SBOM from the packages it sees each job download, and with unmatched traffic blocked the SBOM is complete: we know
-  every dependency that went into each build.
-- **We prove the lock instead of trusting it.** The `egress-proof` job reaches PyPI (must work) and then tries
-  `example.com` from inside the locked runner. If that request succeeds, the build fails. A compromised dependency can't
-  quietly send our source or keys anywhere.
+- **Network policy on every job, and we test it instead of trusting it.** Each job starts with `cracicorp/setup@v1`
+  and a `network` policy (package presets only). The `egress-proof` job reaches PyPI (must work) and then tries
+  `example.com` from inside the runner; if that succeeds the job fails. **What it found:** with both `network: {}`
+  and `default: deny`, example.com was still reachable on our project (runs on 2026-11-14), so the lock is not in
+  force for us yet and that job is red. We report it rather than claim a lock we could not verify.
 - **The real API boots on CRACI and replays our security bugs.** `api-smoke` starts the FastAPI server on a runner and
   replays the attacks our stress test found: `/etc/passwd`, `../../etc/passwd` and `/proc/self/environ` must all come
   back as 400 (one of them used to be read). A security fix we found once stays fixed.
@@ -55,8 +53,8 @@ that a hosted runner can't:
   tesseract or LLM keys skips cleanly, so CI runs with no secrets at all (nothing to leak through a dependency).
 - **Artifacts.** The production web build (`web/dist`) is uploaded from every green run.
 
-A job summary on each run records: tests on amd64 and arm64, egress locked to package presets (complete SBOM), the
-lock verified from inside the runner, and the API refusing path-traversal reads.
+A job summary on each run records: tests on amd64 and arm64, the egress test result, and the API refusing
+path-traversal reads.
 
 ## Run it
 
