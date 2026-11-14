@@ -1,0 +1,44 @@
+# Sheet-level question intents that apply to ANY drawing (data, not code). Checked only for questions that are not a
+# known dataset template. First match wins. `kind` = what the answer is. `specific` nouns (a named room type) make the
+# question a typed one ("total area of the bedrooms"), which goes on to the normal router / planner instead.
+specific: >-
+  bedroom|kitchen|bath|toilet|wc\b|living|sauna|balcon|hall|corridor|dorm|office|stair|garage|storage|closet|wardrobe|
+  makuuhuone|keitti|kylpy|vessa|olohuone|parveke|eteinen|sauna|sovrum|\bk[oö]k(et)?\b|badrum|vardagsrum|balkong|magamis|k[oö]ök|vannituba|
+  schlafzimmer|k[uü]che|badezimmer|wohnzimmer|balkon|flur|apartment|flat|wohnung|asunto|bostad|korter|floor\s+\d|storey\s+\d
+intents:
+  scale_info:
+    kind: text
+    patterns:
+      - "\\b(what|which)\\b.{0,20}\\bscale\\b|\\bscale\\s+of\\s+(this|the)\\s+(drawing|plan|sheet|blueprint)"
+      - "\\bmittakaava\\b|\\bskala\\b|\\bm[õo]õtkava\\b|\\bmaßstab\\b|\\bmassstab\\b|\\béchelle\\b"
+  largest_room:
+    kind: text
+    patterns:
+      - "\\b(largest|biggest|greatest|bigger\\s+than\\s+all)\\s+(room|space|area|zone)\\b|\\bwhich\\s+(room|space)\\s+is\\s+(the\\s+)?(largest|biggest)\\b"
+      - "\\bsuurin\\s+(huone|tila)|\\bst[öo]rsta\\s+(rummet|utrymmet)|\\bsuurim\\s+(tuba|ruum)|\\bgr[öo]ß(te|ter|tes)\\s+(raum|zimmer)"
+  smallest_room:
+    kind: text
+    patterns:
+      - "\\b(smallest|tiniest)\\s+(room|space|area|zone)\\b|\\bwhich\\s+(room|space)\\s+is\\s+(the\\s+)?smallest\\b"
+      - "\\bpienin\\s+(huone|tila)|\\bminsta\\s+(rummet|utrymmet)|\\bv[äa]ikseim\\s+(tuba|ruum)|\\bkleinste[rs]?\\s+(raum|zimmer)"
+  overall_size:
+    kind: text
+    patterns:
+      - "\\b(overall|total|outside|external|exterior|outer|maximum)\\s+(length|width|dimensions?|size)\\b.{0,40}\\b(building|structure|plan|house|sheet|footprint|slab|pad)\\b"
+      - "\\blength\\s+and\\s+width\\b|\\bwidth\\s+and\\s+length\\b|\\bhow\\s+(long|wide)\\s+is\\s+(the|this)\\s+(building|structure|house|slab|pad|plan)\\b|\\bfootprint\\b"
+      - "\\bpituus\\s+ja\\s+leveys|\\bl[äa]ngd\\s+och\\s+bredd|\\bpikkus\\s+ja\\s+laius|\\bl[äa]nge\\s+und\\s+breite|\\bgesamtabmessung"
+  total_room_area:
+    kind: area
+    patterns:
+      - "\\b(total|combined|overall|whole|entire|sum(med)?|all)\\b.{0,30}\\b(area|size|floor\\s*space|square\\s*(feet|foot|footage|met(er|re)s?)|sq\\.?\\s*(ft|m)|m2|m²)\\b"
+      - "\\bsquare\\s+footage\\b|\\bhow\\s+(big|large)\\s+(is|are)\\s+(the|this|all)\\b|\\bsum\\s+of\\s+(all\\s+)?(the\\s+)?(room|area)"
+      - "\\bsize\\s+of\\s+(all|every)\\s+(the\\s+)?rooms\\b|\\bareas?\\s+of\\s+all\\s+(the\\s+)?rooms\\b"
+      - "\\b(kokonais|yhteis)\\w*\\s*(pinta-?ala|ala)\\b|\\bhuoneiden\\s+(yhteis\\w*\\s+)?pinta-?ala\\b|\\bkokonaispinta-ala\\b"
+      - "\\btotal(a)?\\s+(yta|area)\\b|\\bsammanlagd\\w*\\s+yta\\b|\\brummens?\\s+sammanlagda\\b"
+      - "\\bkogu\\w*\\s+(pind|pindala)\\b|\\b[üu]ldpind\\w*\\b|\\bk[õo]ikide\\s+ruumide\\s+(kogu)?pind"
+      - "\\bgesamt\\w*\\s*(fl[äa]che|grundfl[äa]che|wohnfl[äa]che)\\b|\\bgesamtfl[äa]che\\b"
+  rooms_count:
+    kind: count
+    patterns:
+      - "\\bhow\\s+many\\s+(rooms|spaces|enclosed\\s+(rooms|spaces))\\b|\\bnumber\\s+of\\s+(rooms|spaces)\\b|\\broom\\s+count\\b|\\bcount\\s+(the\\s+|all\\s+)?rooms\\b"
+      - "\\bmonta(ko)?\\s+huonetta|\\bhuoneiden\\s+lukum[äa][äa]r[äa]|\\bhur\\s+m[åa]nga\\s+rum\\b|\\bmitu\\s+(tuba|ruumi)\\b|\\bwie\\s+viele\\s+(r[äa]ume|zimmer)\\b|\\banzahl\\s+(der\\s+)?(r[äa]ume|zimmer)\\b"

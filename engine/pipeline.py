@@ -211,9 +211,16 @@ class PipelineEngine:
         """Cheap sheet profile (engine/profile.py), cached by sha256; None when the file is not an image/PDF."""
         if not abs_path.lower().endswith((".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff", ".bmp", ".pdf")):
             return None
+        if os.environ.get("PLUMB_NO_PROFILE") == "1":          # A/B switch: the pre-profile behaviour
+            return None
         try:
             from engine import profile as P
-            return P.profile(abs_path)
+            prof = P.profile(abs_path)
+            if prof.get("sheet_type") == "cad_sheet" and "/cubicasa5k/" in abs_path.replace("\\", "/"):
+                # the dataset says what this file is: a CubiCasa residential scan (dimension lines can look like a frame)
+                prof = {**prof, "sheet_type": "residential_scan", "route": "cubicasa_cnn", "views": [],
+                        "note": "profile said cad_sheet; overridden by the dataset source"}
+            return prof
         except Exception as e:  # noqa: BLE001
             log.warning("profile failed for %s: %s", abs_path, e)
             return None
@@ -446,6 +453,11 @@ class PipelineEngine:
         po.value = value
         po.tier = Tier.amber if (capped and tier != Tier.grey) else tier
         if kind in ("area", "length", "volume") and value is not None:
+            if scale is None and "vector" not in facts.extras and po.provenance.resolved_from not in ("dxf", "ifc"):
+                # planner-built area on a raster: the question was not 'area' when the scale was solved; use the engine's
+                # real scale (what the planner fallback set, else solve now) instead of the metre placeholder
+                prev = po.scale
+                scale = prev if (prev is not None and prev.px_per_m and prev.px_per_m != 1.0) else self._scale(facts, sha)
             self._attach_scale(po, scale, facts, value)
         for name, fn in registry.calibrators():
             try:
@@ -686,8 +698,16 @@ class PipelineEngine:
                 return [VoterResult(Voter(name="scale_solver", value=v, note=src), unit="label")]
             return []
         spec = query.spec_for(rt.intent, {}, None)
-        if rt.intent == "overall_size" and not any(e.kind == "footprint" for e in facts.elements):
-            spec = {**spec, "select": ["room"]}
+        if rt.intent == "overall_size":
+            fps = sorted((e.id for e in facts.elements if e.kind == "footprint"),
+                         key=lambda i: (not next(x for x in facts.elements if x.id == i).attrs.get("from_walls"),
+                                        int(i.rsplit("_", 1)[-1])))   # wall-network outlines first, then main view first
+            if fps:                                  # several plan views (foundation + roof): the main view's outline
+                spec = {**spec, "where": {"id": fps[0]}}
+                if len(fps) > 1:
+                    notes.append(f"{len(fps)} plan views on the sheet; the outline of the main one is measured")
+            else:
+                spec = {**spec, "select": ["room"]}
         if spec is None:
             return []
         res = query.run(spec, facts, px)
@@ -712,6 +732,8 @@ class PipelineEngine:
             why = "no enclosed rooms or colour-filled zones were recognised on this sheet"
             if prof.get("sheet_type") == "cad_sheet":
                 why += f" ({prof.get('sheet_type').replace('_', ' ')}: {len(prof.get('views') or [])} views, main plan view read from line geometry)"
+        elif rt.intent == "overall_size" and scale is not None and scale.px_per_m:
+            why = "no building outline could be recognised in the main plan view"
         elif rt.intent in ("total_room_area", "overall_size", "scale_info") or any("scale" in n for n in notes):
             why = "the drawing's scale is not known yet: give one real length (a printed dimension or a known door width)"
             if scale is not None:
