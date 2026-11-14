@@ -1,5 +1,7 @@
 # Handoff — where the build stands and how to continue
 
+> **NEWEST (23:10): judges want deep reading of the dorm sheet (every room + furniture node + checklist, layers, 2D/3D view). Plan + status: docs/handoff/deep-sheets.md**
+
 ## UPDATE 2026-11-14 ~22:45 (Abhinav's session: big Stoa sheets at full resolution) — START HERE
 
 Stress set = the 3 Stoa example sheets at FULL resolution (10200x6600 / 9934x7017; `cache/stress/{m101a,s100f,a2dorm}.png`,
