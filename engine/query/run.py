@@ -259,7 +259,12 @@ def run(spec: dict, facts: SheetFacts, px_per_m: Optional[float] = None) -> Resu
         a, e = (max if spec["aggregate"] == "argmax_area" else min)(scored, key=lambda t: t[0])
         num = e.attrs.get("number")
         name = e.label or (e.subtype or e.kind).replace("_", " ")
-        res.value = f"{name}" + (f" ({num})" if num and num != e.label else "")
+        same = [x for _, x in scored if (x.label or x.subtype) == (e.label or e.subtype)]
+        if len(same) > 1 and not num:           # several rooms share the name: say which one (rank by area)
+            order = sorted(same, key=lambda x: _area_m2(x, px_per_m) or (_poly(x).area if _poly(x) else 0))
+            name = f"{name} #{order.index(e) + 1} of {len(same)} (by size)"
+        size = f", {a:.1f} m²" if unit_word == "m2" else ""
+        res.value = f"{name}" + (f" ({num})" if num and num != e.label else "") + size
         res.notes.append(f"{len(scored)} candidates compared by area; chosen {a:.2f} {unit_word}")
         res.groups = {"area": round(a, 2)}
         res.evidence_ids = [e.id]

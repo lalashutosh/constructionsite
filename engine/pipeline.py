@@ -368,6 +368,44 @@ class PipelineEngine:
         return po
 
     # ------------------------------------------------------------------ helpers
+    READER_Q = {"window": "How many windows are shown on this floor plan?",
+                "door": "How many doors are shown on this floor plan? Count doorways fitted with a door; open doorways without a door leaf do not count.",
+                "toilet": "How many toilet bowls (WC seats) are drawn on this floor plan?",
+                "sink": "How many sinks and wash basins (kitchen and bathroom combined; a double-bowl sink counts as one) are drawn on this floor plan?"}
+
+    def _parts_from_readers(self, plan, res, ctx, notes: list[str]) -> None:
+        """A comparison like 'more windows than doors?' must use the same readers as 'how many windows?' (the
+        Findings), not raw element counts. Plain count parts of a known object are recomputed that way."""
+        from engine.query import execute_plan
+        swapped, vals = False, []
+        for spec in plan.specs:
+            sel = spec.get("select")
+            q = self.READER_Q.get(sel) if isinstance(sel, str) and spec.get("aggregate") == "count" \
+                and not spec.get("where") and "/swiss_dwellings/" not in ctx.abs_path else None
+            if q:
+                po = self.ask(ctx.path, q, allow_siblings=ctx.allow_siblings, benchmark=True)
+                if isinstance(po.value, (int, float)):
+                    vals.append(int(po.value))
+                    swapped = True
+                    continue
+            vals.append(None)
+        if not swapped:
+            return
+        parts = [v if v is not None else res.groups.get(f"part{i + 1}") for i, v in enumerate(vals)]
+        a, b = (parts + [None, None])[:2]
+        if a is None or b is None:
+            return
+        if plan.combine in ("greater", "less"):
+            res.value = "Yes" if ((a > b) if plan.combine == "greater" else (a < b)) else "No"
+        elif plan.combine == "difference":
+            res.value = a - b
+        elif plan.combine == "ratio" and b:
+            res.value = round(a / b, 4)
+        elif plan.combine == "sum":
+            res.value = sum(p for p in parts if p is not None)
+        res.groups = {f"part{i + 1}": p for i, p in enumerate(parts)}
+        notes.append("counts in this comparison come from the same readers as the Findings")
+
     def _with_walls(self, facts: SheetFacts, ctx, po: ProofObject, notes: list[str]) -> SheetFacts:
         """Scans carry no wall elements; for wall questions add the CNN wall pieces (same walls as the 3D view) with
         footprint area, centre-line length and volume through the drawing scale and a style ceiling height."""
@@ -526,6 +564,8 @@ class PipelineEngine:
             cost = plan.cost
             px = ctx.params.get("_px_per_m")
             res = query.execute_plan(plan.specs, plan.combine, facts, px)
+            if len(plan.specs) > 1:
+                self._parts_from_readers(plan, res, ctx, notes)
             if res.value is None and res.needs_scale and not px:
                 # areas on a scan without a printed scale: fall back to the engine's scale (door-width prior or the
                 # user's anchors), say so, and let the user type the real size

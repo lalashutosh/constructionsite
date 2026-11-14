@@ -112,7 +112,7 @@ def test_argmax_area_names_the_room_and_avg_area():
         Element(id="r1", kind="room", label="Bad", polygon=sq(0, 2), attrs={"area_m2": 4.0}),
         Element(id="r2", kind="room", label="Wohnen", polygon=sq(5, 5), attrs={"area_m2": 25.0})])
     r = run({"select": "room", "aggregate": "argmax_area"}, f)
-    assert r.value == "Wohnen" and r.evidence_ids == ["r2"]
+    assert r.value == "Wohnen, 25.0 m²" and r.evidence_ids == ["r2"]
     assert run({"select": "room", "aggregate": "avg_area"}, f).value == 14.5
 
 

@@ -51,8 +51,11 @@ _ROOM_KIND = {
     "garage": "garage", "other_rooms": "room",
 }
 _ROOM_SKIP = {"background", "outdoor", "wall", "railing"}  # not room instances
-_THRESHOLDS = (0.35, 0.5, 0.65)  # bootstrap confidence levels for icon Voter.runs
-_MIN_ICON_AREA = 10
+_THRESHOLDS = (0.4, 0.5, 0.6)  # bootstrap confidence levels for icon Voter.runs
+_MIN_ICON_AREA = 30  # 10 -> 30: sweep on 199 DEV images (windows/doors/sinks all prefer 30)
+# Room components smaller than this fraction of the image are CNN slivers, not rooms. 0.015 chosen
+# on a coarse grid {0.005..0.03}: bedrooms 47% -> 75%. (question: 'How many bedrooms ...')
+_MIN_ROOM_FRAC = 0.015
 _MIN_ROOM_AREA = 60
 
 
@@ -89,7 +92,7 @@ def extract(path: str, *, allow_siblings: bool = True) -> SheetFacts:
     if cc_model.available():
         try:
             with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
-                f_cnn = ex.submit(cc_model.infer, rendered)
+                f_cnn = ex.submit(cc_model.infer_tta, rendered)
                 # 2 of the 4 rotations (0/90) while the CNN runs concurrently: the full 4-rotation
                 # OCR pass plus the CNN pass together blew the 2s/image budget (docs/decisions/
                 # weights.md); this trades some recall on upside-down text for speed.
@@ -127,12 +130,16 @@ def extract(path: str, *, allow_siblings: bool = True) -> SheetFacts:
     # a human can check even when the geometry assignment failed (e.g. balconies, which the model
     # classifies as "outdoor" and are therefore never a `room` element above).
     for i, tok in enumerate(tokens):
-        if tok.category and i not in claimed_token_idx:
+        if tok.category:
+            # every lexicon hit is kept (also those a room polygon claimed): the label-first
+            # count rules (engine/count/rules.py bedrooms/saunas) need ALL MH/S hits, not only
+            # the ones outside room polygons
             x, y, bw, bh = tok.bbox
             elements.append(Element(
                 id=f"label_{i}", kind="label", subtype=tok.category,
                 polygon=[(x, y), (x + bw, y), (x + bw, y + bh), (x, y + bh)],
                 label=tok.text, conf=min(1.0, tok.conf / 100.0),
+                attrs={"claimed": i in claimed_token_idx},
             ))
 
     facts = SheetFacts(
@@ -227,7 +234,7 @@ def _rooms_from_cnn(rooms_p: np.ndarray, variant, tokens) -> tuple[list[Element]
     for idx, name in enumerate(cc_model.ROOM_CLASSES):
         if name in _ROOM_SKIP:
             continue
-        comps, _, _ = _components(argmax == idx, _MIN_ROOM_AREA)
+        comps, _, _ = _components(argmax == idx, max(_MIN_ROOM_AREA, int(_MIN_ROOM_FRAC * argmax.size)))
         kind = _ROOM_KIND.get(name, "room")
         runs[kind] = [len(comps)]
         for j, (x, y, bw, bh, area, _lbl) in enumerate(comps):

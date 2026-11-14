@@ -73,13 +73,22 @@ def sentence(po) -> Optional[str]:
     if spec and spec.get("aggregate") in ("argmax_area", "argmin_area"):
         sing, _ = _what(spec)
         which = "largest" if spec["aggregate"] == "argmax_area" else "smallest"
-        return f"The {which} {sing} is the {str(v).lower() if str(v).islower() or ' ' not in str(v) else v}."
+        name = str(v)
+        if "#" in name or "(" in name:
+            return f"The {which} {sing} is {name}."
+        return f"The {which} {sing} is the {name.lower() if name.islower() or ' ' not in name else name}."
     if kind == "count":
         n = int(v)
         if spec and "aggregate" in spec:
             sing, plur = _what(spec)
-        else:
-            sing, plur = NOUN.get(intent, (intent.replace("_", " ").rstrip("s"), intent.replace("_", " ")))
+        elif intent in NOUN:
+            sing, plur = NOUN[intent]
+        else:                                     # e.g. count_in_model: take the object from the question
+            m = re.search(r"how many ([a-zäöüé]+)", po.question.lower())
+            plur = m.group(1) if m else "items"
+            sing = plur[:-1] if plur.endswith("s") else plur
+            if "model" in intent:
+                plur, sing = f"{plur} in the model", f"{sing} in the model"
         if n == 0:
             return f"No {plur} found on this drawing."
         return f"There is 1 {sing}." if n == 1 else f"There are {n} {plur}."
