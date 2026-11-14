@@ -12,6 +12,7 @@ import os
 import pathlib
 import statistics
 import re
+import threading
 import time
 from typing import Any, Callable, Optional
 
@@ -124,6 +125,13 @@ class PipelineEngine:
         hit = facts_cache.get(sha, allow_siblings)
         if hit is not None:
             return hit
+        with _file_lock(sha, allow_siblings):            # 20 parallel questions on one new drawing -> 1 extraction
+            hit = facts_cache.get(sha, allow_siblings)
+            if hit is not None:
+                return hit
+            return self._analyze_uncached(path, abs_path, sha, allow_siblings, _ctx)
+
+    def _analyze_uncached(self, path, abs_path, sha, allow_siblings, _ctx) -> SheetFacts:
         facts = self._extract(path, abs_path, allow_siblings, _ctx)
         facts.provenance.sha256 = facts.provenance.sha256 or sha
         if not (facts.legibility_note or "").startswith("extraction failed"):
@@ -641,6 +649,15 @@ class PipelineEngine:
             return (0 if kind == "count" else None), "no prior available"
         v = int(round(v)) if kind == "count" else float(v)
         return v, f"benchmark best guess: per-{'intent' if intent in p['intent'] else 'source/type'} dev-median prior"
+
+
+_LOCKS: dict = {}
+_LOCKS_GUARD = threading.Lock()
+
+
+def _file_lock(sha: str, allow: bool) -> "threading.Lock":
+    with _LOCKS_GUARD:
+        return _LOCKS.setdefault((sha, allow), threading.Lock())
 
 
 def _scan_check_refusal(sha: str) -> Optional[str]:

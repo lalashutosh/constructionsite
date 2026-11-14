@@ -83,12 +83,29 @@ class DecideBody(PathRef):
     choices: dict[str, Any] = Field(default_factory=dict)
 
 
+def _allowed_path(p: str) -> bool:
+    """Only files inside the dataset root or our uploads folder may be read (an absolute path like /etc/passwd
+    used to bypass the '..' check and was read + hashed)."""
+    from engine.pipeline import _abs
+    try:
+        target = pathlib.Path(_abs(p)).resolve()
+    except (OSError, RuntimeError):
+        return False
+    roots = [UPLOADS.resolve()]
+    try:
+        from evalkit.data import dataset_root
+        roots.append(pathlib.Path(dataset_root()).resolve())
+    except Exception:  # noqa: BLE001
+        pass
+    return any(target == r or r in target.parents for r in roots)
+
+
 def _resolve(body: PathRef) -> str:
     p = body.path or body.sample_id
     if not p:
         raise HTTPException(400, "path or sample_id required")
-    if ".." in pathlib.Path(p).parts:
-        raise HTTPException(400, "bad path")
+    if ".." in pathlib.Path(p).parts or not _allowed_path(p):
+        raise HTTPException(400, "bad path: only dataset drawings and your uploads can be read")
     return p
 
 
@@ -162,8 +179,12 @@ async def ask(body: AskBody):
 def _implausible_scale(a: dict, facts) -> Optional[dict]:
     """A measurement that makes the typical room absurd is refused (a length typed in cm/mm instead of m makes
     every area 10,000x / 1,000,000x too big). Returns {message, median_room_m2, suggestion} or None."""
+    import math as _m
     try:
-        ppm = float(a["px_per_m"]) if "px_per_m" in a else float(a["px_length"]) / float(a["length_m"])
+        vals = [float(a["px_per_m"])] if "px_per_m" in a else [float(a["px_length"]), float(a["length_m"])]
+        if any((not _m.isfinite(v)) or v <= 0 for v in vals):
+            return {"message": "a measurement needs a positive length on the drawing and a positive real length"}
+        ppm = vals[0] if len(vals) == 1 else vals[0] / vals[1]
     except (KeyError, ValueError, ZeroDivisionError, TypeError):
         return {"message": "the measurement needs a pixel length and a length in metres"}
     from shapely.geometry import Polygon
@@ -247,8 +268,8 @@ def _drawing_png(path: str, max_px: int = 2000) -> tuple[pathlib.Path, str, str]
     """(file to show, media type, coords) for a dataset path: raster as is, svg as is, pdf page 1 rendered to png
     (cached by sha256), dxf/ifc via their same-stem png/pdf/svg sibling (same drawing, README rule)."""
     from engine.pipeline import _abs
-    if ".." in pathlib.Path(path).parts:
-        raise HTTPException(400, "bad path")
+    if ".." in pathlib.Path(path).parts or not _allowed_path(path):
+        raise HTTPException(400, "bad path: only dataset drawings and your uploads can be read")
     src = pathlib.Path(_abs(path))
     if src.suffix.lower() in (".dxf", ".ifc"):
         sib = next((src.with_suffix(e) for e in (".png", ".pdf", ".svg") if src.with_suffix(e).exists()), None)
@@ -305,11 +326,18 @@ def _render_cad(src: pathlib.Path, max_px: int) -> tuple[pathlib.Path, str, str]
 async def image(path: str, max_px: int = 2000):
     """The drawing itself, for the 3D view's floor. X-Plumb-Coords says whether evidence polygons share its pixels."""
     from fastapi.responses import FileResponse
-    f, mime, coords = await asyncio.to_thread(_drawing_png, path, max_px)
+    try:
+        f, mime, coords = await asyncio.to_thread(_drawing_png, path, max_px)
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(422, f"this file could not be drawn ({type(e).__name__}); is it complete?")
     return FileResponse(f, media_type=mime, headers={"X-Plumb-Coords": coords})
 
 
 GEOM = ROOT / "cache" / "geometry"
+_GEO_LOCKS: dict = {}
+_GEO_GUARD = threading.Lock()
 
 
 def _reviewers():
@@ -329,13 +357,26 @@ def _reviewers():
 async def geometry(path: str):
     """3D model data in the SAME pixel space as /api/image: walls (with holes) to extrude, plus rooms, doors,
     windows and fixtures from the readers when they share that space. Cached by sha256."""
-    f, mime, coords = await asyncio.to_thread(_drawing_png, path)
+    try:
+        f, mime, coords = await asyncio.to_thread(_drawing_png, path)
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001  (truncated PDF, corrupt image ...)
+        raise HTTPException(422, f"this file could not be drawn ({type(e).__name__}); is it complete?")
     if coords == "svg":
         raise HTTPException(415, "svg geometry not supported; ask for the pdf sibling")
     sha = facts_cache.sha256_file(str(f))
     out = GEOM / f"{sha}-{coords}.json"
     if out.exists():
         return json.loads(out.read_text())
+    with _GEO_GUARD:
+        lock = _GEO_LOCKS.setdefault(out.name, threading.Lock())
+
+    def build_once():
+        with lock:                                   # parallel opens of one new drawing build it once
+            if out.exists():
+                return json.loads(out.read_text())
+            return build()
 
     def build():
         import cv2
@@ -380,7 +421,7 @@ async def geometry(path: str):
         GEOM.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(g))
         return g
-    return await asyncio.to_thread(build)
+    return await asyncio.to_thread(build_once)
 
 
 # standard questions whose answers feed the build plan's counts (same numbers the Findings panel shows)

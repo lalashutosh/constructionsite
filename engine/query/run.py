@@ -317,6 +317,13 @@ def run(spec: dict, facts: SheetFacts, px_per_m: Optional[float] = None) -> Resu
         res.groups = {k: _agg(v, spec, facts, px_per_m, res) for k, v in sorted(buckets.items())}
     res.value = _agg(els, spec, facts, px_per_m, res)
     if spec["aggregate"] == "count":
+        rd = next((r for r in rules if r.startswith("reader_")), None)
+        if rd:                                   # the intent's reader has logic a spec can't express: use it
+            from engine.count import _DISPATCH
+            fn = _DISPATCH.get(rd[len("reader_"):])
+            if fn is not None:
+                n, ids, _runs = fn(facts)
+                res.value, res.evidence_ids = int(n), list(ids)
         if "min_one" in rules:
             res.value = max(1, int(res.value))
         if "prior_fallback_1" in rules and res.value == 0:

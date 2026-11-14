@@ -67,3 +67,18 @@ def test_implausible_measurement_is_refused():
     assert M._implausible_scale({"px_length": 300, "length_m": 3}, f) is None            # 100 px/m -> 9 m2 rooms
     bad = M._implausible_scale({"px_length": 300, "length_m": 248}, f)                   # 248 cm typed as metres
     assert bad and "not plausible" in bad["message"] and "cm" in (bad["suggestion"] or "")
+
+
+def test_paths_outside_dataset_and_uploads_are_refused(client):
+    for bad in ("/etc/passwd", "/private/etc/hosts", "../../etc/passwd"):
+        r = client.post("/api/ask", json={"path": bad, "question": "How many doors?"})
+        assert r.status_code == 400, bad
+        assert client.get("/api/image", params={"path": bad}).status_code == 400
+
+
+def test_zero_or_negative_measurements_are_refused():
+    from contracts.proof import Provenance, SheetFacts
+    f = SheetFacts(provenance=Provenance(file="f"))
+    for a in ({"px_length": 0, "length_m": 3}, {"px_length": -50, "length_m": 3}, {"px_length": 50, "length_m": 0},
+              {"px_per_m": float("inf")}):
+        assert M._implausible_scale(a, f), a
