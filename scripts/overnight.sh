@@ -47,6 +47,10 @@ if [ "$(git rev-parse --show-toplevel)" != "$(pwd -P)" ]; then
   echo "refusing: git repo root is $(git rev-parse --show-toplevel), not $(pwd -P)."
   echo "plumb must be its own repo (run 'git init' here), or 'git add' would sweep the parent folder."; exit 1
 fi
+if ! python3 -c "import json,sys;sys.exit(0 if json.load(open('$HOME/.claude.json')).get('projects',{}).get('$(pwd -P)',{}).get('hasTrustDialogAccepted') else 1)" 2>/dev/null; then
+  echo "refusing: Claude Code has not been trusted for $(pwd -P); headless sessions would be denied every command."
+  echo "Run 'claude' once in this folder and accept the trust prompt, then /exit and rerun."; exit 1
+fi
 git checkout -q main 2>/dev/null || true
 
 state_sig() { { git rev-parse HEAD; md5sum docs/STATE.md 2>/dev/null || md5 -q docs/STATE.md; } | tr -d '\n'; }
