@@ -755,9 +755,24 @@ async def build_plan(path: str, vibe: str = "standard", it_load_kw: Optional[flo
                 tag = ("chosen" if "user" in kinds else
                        "specified" if kinds & {"dimension", "scale_bar", "printed_ratio", "printed_area"} else
                        "defaulted" if sc.widths_relative else "drawn")
+        fpo = next((e for e in facts.elements if e.kind == "footprint" and e.attrs.get("px_per_m")), None)
+        if fpo is not None:                       # construction sheet: its own verified scale, not the door guess
+            px, tag = float(fpo.attrs["px_per_m"]), "specified"
         src = p.split("/")[1] if p.startswith("data/") else "cubicasa5k"   # uploads: treat as a scanned plan
         counts, sh = {}, {}
-        for key, q in PLAN_COUNTS.get(src, PLAN_COUNTS["cubicasa5k"]).items():
+        if facts.extras.get("route") == "cad":    # counts from the deep read of this sheet (symbols + tags)
+            from engine import symbols as SY
+            ck = SY.cached(facts.provenance.sha256 or _sha(p)) or {}
+            tot = {t["kind"]: t for t in ck.get("totals", [])}
+            for key, kinds in (("doors", ["door"]), ("windows", ["window"]), ("toilets", ["toilet"]), ("sinks", ["sink"]),
+                               ("showers", ["shower", "bathtub"])):
+                n = sum(tot[k]["count"] for k in kinds if k in tot)
+                if any(k in tot for k in kinds):
+                    sh[key] = (n, "drawn", "deep read of this sheet (symbols found by repetition, counted by code)")
+            PLAN_ITER = {}
+        else:
+            PLAN_ITER = PLAN_COUNTS.get(src, PLAN_COUNTS["cubicasa5k"])
+        for key, q in PLAN_ITER.items():
             po = eng.ask(p, q, benchmark=True)
             if isinstance(po.value, (int, float)):
                 # counted on the drawing either way; how sure we are goes in the source line, not the tag

@@ -239,6 +239,16 @@ class PipelineEngine:
         if _dspec is not None:
             return derive.answer(self, path, question, _dspec, allow_siblings=allow_siblings, benchmark=benchmark, progress=progress)
         # --- end derived quantities ---
+        # --- the deep read of this drawing (engine/symbols.py checklist) answers 'how many beds / sinks / stairs' ---
+        try:
+            from engine import symbols as _sym
+            _sha = facts_cache.sha256_file(_abs(path))
+            _ck = _sym.answer(_sha, question)
+        except Exception:  # noqa: BLE001
+            _ck = None
+        if _ck is not None:
+            return self._checklist_answer(path, question, _sha, _ck, t0)
+        # --- end deep read ---
         rt = route_question(question, path, classifier=self.classifier)
         from engine.query import measure as _measure
         if _measure.PERIM.search(question) and rt.kind == "count":
@@ -421,8 +431,10 @@ class PipelineEngine:
         if (facts.extras.get("route") == "cad" and kind == "count" and rt.intent in _DETECTOR_KINDS
                 and not any(e.kind == _DETECTOR_KINDS[rt.intent] for e in facts.elements)
                 and not any(getattr(r, "exact", False) for r in results)):   # exact vector voters (Swiss PDF) still count
-            return self._grey(po, f"{rt.intent.replace('_', ' ')} are not read on construction sheets yet: the symbol "
-                                  "detectors are trained on small residential scans, so a '0' would be a guess")
+            from engine import symbols as _sym
+            _miss = _sym.missing_note(sha, ctx.question)
+            return self._grey(po, _miss or (f"{rt.intent.replace('_', ' ')} are not read on construction sheets yet: the "
+                                            "symbol detectors are trained on small residential scans, so a '0' would be a guess"))
         if not results and rt.layer == "sheet":          # a sheet-level question is never handed to a count or the prior
             return self._sheet_grey(po, rt, facts, scale, notes)
         if kind == "count" and rt.intent == "doors":
@@ -586,6 +598,23 @@ class PipelineEngine:
                           "voter confirmed at the same spot").strip()
         notes.append(f"door fusion: {old} confident detections + {len(added)} weak detections confirmed by a door "
                      "swing arc at the same place")
+
+    def _checklist_answer(self, path: str, question: str, sha: str, ck: dict, t0: float) -> ProofObject:
+        ev = [Element(id=f"ck_{i}", kind=ck["label"].rstrip("s") or "symbol", polygon=[(q[0], q[1]) for q in poly], conf=0.8,
+                      attrs={"source": "deep read (symbol found by repetition + template match)"})
+              for i, poly in enumerate(ck["polys"][:400])]
+        po = ProofObject(id=hashlib.sha1(f"{path}|{question}|ck".encode()).hexdigest()[:12], question=question,
+                         intent="deep_read_count", kind="count", value=int(ck["value"]),
+                         tier=Tier.green if ck["tier"] == "green" else Tier.amber,
+                         provenance=Provenance(file=path, sha256=sha), evidence=ev,
+                         voters=[Voter(name="deep_read", value=int(ck["value"]), element_ids=[e.id for e in ev], note=ck["note"])])
+        zones = ck.get("zones") or {}
+        where = ("; " + ", ".join(f"{n} in {z}" for z, n in zones.items())) if zones else ""
+        po.answer_text = (f"There are {int(ck['value'])} {ck['label']} on this sheet"
+                          + (f" ({ck['note']})" if ck.get("parts") else "") + f"{where}.")
+        po.notes.append(f"deep read: {ck['note']}")
+        po.cost.ms = (time.perf_counter() - t0) * 1000
+        return po
 
     def _door_audit(self, results: list, ctx, facts: SheetFacts, notes: list[str]) -> None:
         """Hand-drawn scans: vision reviewers propose door positions, code verifies each is a wall opening (cached)."""

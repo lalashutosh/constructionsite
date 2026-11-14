@@ -196,6 +196,8 @@ export function ViewerPane(p: {
   onElPick?: (id: string | null, how: "hover" | "click") => void;
   /** the App reaches the 3D viewer through this (checklist highlights, selected room) */
   vref?: { current: PlumbViewer | null };
+  /** layer contents that arrive later than the 3D (the deep read's furniture nodes) */
+  layerExtra?: Record<string, number>;
 }) {
   const [tip, setTip] = useState<{ text: string; x: number; y: number } | null>(null);
   const [len, setLen] = useState("");
@@ -351,7 +353,7 @@ export function ViewerPane(p: {
     <div className="viewer panel">
       <div ref={host} className="canvas" />
       <ViewCube viewer={() => viewer.current} />
-      <LayerToggles viewer={() => viewer.current} layers={shown[0]?.geo?.layers} />
+      <LayerToggles viewer={() => viewer.current} layers={shown[0]?.geo?.layers} extra={p.layerExtra} />
       <div className="vtitle">
         <span className="vname">{a ? a.name : "No drawing open"}</span>
         {parts.length > 1 && <span className="pill">{parts.length} floors</span>}

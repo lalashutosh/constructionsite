@@ -27,7 +27,7 @@ import numpy as np
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 CACHE = ROOT / "cache" / "symbols"
-VERSION = "v7"
+VERSION = "v10"
 NAMES = ["bed", "side table", "desk", "chair", "sofa", "lounge chair", "table", "closet", "wardrobe", "toilet", "sink",
          "shower", "bathtub", "door", "window", "stair", "tv", "kitchen counter", "fridge", "gym equipment", "washer",
          "plant", "column", "other"]
@@ -72,7 +72,8 @@ def deep_info(prof: dict, n_rooms: int = 0) -> dict:
 
 
 def _components(g: np.ndarray, mask: np.ndarray, words: list[dict], ppm: float):
-    ink = ((g < 160) & (mask > 0)).astype(np.uint8)
+    bg = cv2.dilate(g, np.ones((9, 9), np.uint8))          # local paper / floor-fill brightness
+    ink = ((((bg.astype(np.int16) - g) > 28) | (g < 160)) & (mask > 0)).astype(np.uint8)   # grey linework too (door swings)
     for w in words:
         a, b, c, d = [int(v) for v in w["box"]]
         ink[max(0, b - 1):d + 2, max(0, a - 1):c + 2] = 0
@@ -167,6 +168,22 @@ def _same_shape(g: np.ndarray, mask: np.ndarray, d_ref, c: tuple[float, float], 
         d = cv2.dilate(d.astype(np.uint8), np.ones((2, 2), np.uint8)) > 0
         best = max(best, max(float((v & d_ref).sum()) / max(1, float((v | d_ref).sum())) for v in _v8(d)))
     return best >= 0.45
+
+
+def _thumb(g: np.ndarray, box: list[float], size: int = 72) -> str:
+    """Small picture of one symbol (the exemplar the count is built on), data URL for the checklist row."""
+    import base64
+    x0, y0, x1, y1 = [int(round(v)) for v in box]
+    m = int(0.25 * max(x1 - x0, y1 - y0)) + 2
+    H, W = g.shape
+    c = g[max(0, y0 - m):min(H, y1 + m), max(0, x0 - m):min(W, x1 + m)]
+    if c.size == 0:
+        return ""
+    side = max(c.shape)
+    sq = np.full((side, side), 255, np.uint8)
+    sq[(side - c.shape[0]) // 2:(side - c.shape[0]) // 2 + c.shape[0], (side - c.shape[1]) // 2:(side - c.shape[1]) // 2 + c.shape[1]] = c
+    sq = cv2.resize(sq, (size, size), interpolation=cv2.INTER_AREA)
+    return "data:image/png;base64," + base64.b64encode(cv2.imencode(".png", sq)[1].tobytes()).decode()
 
 
 def _contact_sheet(g: np.ndarray, st, reps: list[dict], ppm: float) -> bytes:
@@ -353,7 +370,37 @@ def _checklist(abs_path: str, sha: str, facts, llm) -> dict:
                                     "polygon": [[bx0, by0], [bx1, by0], [bx1, by1], [bx0, by1]], "room_id": rid})
             ids.append(eid)
         out["totals"].append({"kind": nm, "label": LABEL.get(nm, nm.title() + ("s" if not nm.endswith("s") else "")),
-                              "count": len(ids), "ids": ids, "tier": "green" if agree else "amber", "note": note})
+                              "count": len(ids), "ids": ids, "tier": "green" if agree else "amber", "note": note,
+                              "thumb": _thumb(g, boxes[0]) if boxes else ""})
+    # tagged equipment (FP-1..5, CV-1..4 ...) and what the sheet prints (tables, slab types, pipe sizes)
+    try:
+        from engine import sheet_findings as SF
+        from engine import sheet_lookup as SL
+        defs = SL._sheet_defs(SL.rows(words))
+        printed = SF.findings(words)
+        out["printed"] = [{"title": f["title"], "text": f["text"], "kind": f["kind"]} for f in printed if f["kind"] != "note"]
+        for f in printed:
+            if f["kind"] != "equipment":
+                continue
+            for it in f["items"]:
+                series = it["label"]
+                m = re.match(r"(\d+)", str(it["value"]))
+                if not m or not it.get("boxes"):
+                    continue
+                meaning, why = SL.expand(series, defs, numbered=True)
+                label = (f"{meaning.capitalize()}s ({series})" if meaning and not meaning.endswith("s") else
+                         f"{meaning.capitalize()} ({series})" if meaning else f"{series} tags")
+                ids = []
+                for j, b in enumerate(it["boxes"]):
+                    eid = f"tag_{series}_{j}"
+                    out["elements"].append({"id": eid, "kind": f"tag {series}", "label": f"{series} tag",
+                                            "polygon": [[b[0], b[1]], [b[2], b[1]], [b[2], b[3]], [b[0], b[3]]], "room_id": None})
+                    ids.append(eid)
+                out["totals"].append({"kind": f"tag {series}", "label": label, "count": int(m.group(1)), "ids": ids,
+                                      "tier": "amber", "note": f"equipment tags {it['value']} read on the sheet"
+                                      + (f"; {why}" if why else ""), "thumb": _thumb(g, it["boxes"][0])})
+    except Exception as e:  # noqa: BLE001
+        out["printed_error"] = f"{type(e).__name__}: {e}"
     # stair flights: the tread detector inside the outline (downscaled so a 10k px sheet stays fast)
     try:
         from engine.raster import stairs as ST
@@ -372,8 +419,10 @@ def _checklist(abs_path: str, sha: str, facts, llm) -> dict:
                                     "polygon": poly, "room_id": None})
             ids.append(eid)
         if ids:
+            xs = [q[0] for q in out["elements"][-len(ids)]["polygon"]]; ys = [q[1] for q in out["elements"][-len(ids)]["polygon"]]
             out["totals"].append({"kind": "stair", "label": "Stair flights", "count": len(ids), "ids": ids, "tier": "amber",
-                                  "note": "tread-line detector (evenly spaced treads) inside the building outline"})
+                                  "note": "tread-line detector (evenly spaced treads) inside the building outline",
+                                  "thumb": _thumb(g, [min(xs), min(ys), max(xs), max(ys)])})
     except Exception as e:  # noqa: BLE001
         out["stairs_error"] = f"{type(e).__name__}: {e}"
     out["totals"].sort(key=lambda t: -t["count"])
@@ -398,6 +447,7 @@ def _checklist(abs_path: str, sha: str, facts, llm) -> dict:
             nice = " ".join(w if w[:1].isdigit() else w.capitalize() for w in z.label.strip().split())
             zl.append({"name": f"{nice} ({where})", "polygon": [list(q) for q in z.polygon], "counts": cnt})
     out["zones"] = zl
+    out["summary"] = _summary(abs_path, sha, facts, words, fp, out)
     for r in rooms:
         out["rooms"].append({"id": r.id, "name": rnames.get(r.id, r.id), "kind": r.subtype or "room",
                              "area_m2": r.attrs.get("area_m2"), "polygon": [list(p) for p in r.polygon],
@@ -406,3 +456,152 @@ def _checklist(abs_path: str, sha: str, facts, llm) -> dict:
     out["cost"] = {"usd": round(usd, 5), "ms": int((time.perf_counter() - t0) * 1000),
                    "llm_calls": len(llm) if isinstance(llm, (list, tuple)) else (1 if llm is not None else 0)}
     return out
+
+
+def door_swings(abs_path: str, g: np.ndarray, mask: np.ndarray, ppm: float) -> list[list[float]]:
+    """Door swing arcs on a big sheet: the arc voter (engine/skeptic/voters/doors_arc.py) sizes doors relative to the
+    drawing span, so it runs on ~30 m tiles of the building (door radius then in its range); results mapped back and
+    de-duplicated (< 0.5 m apart). Boxes in original px."""
+    import tempfile
+    from engine.skeptic.voters import doors_arc as DA
+    ys, xs = np.where(mask > 0)
+    if not len(xs):
+        return []
+    X0, X1, Y0, Y1 = xs.min(), xs.max(), ys.min(), ys.max()
+    T = int(30 * ppm)
+    step = int(T * 0.85)
+    out: list[list[float]] = []
+    with tempfile.TemporaryDirectory() as td:
+        for y0 in range(Y0, max(Y0 + 1, Y1 - int(0.15 * T)) + 1, step):
+            for x0 in range(X0, max(X0 + 1, X1 - int(0.15 * T)) + 1, step):
+                tile = g[y0:min(Y1, y0 + T), x0:min(X1, x0 + T)]
+                if tile.size == 0 or (mask[y0:y0 + T, x0:x0 + T] > 0).mean() < 0.05:
+                    continue
+                f = f"{td}/t.png"
+                cv2.imwrite(f, tile)
+                try:
+                    n, arcs, pp = DA.count(f)
+                except Exception:  # noqa: BLE001
+                    continue
+                for a in arcs or []:
+                    pts = pp.to_orig([tuple(a["c"]), tuple(a["ends"][0]), tuple(a["ends"][1])])
+                    xs_ = [q[0] + x0 for q in pts]; ys_ = [q[1] + y0 for q in pts]
+                    cx, cy = sum(xs_) / 3, sum(ys_) / 3
+                    if not (0 <= int(cy) < mask.shape[0] and 0 <= int(cx) < mask.shape[1]) or not mask[int(cy), int(cx)]:
+                        continue
+                    if all((cx - (b[0] + b[2]) / 2) ** 2 + (cy - (b[1] + b[3]) / 2) ** 2 > (0.5 * ppm) ** 2 for b in out):
+                        out.append([min(xs_), min(ys_), max(xs_), max(ys_)])
+    return out
+
+
+DISCIPLINE = {"A": "architectural", "S": "structural", "M": "mechanical / piping", "P": "plumbing", "FP": "fire protection",
+              "E": "electrical", "C": "civil", "G": "general", "L": "landscape"}
+
+
+def _summary(abs_path: str, sha: str, facts, words: list[dict], fp, ck: dict) -> list[str]:
+    """What this sheet is and what is on it, in plain sentences (all from code: title block, scale, outline, counts)."""
+    from engine import layers as LY
+    from engine.scale import sheet_scale as S2
+    out = []
+    titles = []
+    for r in __import__("engine.sheet_lookup", fromlist=["rows"]).rows(words):
+        t = r["text"].strip()
+        if re.search(r"\bPLAN\b|\bELEVATION\b|\bSECTION\b|\bDETAILS?\b|\bSCHEDULE\b", t.upper()) and 2 <= len(t.split()) <= 7 \
+                and "=" not in t and not re.search(r"\bSEE\b|\bNOTE\b", t.upper()):
+            titles.append((r["h"], t))
+    title = max(titles)[1].title() if titles else None
+    disc = LY.discipline(words)
+    Wx = max((w["box"][2] for w in words), default=1)
+    Hy = max((w["box"][3] for w in words), default=1)
+    sid = next((w["text"] for w in sorted(words, key=lambda w: -((w["box"][3] - w["box"][1]) *
+                (3 if w["box"][0] > 0.8 * Wx or w["box"][1] > 0.88 * Hy else 1)))
+                if LY.SHEET_ID.match(w["text"].strip().upper()) and w.get("angle", 0) == 0), None)
+    first = (title or "A drawing") + (f" (sheet {sid}" + (f", {DISCIPLINE.get(disc, disc)}" if disc else "") + ")" if sid else "")
+    out.append(first + ".")
+    try:
+        st = S2.sheet_state(abs_path, sha)
+        w = st["cons"]["winner"]
+        if w:
+            lab = next((c["label"] for c in w["items"] if c["family"] == "ratio"), None)
+            out.append(f"Scale {lab + ' = ' if lab else ''}{w['ppm']:.1f} px/m, read from {', '.join(w['families'])} "
+                       f"({int(st['conf'] * 100)}% sure).")
+    except Exception:  # noqa: BLE001
+        pass
+    if fp is not None and fp.attrs.get("bbox_m"):
+        out.append(f"Building about {fp.attrs['bbox_m'][0]:.1f} x {fp.attrs['bbox_m'][1]:.1f} m, "
+                   f"{fp.attrs.get('area_m2', 0):.0f} m² inside its outline; {len(ck.get('rooms', []))} enclosed spaces.")
+    top = [t for t in ck.get("totals", []) if not t["label"].startswith("Symbol Type")][:6]
+    if top:
+        out.append("On it: " + ", ".join(f"{t['count']} {t['label'].lower()}" for t in top) + ".")
+    for f in ck.get("printed", [])[:2]:
+        out.append(f"{f['title']}: {f['text'][:160]}")
+    return out
+
+
+# ---------------------------------------------------------------- the chatbot reads the stored deep read
+SYN = {"washbasin": "sink", "basin": "sink", "lavatory": "sink", "wc": "toilet", "loo": "toilet", "nightstand": "side table",
+       "bedside": "side table", "wardrobe": "closet", "cupboard": "closet", "couch": "sofa", "armchair": "lounge chair",
+       "television": "tv", "staircase": "stair", "stairway": "stair", "flight": "stair", "step": "stair", "treadmill": "gym equipment",
+       "gym": "gym equipment", "refrigerator": "fridge", "tub": "bathtub", "bath": "bathtub"}
+
+
+def cached(sha: str) -> Optional[dict]:
+    fs = sorted(CACHE.glob(f"{sha}-{VERSION}*.json"), key=lambda f: -f.stat().st_mtime)
+    for f in fs:
+        try:
+            return json.loads(f.read_text())
+        except Exception:  # noqa: BLE001
+            continue
+    return None
+
+
+def answer(sha: str, question: str):
+    """'how many beds / sinks / stairs ...' from the deep read of this drawing (each count with its boxes)."""
+    m = re.search(r"\bhow\s+many\s+(.+?)(?:\s+(?:are|is|do|does|in|on|there|here|shown|drawn)\b|\?|$)|\bnumber\s+of\s+(.+?)(?:\?|$)",
+                  question, re.I)
+    if not m:
+        return None
+    ck = cached(sha)
+    if not ck or not ck.get("totals"):
+        return None
+    noun = (m.group(1) or m.group(2) or "").lower().strip()
+    words = [w.rstrip("s") if len(w) > 3 else w for w in re.findall(r"[a-z]+", noun)]
+    want = None
+    for w in words[::-1]:
+        w = SYN.get(w, w)
+        hits = []
+        for t in ck["totals"]:
+            k = t["kind"]
+            lw = [x.rstrip("s") for x in re.findall(r"[a-z]+", t["label"].lower())]
+            if k == w or k.split()[-1] == w or (len(w) >= 4 and (k.startswith(w) or w.startswith(k))) or w in lw:
+                hits.append(t)
+        if hits:
+            exact = [t for t in hits if " ".join(words) in t["label"].lower()]
+            hits = exact or hits
+            if len(hits) == 1:
+                want = hits[0]
+            else:                                    # a class word ('valves'): every matching type, summed
+                want = {"kind": w, "label": f"{w}s", "count": sum(t["count"] for t in hits), "parts": True,
+                        "ids": [i for t in hits for i in t["ids"]], "tier": "amber",
+                        "note": "; ".join(f"{t['count']} {t['label'].lower()}" for t in hits)}
+            break
+    if want is None and re.search(r"\brooms?\b", noun) and ck.get("rooms"):
+        return {"value": len(ck["rooms"]), "label": "rooms", "ids": [r["id"] for r in ck["rooms"]], "tier": "amber",
+                "note": "enclosed spaces inside the building outline, each named", "polys": [r["polygon"] for r in ck["rooms"]]}
+    if want is None:
+        return None
+    by = {e["id"]: e for e in ck.get("elements", [])}
+    per_zone = {z["name"]: z["counts"].get(want["kind"], 0) for z in ck.get("zones", []) if z["counts"].get(want["kind"])}
+    return {"value": want["count"], "label": want["label"].lower(), "ids": want["ids"], "tier": want["tier"], "parts": want.get("parts", False),
+            "note": want.get("note", ""), "polys": [by[i]["polygon"] for i in want["ids"] if i in by], "zones": per_zone}
+
+
+def missing_note(sha: str, question: str) -> Optional[str]:
+    """When the deep read exists but holds nothing of the asked kind, say so (instead of a detector disclaimer)."""
+    ck = cached(sha)
+    m = re.search(r"\bhow\s+many\s+([a-z]+)", question, re.I)
+    if not ck or not m:
+        return None
+    kinds = ", ".join(t["label"].lower() for t in ck.get("totals", [])[:6]) or "no repeated symbols"
+    return (f"the deep read of this sheet found no {m.group(1).lower()} symbols (it found: {kinds}); "
+            "if they are drawn on another sheet of the set, upload that sheet")

@@ -79,6 +79,7 @@ export default function App() {
   const [elems, setElems] = useState<Record<string, PlanElement[] | "na">>({});
   const [elSel, setElSel] = useState<string | null>(null);
   const vref = useRef<PlumbViewer | null>(null);
+  const [ckN, setCkN] = useState<Record<string, number>>({});
   const [elHover, setElHover] = useState<string | null>(null);
   const [elLocal, setElLocal] = useState<Record<string, Set<string>>>({});
   const [elUndo, setElUndo] = useState<Record<string, number>>({});
@@ -614,6 +615,7 @@ export default function App() {
           )}
           <ViewerPane
             vref={vref}
+            layerExtra={active ? { furniture: ckN[active.path] ?? 0 } : undefined}
             floors={floors}
             active={active}
             selected={selected}
@@ -718,7 +720,8 @@ export default function App() {
               checks={<>{active && <ChecklistPanel path={active.path} deepHint={active.geo?.deep ?? null}
                 onShow={(polys) => vref.current?.setMulti(active.key, polys)}
                 onRoom={(id, poly) => { setElSel(id); vref.current?.setMulti(active.key, [poly]); }}
-                onLoaded={(c) => vref.current?.setLayers(active.key, { ...(active.geo?.layers ?? {}), furniture: c.elements } as never, LAYER_COLOURS)} />}
+                onLoaded={(c) => { setCkN((m) => ({ ...m, [active.path]: c.elements.length }));
+                  vref.current?.setLayers(active.key, { ...(active.geo?.layers ?? {}), furniture: c.elements } as never, LAYER_COLOURS); }} />}
                 <ChecksBlock items={activeChecks} busyId={checkBusy} note={checkNote} err={checkErr} onAnswer={(c, ans) => void onCheckAnswer(c, ans)} onType={startScale} onHover={setHoverCheck} />{inspector}</>}
               onSelect={(p) => active && setSelected({ path: active.path, proof: p })}
               onWhy={(p) => {

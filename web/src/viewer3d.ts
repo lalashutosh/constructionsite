@@ -854,48 +854,45 @@ export class PlumbViewer {
   }
 
   // ---- layers (envelope / walls / furniture / piping / electrical) and multi-highlight
-  private layerGroup = new THREE.Group();
   private layerObjs: Record<string, THREE.Object3D> = {};
   setLayers(floorKey: string | null, layers: { envelope?: [number, number][][]; furniture?: { polygon: [number, number][] }[];
     piping?: [number, number][][]; electrical?: [number, number][][] } | null, colours: Record<string, number>) {
-    this.clear(this.layerGroup);
+    for (const o of Object.values(this.layerObjs)) o.parent?.remove(o);
     this.layerObjs = {};
-    if (!this.layerGroup.parent) this.scene.add(this.layerGroup);
     const fl = floorKey ? this.floorGroups.get(floorKey) : undefined;
     if (!fl || !layers) return;
-    const toW = (x: number, z: number, y: number) => fl.group.localToWorld(new THREE.Vector3(x - fl.w / 2, y, z - fl.h / 2));
-    const mk = (name: string, rings: [number, number][][], y: number, closed: boolean, width = 1) => {
+    // children of the floor group: the same local drawing-pixel frame as the walls (x - w/2, height, z - h/2)
+    const L = (x: number, z: number, y: number) => new THREE.Vector3(x - fl.w / 2, y, z - fl.h / 2);
+    const mk = (name: string, rings: [number, number][][], y: number, closed: boolean) => {
       const g = new THREE.Group();
-      const mat = new THREE.LineBasicMaterial({ color: colours[name] ?? 0xffffff, transparent: true, opacity: 0.95, depthTest: false, linewidth: width });
+      const mat = new THREE.LineBasicMaterial({ color: colours[name] ?? 0xffffff, transparent: true, opacity: 0.95, depthTest: false });
       for (const r of rings) {
         if (r.length < 2) continue;
-        const geo = new THREE.BufferGeometry().setFromPoints(r.map(([x, z]) => toW(x, z, y)));
+        const geo = new THREE.BufferGeometry().setFromPoints(r.map(([x, z]) => L(x, z, y)));
         const ln = closed ? new THREE.LineLoop(geo, mat) : new THREE.Line(geo, mat);
         ln.renderOrder = 9;
         g.add(ln);
       }
-      g.name = name;
       this.layerObjs[name] = g;
-      this.layerGroup.add(g);
+      fl.group.add(g);
     };
-    if (layers.envelope?.length) mk("envelope", layers.envelope, fl.H * 0.02, true, 2);
-    if (layers.furniture?.length) {          // furniture: low translucent blocks
+    if (layers.envelope?.length) mk("envelope", layers.envelope, fl.H * 0.03, true);
+    if (layers.furniture?.length) {          // furniture: low translucent blocks, about knee height
       const g = new THREE.Group();
-      const mat = new THREE.MeshBasicMaterial({ color: colours.furniture ?? 0x2dd4bf, transparent: true, opacity: 0.55, depthWrite: false });
+      const mat = new THREE.MeshBasicMaterial({ color: colours.furniture ?? 0x2dd4bf, transparent: true, opacity: 0.6, depthWrite: false });
+      const hgt = fl.H * 0.18;
       for (const f of layers.furniture) {
         const xs = f.polygon.map((q) => q[0]), zs = f.polygon.map((q) => q[1]);
         const x0 = Math.min(...xs), x1 = Math.max(...xs), z0 = Math.min(...zs), z1 = Math.max(...zs);
-        const hgt = fl.H * 0.12;
-        const m = new THREE.Mesh(new THREE.BoxGeometry(Math.max(0.2, x1 - x0) * fl.s, hgt, Math.max(0.2, z1 - z0) * fl.s), mat);
-        m.position.copy(toW((x0 + x1) / 2, (z0 + z1) / 2, hgt / 2 / Math.max(fl.s, 1e-6) * fl.s));
+        const m = new THREE.Mesh(new THREE.BoxGeometry(Math.max(1, x1 - x0), hgt, Math.max(1, z1 - z0)), mat);
+        m.position.copy(L((x0 + x1) / 2, (z0 + z1) / 2, hgt / 2));
         g.add(m);
       }
-      g.name = "furniture";
       this.layerObjs.furniture = g;
-      this.layerGroup.add(g);
+      fl.group.add(g);
     }
-    if (layers.piping?.length) mk("piping", layers.piping, fl.H * 0.3, false);
-    if (layers.electrical?.length) mk("electrical", layers.electrical, fl.H * 0.45, false);
+    if (layers.piping?.length) mk("piping", layers.piping, fl.H * 0.35, false);
+    if (layers.electrical?.length) mk("electrical", layers.electrical, fl.H * 0.5, false);
   }
   setLayerVisible(name: string, on: boolean) {
     const o = this.layerObjs[name];

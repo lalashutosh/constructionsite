@@ -52,22 +52,28 @@ export const LAYER_COLOURS: Record<string, number> = { envelope: 0xe7c98a, walls
 const LAYER_NAMES: [string, string][] = [["envelope", "Envelope"], ["walls", "Walls"], ["furniture", "Furniture"], ["piping", "Piping"], ["electrical", "Electrical"]];
 export type Layers = { envelope?: [number, number][][]; walls?: [number, number][][]; furniture?: { id: string; kind: string; polygon: [number, number][] }[];
   piping?: [number, number][][]; electrical?: [number, number][][]; notes?: Record<string, string> };
-export function LayerToggles({ viewer, layers }: { viewer: () => PlumbViewer | null; layers: Layers | null | undefined }) {
+export function LayerToggles({ viewer, layers, extra }: { viewer: () => PlumbViewer | null; layers: Layers | null | undefined; extra?: Record<string, number> }) {
   const [on, setOn] = useState<Record<string, boolean>>({ envelope: true, walls: true, furniture: true, piping: true, electrical: true });
+  const [msg, setMsg] = useState<string | null>(null);
+  useEffect(() => { if (!msg) return; const t = setTimeout(() => setMsg(null), 3500); return () => clearTimeout(t); }, [msg]);
   if (!layers) return null;
   return (
     <div className="layers">
       {LAYER_NAMES.map(([k, label]) => {
-        const has = k === "walls" || ((layers as Record<string, unknown[] | undefined>)[k]?.length ?? 0) > 0;
+        const has = k === "walls" || ((layers as Record<string, unknown[] | undefined>)[k]?.length ?? 0) > 0 || (extra?.[k] ?? 0) > 0;
         const why = layers.notes?.[k];
         return (
-          <button key={k} disabled={!has} title={has ? `${label}: show / hide` : why || "not on this sheet"}
-            className={`layer ${on[k] && has ? "on" : ""}`}
-            onClick={() => { const nv = !on[k]; setOn({ ...on, [k]: nv }); viewer()?.setLayerVisible(k, nv); }}>
+          <button key={k} title={has ? `${label}: show / hide` : why || "not on this sheet"}
+            className={`layer ${on[k] && has ? "on" : ""} ${has ? "" : "empty"}`}
+            onClick={() => {
+              if (!has) { setMsg(`${label}: ${why || "not on this sheet"}`); return; }
+              const nv = !on[k]; setOn({ ...on, [k]: nv }); viewer()?.setLayerVisible(k, nv);
+            }}>
             <i style={{ background: `#${LAYER_COLOURS[k].toString(16).padStart(6, "0")}` }} />{label}
           </button>
         );
       })}
+      {msg && <div className="layer-msg">{msg}</div>}
     </div>
   );
 }
@@ -76,9 +82,11 @@ export function LayerToggles({ viewer, layers }: { viewer: () => PlumbViewer | n
 export type Checklist = {
   deep: { on: boolean; reason: string; eta_s: number };
   rooms: { id: string; name: string; kind: string; area_m2: number | null; polygon: [number, number][]; counts: Record<string, number> }[];
-  totals: { kind: string; label: string; count: number; ids: string[]; tier: "green" | "amber" | "grey"; note?: string }[];
+  totals: { kind: string; label: string; count: number; ids: string[]; tier: "green" | "amber" | "grey"; note?: string; thumb?: string }[];
   elements: { id: string; kind: string; label: string; polygon: [number, number][]; room_id?: string | null }[];
   zones?: { name: string; polygon: [number, number][]; counts: Record<string, number> }[];
+  summary?: string[];
+  printed?: { title: string; text: string; kind: string }[];
   cost?: { usd: number; ms: number };
 };
 export function ChecklistPanel(p: { path: string | null; deepHint?: { on: boolean; eta_s: number; reason: string } | null;
@@ -90,7 +98,8 @@ export function ChecklistPanel(p: { path: string | null; deepHint?: { on: boolea
   const [since, setSince] = useState(0);
   const [now, setNow] = useState(Date.now());
   const [open, setOpen] = useState<string | null>(null);
-  useEffect(() => { setData(null); setErr(null); }, [p.path]);
+  useEffect(() => { setData(null); setErr(null); if (p.path) void run(); }, [p.path]); // eslint-disable-line react-hooks/exhaustive-deps
+  // the deep read is the normal read: it starts by itself when a drawing opens (cached per drawing after the first time)
   useEffect(() => { if (!busy) return; const t = setInterval(() => setNow(Date.now()), 500); return () => clearInterval(t); }, [busy]);
   const run = async () => {
     if (!p.path) return;
@@ -113,7 +122,7 @@ export function ChecklistPanel(p: { path: string | null; deepHint?: { on: boolea
       {(p.deepHint?.on || data?.deep.on) && !data && (
         <p className="deepnote">Deep read: this sheet is very detailed ({p.deepHint?.reason}). Counting every symbol takes about {Math.round(eta / 60) || 1} min.</p>
       )}
-      {!data && !busy && <button className="btn" onClick={() => void run()}>{p.deepHint?.on ? `Start the deep read (~${Math.round(eta / 60) || 1} min)` : "Count everything on this sheet"}</button>}
+      {!data && !busy && err && <button className="btn" onClick={() => void run()}>Try again</button>}
       {busy && (
         <div className="ckbusy"><div className="bar"><i style={{ width: `${Math.min(96, ((now - since) / 1000 / eta) * 100)}%` }} /></div>
           <span className="muted sm">Finding every symbol, naming each type once, counting ({Math.round((now - since) / 1000)} s of ~{eta} s)</span></div>
@@ -121,10 +130,20 @@ export function ChecklistPanel(p: { path: string | null; deepHint?: { on: boolea
       {err && <p className="err sm">{err}</p>}
       {data && (
         <>
+          {!!data.summary?.length && (
+            <div className="cksummary">
+              <p className="lead">{data.summary[0]}</p>
+              {data.summary.slice(1).map((t, i) => <p key={i}>{t}</p>)}
+            </div>
+          )}
+          {!data.totals.length && <p className="muted sm">No repeated symbols or tagged equipment on this sheet.</p>}
           <ul className="cktotals">
             {data.totals.map((t) => (
               <li key={t.kind} onClick={() => p.onShow(t.ids.map((i) => byId.get(i)?.polygon).filter(Boolean) as [number, number][][])} title={t.note}>
-                <i className={`dot ${t.tier}`} /><span>{t.label}</span><b>{t.count}</b>
+                {t.thumb ? <img src={t.thumb} alt="" /> : <span className="ck-noimg" />}
+                <span className="ck-name">{t.label.replace(/^Symbol Type (\d+)s$/, "Unnamed symbol $1")}
+                  <small><i className={`dot ${t.tier}`} /> {t.tier === "green" ? "two checks agree" : "one check"}</small></span>
+                <b>{t.count}</b>
               </li>
             ))}
           </ul>
