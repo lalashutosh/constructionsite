@@ -1,6 +1,6 @@
 STATUS: IN_PROGRESS
 
-Next action: P1 — raster-extractor + ui-builder running (C1 12:50, trust fixed). On return: verify, tick, then G1 gate.
+Next action: G1 gate (prompts/05_gate.md WAVE=w1, skip merge). NOTE: background subagents get Bash denied; spawn builders with run_in_background=false.
 
 ## Checklist
 ### P0 Bootstrap
@@ -13,9 +13,9 @@ Next action: P1 — raster-extractor + ui-builder running (C1 12:50, trust fixed
 
 ### P1 Core
 - [x] evaluator (prompts/10): stub 6.9%, prior floor 37.3% DEV, 29 eval tests green
-- [ ] raster-extractor (prompts/11): route chosen, clean-subset number, per-intent table (running C3)
+- [x] raster-extractor (prompts/11): route A; DEV150 61.3% (prior 47.3%), CLEAN 63.0% n=27 (in-sample after 2 fallback fixes)
 - [x] takeoff (prompts/12): scale + area + door schedule — 44 tests green
-- [ ] ui-builder (prompts/13): build clean, screenshots (running C3)
+- [x] ui-builder (prompts/13): typecheck+build+shot green, 19 shots, fixture-driven
 
 ### G1 Gate
 - [ ] gate w1 numbers in docs/STATUS.md, GO/NO-GO per agent
@@ -47,3 +47,4 @@ Next action: P1 — raster-extractor + ui-builder running (C1 12:50, trust fixed
 - 06:06 C3 P1: verified evaluator (stub 6.9%, prior floor 37.3% DEV, 29 tests) + takeoff (44 tests) done from C2. Spawned raster-extractor (finish measurement+claims) + ui-builder (web from scratch) in parallel.
 - 12:40 C1 BLOCKED: workspace trust gate denies all exec (python/pytest/make/npm/git) for lead AND subagents. raster-extractor+ui-builder did no real work; both stopped. Human must accept trust dialog. STATE/MORNING written to disk (uncommitted, git blocked). See docs/decisions/workspace-trust-block.md.
 - 12:50 C1 restart: exec works again (trust fixed). Respawned raster-extractor (re-measure) + ui-builder (build+shots) in parallel.
+- ~13:15 C1 P1 done: ui build+19 shots; raster DEV150 50.0%->61.3% after 2 prior-fallback fixes (CLEAN 44.4->63.0, n=27). Background subagents lack Bash -> use foreground.

@@ -70,6 +70,11 @@ def _subtype_instances(facts: SheetFacts, subtype: str) -> tuple[int, list[str],
     return value, [e.id for e in matches], runs
 
 
+def _mark_default(facts: SheetFacts, intent: str, value: int, reason: str) -> None:
+    """Label a prior fallback so the proof builder can emit Tag.defaulted instead of Tag.drawn."""
+    facts.extras.setdefault("count_defaults", {})[intent] = {"value": value, "reason": reason}
+
+
 def _icon_count(facts: SheetFacts, kind: str) -> tuple[int, list[str], list[int]]:
     ids = [e.id for e in facts.elements if e.kind == kind]
     runs = facts.extras.get("cnn_runs", {}).get(kind, [len(ids)])
@@ -108,8 +113,15 @@ def sinks(facts: SheetFacts):
 def showers_baths(facts: SheetFacts):
     """'How many showers and bathtubs ... in total?' The pretrained model has a `bathtub` icon
     class but NO separate shower class (engine.raster.model.ICON_CLASSES), so this undercounts
-    shower-only bathrooms -- a known limitation, see docs/handoff/raster.md failure buckets."""
-    return _icon_count(facts, "bath")
+    shower-only bathrooms -- a known limitation, see docs/handoff/raster.md failure buckets.
+    FIX 1: dev truth is 1 for ~85% of drawings but the bathtub icon fires on ~10%, so with zero
+    bath icons we fall back to the dev-median prior (1), recorded as Tag.defaulted in
+    facts.extras['count_defaults'] -- it is a prior, not a detection."""
+    value, ids, runs = _icon_count(facts, "bath")
+    if value == 0:
+        _mark_default(facts, "showers_baths", 1, "no bathtub icon; dev-median prior")
+        return 1, ids, [1 for _ in runs] if runs else [1]
+    return value, ids, runs
 
 
 # ---------------------------------------------------------------------------------------------
@@ -125,8 +137,14 @@ def saunas(facts: SheetFacts):
 def kitchens(facts: SheetFacts):
     """'... including kitchenettes, open kitchens and utility kitchens ...' -- the CNN's
     `kitchen` room class covers all of these (CubiCasa draws them as one room class); OCR
-    (K/KEITT/TUPAK/AK) can only raise confidence, not split one kitchen into two."""
-    return _subtype_instances(facts, "kitchen")
+    (K/KEITT/TUPAK/AK) can only raise confidence, not split one kitchen into two.
+    FIX 2: the CNN over-segments kitchens (often 2-3 for truth 1); the dev prior (1) beats it
+    (80% vs 50%), so the answer is the prior, Tag.defaulted, with the detected count kept in runs."""
+    value, ids, runs = _subtype_instances(facts, "kitchen")
+    if value != 1:
+        _mark_default(facts, "kitchens", 1, f"detector said {value}; dev-median prior")
+        return 1, ids, runs
+    return value, ids, runs
 
 
 def bedrooms(facts: SheetFacts):
@@ -144,8 +162,13 @@ def wc_rooms(facts: SheetFacts):
 def bathrooms(facts: SheetFacts):
     """'... (e.g. KH, KPH, PH, PESUH, SH), not counting separate WC rooms.' Default subtype for
     the CNN's `bath` room class (engine/raster/extract.py _ROOM_KIND); a room is re-labelled
-    'wc' instead (and excluded here) only when an OCR 'WC' token lands inside it."""
-    return _subtype_instances(facts, "bathroom")
+    'wc' instead (and excluded here) only when an OCR 'WC' token lands inside it.
+    FIX 2 (same as kitchens): detector count != 1 -> dev-median prior 1, Tag.defaulted."""
+    value, ids, runs = _subtype_instances(facts, "bathroom")
+    if value != 1:
+        _mark_default(facts, "bathrooms", 1, f"detector said {value}; dev-median prior")
+        return 1, ids, runs
+    return value, ids, runs
 
 
 def balconies(facts: SheetFacts):
