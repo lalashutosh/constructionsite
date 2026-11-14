@@ -112,11 +112,40 @@ def signals(path_abs: str, name: str) -> dict:
                 t = " ".join(doc[0].get_text().split())
                 out["text"] = t[:500]
         elif out["ext"] == "ifc":
+            import os
+            if os.path.getsize(path_abs) > 60 * 1024 * 1024:     # huge models: name only, never block the folder
+                out["note"] = "large IFC model, storeys not read"
+                return out
             import ifcopenshell
             m = ifcopenshell.open(path_abs)
             out["storeys"] = [st.Name for st in m.by_type("IfcBuildingStorey")][:20]
     except Exception:  # noqa: BLE001
         pass
+    return out
+
+
+def _sig_worker(args):
+    return signals(*args)
+
+
+def signals_isolated(items: list[tuple[str, str]], timeout_s: float = 60.0) -> list[dict]:
+    """signals() for many files in WORKER PROCESSES: PyMuPDF / IfcOpenShell are native and not thread-safe, and one
+    malformed upload must never take the API process down (it did: folder upload killed the server). A crash or a
+    hang only loses that file, which is then listed with an error."""
+    import concurrent.futures as cf
+    import multiprocessing as mp
+    out: list[dict] = []
+    ctx = mp.get_context("spawn")
+    with cf.ProcessPoolExecutor(max_workers=4, mp_context=ctx) as ex:
+        futs = [ex.submit(_sig_worker, it) for it in items]
+        for (path, name), fu in zip(items, futs):
+            ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+            try:
+                out.append(fu.result(timeout=timeout_s))
+            except cf.TimeoutError:
+                out.append({"ext": ext, "error": "timed out reading the file"})
+            except Exception as e:  # noqa: BLE001  (BrokenProcessPool after a native crash, parse errors ...)
+                out.append({"ext": ext, "error": f"could not read the file ({type(e).__name__})"})
     return out
 
 
@@ -186,18 +215,21 @@ def organise(files: list[dict], geometry_of: Callable[[str], dict], llm=None,
 
 
 def _organise_smart(files, geometry_of, thinker, abs_of) -> dict:
-    sig, scan = [], []
+    # Classification needs only cheap signals (name, title-block text, IFC storeys). The 3D geometry + scan check
+    # (CNN + 2 AI reviews per file) is built later, only for the floors the user opens: building it for every file
+    # here made big folders run for minutes and time out. A scan check already cached for a file is still used.
+    sig = signals_isolated([(abs_of(f["path"]), f.get("name") or f["path"]) for f in files])
+    scan = []
     for f in files:
-        name = f.get("name") or f["path"]
-        sig.append(signals(abs_of(f["path"]), name))
-        ext = sig[-1].get("ext")
         types = []
-        if ext in ("png", "jpg", "jpeg", "webp", "tif", "tiff", "bmp", "pdf"):
-            try:
-                g = geometry_of(f["path"])
+        try:
+            g = geometry_of(f["path"], cached_only=True)
+            if g:
                 types = [v.get("type") for v in (g.get("check") or {}).get("views") or [] if v.get("type")]
-            except Exception:  # noqa: BLE001
-                types = ["unreadable"]
+        except TypeError:
+            pass                                       # geometry_of without cached_only (tests): skip
+        except Exception:  # noqa: BLE001
+            types = []
         scan.append(types)
     cls, building, method = classify(files, sig, scan, thinker)
     floors, other = [], []

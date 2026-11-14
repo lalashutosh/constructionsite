@@ -382,3 +382,10 @@ body { font-size: 15px; }
 
 .dimtip { position: absolute; z-index: 9; max-width: 320px; background: var(--panel); border: 1px solid var(--rule); border-radius: var(--r); padding: 6px 10px; font-size: 13px; line-height: 1.4; pointer-events: none; color: var(--text); }
 .note-tl { top: 112px; }
+
+/* header band: 3D labels (drawn in the canvas) pass BEHIND the title / status / warning line instead of overlapping */
+.viewer::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 132px; z-index: 1; pointer-events: none;
+  background: linear-gradient(to bottom, var(--bg) 0%, var(--bg) 72%, transparent 100%); }
+.viewer > .vtitle, .viewer > .narr, .viewer > .scalecta, .viewer > .floorpills, .viewer > .dtoggle, .viewer > .drawtoggle { z-index: 2; }
+.narr .warnline { display: flex; align-items: center; gap: 6px; max-width: 60%; }
+.prog { background: var(--bg); padding-bottom: 6px; }   /* covers the drawing toggle while loading (no overlap) */

@@ -441,10 +441,23 @@ async def building(body: BuildingBody):
     """A folder of drawings -> floors in order (+ where each level came from) and the non-plan sheets.
     Runs the scan check per file (cached) and, with the LLM on, reads floor titles the file names do not give."""
     from engine.building import organise
+    files = []
     for f in body.files:
-        _resolve(PathRef(path=f.get("path")))
+        try:
+            _resolve(PathRef(path=f.get("path")))
+            files.append(f)
+        except HTTPException:
+            pass                                          # a bad path is skipped, not fatal for the folder
+    body.files = files
 
-    def geo(path):
+    def geo(path, cached_only: bool = False):
+        if cached_only:                                  # never build 3D for every file of a folder here
+            try:
+                f, _, coords = _drawing_png(path)
+                c = GEOM / f"{facts_cache.sha256_file(str(f))}-{coords}.json"
+                return json.loads(c.read_text()) if c.exists() else None
+            except Exception:  # noqa: BLE001
+                return None
         return asyncio.run(geometry(path))
 
     def img(path):
