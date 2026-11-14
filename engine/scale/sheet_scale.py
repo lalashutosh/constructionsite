@@ -31,7 +31,7 @@ from engine.scale import sheet_text
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 CACHE = ROOT / "cache" / "sheet_scale"
 CHECKS = ROOT / "cache" / "checks"
-VERSION = "v1"
+VERSION = "v2"
 AGREE = 0.05           # anchors within 5% count as agreeing
 M_PER_IN = 0.0254
 
@@ -67,19 +67,23 @@ def merge_lines(ws: list[dict]) -> list[dict]:
         def ax(w):
             b = w["box"]
             return (b[0], b[2], (b[1] + b[3]) / 2, b[3] - b[1]) if ang == 0 else (b[1], b[3], (b[0] + b[2]) / 2, b[2] - b[0])
-        items.sort(key=lambda w: (round(ax(w)[2] / 4), ax(w)[0]))
         lines: list[list[dict]] = []
-        for w in sorted(items, key=lambda w: ax(w)[2]):
+        ends: list[float] = []
+        for w in sorted(items, key=lambda w: ax(w)[0]):       # reading order along the line: no word is skipped
             a0, a1, c, h = ax(w)
-            placed = False
-            for ln in lines:
+            best, bd = None, None
+            for k, ln in enumerate(lines):
                 la0, la1, lc, lh = ax(ln[-1])
-                if abs(lc - c) < 0.5 * max(h, lh) and -0.5 * h < a0 - max(ax(x)[1] for x in ln) < 2.2 * max(h, lh) and a0 >= min(ax(x)[0] for x in ln):
-                    ln.append(w)
-                    placed = True
-                    break
-            if not placed:
+                gap = a0 - ends[k]
+                if abs(lc - c) < 0.5 * max(h, lh) and -0.5 * h < gap < 2.2 * max(h, lh):
+                    if bd is None or abs(lc - c) < bd:
+                        best, bd = k, abs(lc - c)
+            if best is None:
                 lines.append([w])
+                ends.append(a1)
+            else:
+                lines[best].append(w)
+                ends[best] = max(ends[best], a1)
         for ln in lines:
             ln.sort(key=lambda w: ax(w)[0])
             xs0 = [w["box"][0] for w in ln]; ys0 = [w["box"][1] for w in ln]
@@ -139,6 +143,7 @@ _M = re.compile(r"^(\d{1,3}(?:[.,]\d{1,3}))\s*m$", re.I)
 def parse_dim(text: str) -> list[dict]:
     """A token -> plausible readings [{m, kind, lax}]; imperial (ft-in), mm (plain integer) or metres."""
     t = norm(text).strip(" .,;:|[]()")
+    t = re.sub(r"^(\d{1,4})'\s*[.,_~=]\s*(\d{1,2}\s*\")$", r"\1'-\2", t)     # OCR: 55'.8" -> 55'-8"
     out = []
     m = _FTIN.match(t)
     if m and (m.group(2) is not None or t.endswith("'") or "-" in t):
@@ -286,13 +291,17 @@ def measure_dim(B: np.ndarray, wmask: np.ndarray, box: list[float], angle: int) 
             continue
         score = abs(y - (y0 + y1) / 2)
         if best is None or score < best[0]:
-            best = (score, tl, tr, y)
+            ol = min(p for p in left if p >= L - 2 * t)          # outermost ticks of the same line: extension lines of
+            orr = max(p for p in right if p <= R + 2 * t)        # other dimensions crossing it look like nearer ticks
+            best = (score, tl, tr, y, ol, orr)
     if best is None:
         return None
-    _, tl, tr, y = best
-    if angle == 90:
-        return {"len_px": tr - tl, "a": [y, tl], "b": [y, tr]}      # transposed back: (x, y) endpoints
-    return {"len_px": tr - tl, "a": [tl, y], "b": [tr, y]}
+    _, tl, tr, y, ol, orr = best
+    pt = (lambda xx: [y, xx]) if angle == 90 else (lambda xx: [xx, y])   # transposed back: (x, y) endpoints
+    out = {"len_px": tr - tl, "a": pt(tl), "b": pt(tr), "alts": []}
+    if (orr - ol) > 1.05 * (tr - tl):
+        out["alts"].append({"len_px": orr - ol, "a": pt(ol), "b": pt(orr)})
+    return out
 
 
 # --------------------------------------------------------------------------- line-first dimensions (tiny rasters)
@@ -396,11 +405,38 @@ def line_first_dims(g: np.ndarray, B: np.ndarray, max_spans: int = 40) -> list[d
 _BARNUM = re.compile(r"^(\d{1,3}(?:\.\d+)?)\s*(?:'|\"|m|ft|mm|M|FT)?$")
 
 
+def _robust_bar(pts: list[dict]) -> list[dict]:
+    """Labels that lie on one straight line value -> position (pairwise RANSAC). A misread label ('38' for 8') is
+    dropped instead of bending the fit; needs >= 3 consistent labels, else []."""
+    if len(pts) < 3:
+        return []
+    best: list[dict] = []
+    best_r = 1e18
+    for i in range(len(pts)):
+        for j in range(i + 1, len(pts)):
+            dv = pts[j]["v"] - pts[i]["v"]
+            if dv == 0:
+                continue
+            ppu = (pts[j]["cx"] - pts[i]["cx"]) / dv
+            if ppu <= 0:
+                continue
+            a = pts[i]["cx"] - ppu * pts[i]["v"]
+            span = ppu * (max(p["v"] for p in pts) - min(p["v"] for p in pts))
+            tol = max(0.9 * max(p["h"] for p in pts), 0.012 * span)
+            inl = [p for p in pts if abs(p["cx"] - (a + ppu * p["v"])) <= tol]
+            r = sum(abs(p["cx"] - (a + ppu * p["v"])) for p in inl)
+            if len(inl) > len(best) or (len(inl) == len(best) and r < best_r):
+                best, best_r = inl, r
+    return best if len(best) >= 3 else []
+
+
 def find_bars(ws: list[dict], B: Optional[np.ndarray] = None) -> list[dict]:
     """Collinear numeric labels (0 .. N with units) -> px per unit. Returns [{unit, ppu, resid, boxes, vals}]."""
     nums = []
     for w in ws:
         t = norm(w["text"])
+        if re.fullmatch(r"[Oo]\s*(?:'|\"|m|ft|mm|M|FT)?", t):     # OCR reads the bar's zero as the letter O
+            t = "0" + t[1:]
         m = _BARNUM.match(t)
         if m and w["conf"] >= 30:
             unit = "ft" if t.endswith("'") else ("m" if t.lower().endswith("m") and not t.lower().endswith("mm") else
@@ -430,7 +466,9 @@ def find_bars(ws: list[dict], B: Optional[np.ndarray] = None) -> list[dict]:
         if len(right) < 3:
             continue
         left = [dict(n, v=-n["v"]) for n in pos[:k0] if n["v"] > 0]
-        pts = left + right
+        pts = _robust_bar(left + right)
+        if len(pts) < 3:
+            continue
         xs = np.array([n["cx"] for n in pts])
         vs = np.array([n["v"] for n in pts])
         ppu, a = np.polyfit(vs, xs, 1)
@@ -514,7 +552,9 @@ def _analyze(abs_path: str, sha: str, max_px: int) -> dict:
         for r in reads[:1]:
             res["dims"].append({"text": norm(w["text"]), "box": w["box"], "angle": ang, "conf": w["conf"], "m": r["m"],
                                 "kind": r["kind"], "lax": r["lax"], "len_px": ms["len_px"], "ends": [ms["a"], ms["b"]],
-                                "ppm": ms["len_px"] / r["m"]})
+                                "ppm": ms["len_px"] / r["m"],
+                                "alts": [{"len_px": x["len_px"], "ends": [x["a"], x["b"]], "ppm": x["len_px"] / r["m"]}
+                                         for x in ms.get("alts", [])]})
     if pdf is None and max(W, H) < 2200 and len(res["dims"]) < 3 and not res["bars"] and not res["notes"]:
         try:
             res["dims"] += line_first_dims(g, B)
@@ -561,6 +601,16 @@ def candidates(res: dict) -> list[dict]:
                         "note": f"scale note '{n['label']}' on {paper['name'] or 'sheet'}"
                                 f"{'' if paper['exact'] else ' (sheet size guessed from the aspect ratio)'}",
                         "weight": 1.2 if paper["exact"] else (0.6 if paper.get("std_dpi") else 0.35)})
+            if not paper["exact"]:            # same aspect, other sheet size (half-size prints): a weaker alternative
+                long_px = max(res["w"], res["h"])
+                for alt in paper.get("ambiguous", [])[:2]:
+                    dpi = long_px / PAPER_IN[alt][0]
+                    std = any(abs(dpi / sd - 1) < 0.01 for sd in STD_DPI)
+                    out.append({"id": f"scale:note:{n['key']}:{alt.split()[0]}{alt.split()[1]}", "kind": "printed_ratio",
+                                "family": "ratio", "ppm": dpi / (M_PER_IN * n["ratio"]), "sigma": 0.05, "tag": "defaulted",
+                                "label": n["label"], "boxes": [n["box"]], "conf": n["conf"] / 100.0,
+                                "note": f"scale note '{n['label']}' if printed on {alt} (half/double-size print)",
+                                "weight": 0.45 if std else 0.25})
     # graphic bars
     for i, b in enumerate(res["bars"]):
         if not b["unit"]:
@@ -579,8 +629,24 @@ def candidates(res: dict) -> list[dict]:
         k = (round(d["len_px"] / 3), round(d["ends"][0][0] / 3), round(d["ends"][0][1] / 3))
         if k not in uniq or (d["conf"] > uniq[k]["conf"] and not d["lax"]):
             uniq[k] = d
-    pool = [(d["ppm"], d) for d in uniq.values()]
-    for grp in _cluster(pool, 0.04):
+    pool = []
+    for k, d in uniq.items():
+        d["_k"] = k
+        pool.append((d["ppm"], d))
+        for al in d.get("alts", []):          # the same dimension read between its outermost ticks
+            if W / 3000.0 <= al["ppm"] <= W / 5.0:
+                pool.append((al["ppm"], dict(d, len_px=al["len_px"], ends=al["ends"], ppm=al["ppm"], alt=True, alts=[])))
+    used_k: set = set()
+    groups = []
+    for grp in sorted(_cluster(pool, 0.04), key=lambda g: -len({x[1]["_k"] for x in g})):
+        seen_k: dict = {}
+        for ppm_, d in sorted(grp, key=lambda x: bool(x[1].get("alt"))):     # primary reading first
+            if d["_k"] not in seen_k and d["_k"] not in used_k:
+                seen_k[d["_k"]] = (ppm_, d)
+        if seen_k:
+            used_k.update(seen_k)
+            groups.append(list(seen_k.values()))
+    for grp in groups:
         items = [x[1] for x in grp]
         ppms = [x[0] for x in grp]
         # weight each by its span: long dimension lines measure more accurately
@@ -622,6 +688,11 @@ def consensus(cands: list[dict]) -> dict:
     top = groups[0]
     conflict = len(groups) > 1 and groups[1]["score"] >= 0.5 * top["score"] and any(
         c["tag"] != "defaulted" for c in groups[1]["items"])
+    if conflict:                      # many agreeing dimension lines outvote a few that share one misreading
+        n1 = sum(c.get("members", 0) for c in top["items"] if c["family"] == "dim")
+        n2 = sum(c.get("members", 0) for c in groups[1]["items"] if c["family"] == "dim")
+        if n1 >= 10 and n2 < 0.3 * n1 and "bar" not in groups[1]["families"]:
+            conflict = False
     return {"winner": top, "groups": groups, "conflict": conflict}
 
 

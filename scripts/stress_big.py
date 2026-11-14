@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import os
 import pathlib
 import resource
@@ -25,6 +26,36 @@ QUESTIONS = [
     "What is the scale of this drawing?",
     "How many dorm rooms are on this floor?",
 ]
+
+
+def _nums(v) -> list[float]:
+    if isinstance(v, (int, float)):
+        return [float(v)]
+    if isinstance(v, (list, tuple)):
+        return [float(x) for x in v if isinstance(x, (int, float))]
+    if isinstance(v, dict):
+        return [float(x) for x in v.values() if isinstance(x, (int, float))]
+    return []
+
+
+def score(qd: dict, a: dict) -> dict:
+    """ok True/False/None (None = no truth). Numbers: within tol (default exact for counts, 2% else)."""
+    tr, kind = qd.get("truth"), qd.get("kind", "any")
+    if tr is None:
+        return {"ok": None}
+    if kind == "text":
+        norm = lambda x: re.sub(r"[\s,]", "", str(x or "")).upper()
+        return {"ok": norm(tr) in norm(a.get("text")) or norm(tr) in norm(a.get("value"))}
+    if kind == "scale":
+        v = a.get("scale")
+        return {"ok": bool(v) and abs(v - tr) / tr <= qd.get("tol", 0.03)}
+    vals = _nums(a.get("value"))
+    if not vals and a.get("text"):
+        vals = [float(x) for x in re.findall(r"\d+(?:\.\d+)?", (a.get("text") or "").replace(",", ""))]
+    tol = qd.get("tol", 0.0 if kind == "count" else 0.02)
+    trs = tr if isinstance(tr, list) else [tr]
+    ok = all(any(abs(v - t) <= tol * max(abs(t), 1e-9) + (1e-9 if kind != "count" else 0) for v in vals) for t in trs)
+    return {"ok": ok}
 
 
 def worker(path: str, llm: str) -> dict:
@@ -75,7 +106,14 @@ def worker(path: str, llm: str) -> dict:
                                "views": [(v.get("n"), v.get("type"), v.get("reader")) for v in (g.get("check") or {}).get("views", [])]}
         except Exception as e:  # noqa: BLE001
             out["geometry_error"] = f"{type(e).__name__}: {e}"
-    for q in QUESTIONS:
+    qs = [{"q": q} for q in QUESTIONS]
+    try:
+        man = json.loads((ROOT / "cache/stress/manifest.json").read_text())
+        qs = next((m["qs"] for m in man if m["file"] == path and m.get("qs")), qs)
+    except Exception:  # noqa: BLE001
+        pass
+    for qd in qs:
+        q = qd["q"]
         t = time.perf_counter()
         try:
             po = eng.ask(abs_path, q, benchmark=False)
@@ -84,6 +122,7 @@ def worker(path: str, llm: str) -> dict:
                                    "usd": round(po.cost.usd, 5), "refusal": po.refusal,
                                    "scale": (po.scale.px_per_m if po.scale else None),
                                    "notes": [n for n in po.notes][-3:]})
+            out["answers"][-1].update(score(qd, out["answers"][-1]))
         except Exception as e:  # noqa: BLE001
             out["answers"].append({"q": q, "error": f"{type(e).__name__}: {e}", "s": round(time.perf_counter() - t, 2)})
     out["total_s"] = round(time.perf_counter() - t_all, 1)
@@ -133,12 +172,15 @@ def main():
         if "geometry" in r or "geometry_error" in r:
             md.append(f"geometry: {r.get('geometry') or r.get('geometry_error')}")
         md.append("")
-        md.append("| question | intent | answer | tier | s | $ |")
-        md.append("|---|---|---|---|---|---|")
+        md.append("| question | intent | answer | tier | ok | s | $ |")
+        md.append("|---|---|---|---|---|---|---|")
         for x in r["answers"]:
             ans = x.get("error") or (x.get("text") or str(x.get("value"))).replace("|", "/")
-            md.append(f"| {x['q']} | {x.get('intent','')} | {ans} | {x.get('tier','')} | {x['s']} | {x.get('usd','')} |")
+            ok = {True: "OK", False: "WRONG", None: "-"}.get(x.get("ok"), "-")
+            md.append(f"| {x['q']} | {x.get('intent','')} | {ans[:300]} | {x.get('tier','')} | {ok} | {x['s']} | {x.get('usd','')} |")
         md.append("")
+    tot = [x.get("ok") for r in rows for x in r.get("answers", []) if x.get("ok") is not None]
+    md.insert(1, f"**score: {sum(1 for t in tot if t)}/{len(tot)} graded answers correct**")
     pathlib.Path(a.out).write_text("\n".join(md))
     print("wrote", a.out)
 

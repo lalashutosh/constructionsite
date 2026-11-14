@@ -255,6 +255,9 @@ class PipelineEngine:
         try:
             from engine.answer_text import sentence
             po.answer_text = sentence(po)
+            pa = next((n[len("printed answer: "):] for n in po.notes if n.startswith("printed answer: ")), None)
+            if pa and po.value is not None:          # read from the sheet's own print: say exactly what it prints
+                po.answer_text = pa[0].upper() + pa[1:]
             if on_floor:
                 po.answer_text = sheetfloor.name_floor(po.answer_text, on_floor)
         except Exception:  # noqa: BLE001  (the sentence is a convenience; never fail an answer over it)
@@ -363,6 +366,17 @@ class PipelineEngine:
             results = self._sheet_text(ctx, rt, facts, scale, po, notes)
         if rt.layer == "sheet" and kind == "count" and not any(e.kind == "room" for e in facts.elements):
             results = []                                 # "how many rooms" with no recognised room is not "0 rooms"
+        # --- printed on the sheet (engine/sheet_lookup.py): notes, schedules, tags, overall dimensions ---
+        if facts.extras.get("route") == "cad" or (facts.extras.get("profile") or {}).get("sheet_type") == "cad_sheet":
+            try:
+                got = self._printed(ctx, rt, kind, facts, scale, po, notes, results)
+            except Exception as e:  # noqa: BLE001  (a failed lookup never breaks the answer)
+                got = None
+                notes.append(f"printed-text lookup failed: {type(e).__name__}: {e}")
+            if got is not None:
+                results, kind = got
+                po.kind = kind
+        # --- end printed on the sheet ---
         if (facts.extras.get("route") == "cad" and kind == "count" and rt.intent in _DETECTOR_KINDS
                 and not any(e.kind == _DETECTOR_KINDS[rt.intent] for e in facts.elements)
                 and not any(getattr(r, "exact", False) for r in results)):   # exact vector voters (Swiss PDF) still count
@@ -730,6 +744,86 @@ class PipelineEngine:
         return [VoterResult(Voter(name="sheet_query", value=res.value, element_ids=res.evidence_ids, runs=[],
                                   note="computed from the sheet's recognised outline / rooms"),
                             evidence=[by[i] for i in res.evidence_ids if i in by], unit=res.unit)]
+
+    def _printed(self, ctx, rt: Route, kind: str, facts: SheetFacts, scale: Optional[ScaleInfo], po: ProofObject,
+                 notes: list[str], results: list):
+        """Answers the sheet PRINTS (tag `specified`, evidence = the printed words). Returns (results, kind) or None."""
+        import re as _re
+        from engine import sheet_lookup as L
+        from engine.registry import VoterResult
+        q, ap, sha = ctx.question, ctx.abs_path, po.provenance.sha256
+
+        def vr(name, value, boxes, label, note, unit=None, exact=True, second=False, prefix="printed"):
+            ev = L.element_boxes(f"{prefix}_{name}", boxes, label)
+            return VoterResult(Voter(name=name, value=value, element_ids=[e.id for e in ev], note=note), evidence=ev,
+                               unit=unit, exact=exact, second_opinion=second)
+
+        if rt.intent == "overall_size":
+            sc = scale if scale is not None and scale.px_per_m else self._scale(facts, sha)
+            od = L.overall_dims(ap, sha, sc.px_per_m if sc else None)
+            if not (od and "w" in od and "d" in od):
+                return None
+            v = f"{od['w']['m']:.2f} m x {od['d']['m']:.2f} m"
+            why = f"width {od['w']['text']}: {od['w']['how']}; depth {od['d']['text']}: {od['d']['how']}"
+            notes.append(f"printed answer: {v} ({od['w']['text']} x {od['d']['text']} printed on the sheet; {why}).")
+            po.scale = sc
+            for r in results:
+                r.second_opinion = True
+            return [vr("printed_dimensions", v, [od["w"]["box"], od["d"]["box"]], None, why, unit="label")] + results, "text"
+
+        want_count = bool(_re.search(r"\bhow\s+many\b|\bnumber\s+of\b", q, _re.I))
+        if want_count and (rt.intent == "unknown" or (rt.intent in _DETECTOR_KINDS and not results)):
+            tc = L.tag_count(ap, sha, q)
+            lk = L.lookup(ap, sha, q)
+            res = []
+            if lk and lk["kind"] == "count":
+                res.append(vr("printed_count", lk["value"], lk["boxes"], lk["text"], f"the sheet prints '{lk['text']}'"))
+            if tc:
+                val = tc["numbered"] if tc["missing"] else tc["read"]
+                nt = (f"{tc['read']} distinct {tc['prefix']} tags read on the sheet ({', '.join(tc['tags'])}); "
+                      f"{tc['prefix']} = {tc['noun']} from {tc['why']}")
+                if tc["missing"]:
+                    nt += f"; the numbering implies {tc['numbered']} (not read: {', '.join(tc['missing'])})"
+                res.append(vr("equipment_tags", val, tc["boxes"], None, nt, exact=False, second=bool(res), prefix="tag"))
+            if not res:
+                return None
+            v = res[0].voter.value
+            src = res[0].voter.note
+            other = [r.voter for r in res[1:] if r.voter.value != v]
+            notes.append(f"printed answer: {v} ({src}" + (f"; but {other[0].note}" if other else "") + ").")
+            return res, "count"
+
+        if kind == "area":
+            lk = L.lookup(ap, sha, q)
+            if lk and lk["kind"] == "area" and lk["coverage"] >= 0.99:
+                notes.append(f"printed answer: {lk['printed']} = {lk['value']:.1f} m² (the sheet prints '{lk['text']}').")
+                return [vr("printed_area", float(lk["value"]), lk["boxes"], lk["text"], f"the sheet prints '{lk['text']}'",
+                           unit="m2")], "area"
+            if rt.intent == "total_room_area":
+                pt = L.printed_total_area(ap, sha)
+                if pt:
+                    for r in results:
+                        r.second_opinion = True
+                    meas = next((r.voter.value for r in results if isinstance(r.voter.value, (int, float))), None)
+                    cmp = (f"; measured from the drawing: {meas:.0f} m² ({(meas / pt['m2'] - 1) * 100:+.0f}%)"
+                           if meas else "")
+                    notes.append(f"printed answer: {pt['printed']} = {pt['m2']:.1f} m² (the sheet prints '{pt['text']}'{cmp}).")
+                    return [vr("printed_total_area", float(pt["m2"]), [pt["box"]], pt["text"],
+                               f"the sheet prints '{pt['text']}'", unit="m2")] + results, "area"
+            return None
+
+        if rt.intent == "unknown" or (kind == "text" and not results):
+            lk = L.lookup(ap, sha, q)
+            if not lk:
+                return None
+            k = lk["kind"]
+            val = lk["value"] if k != "text" else lk["printed"]
+            alts = "".join(f"; also printed: '{a['text']}'" for a in lk.get("alts", [])[:2])
+            shown = lk["printed"] if k == "text" else f"{lk['printed']}"
+            notes.append(f"printed answer: the sheet prints '{shown}'{alts}.")
+            unit = "m2" if k == "area" else ("label" if k == "text" else None)
+            return [vr("printed_note", val, lk["boxes"], lk["text"], f"the sheet prints '{lk['text']}'", unit=unit)], k
+        return None
 
     def _sheet_grey(self, po: ProofObject, rt: Route, facts: SheetFacts, scale: Optional[ScaleInfo], notes: list[str]) -> ProofObject:
         prof = facts.extras.get("profile") or {}
