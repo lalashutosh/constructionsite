@@ -95,6 +95,19 @@ def _walls(img: np.ndarray) -> tuple[list, str]:
     return walls, f"walls traced as line pairs (gap {gap}px), connected network only, {len(walls)} pieces"
 
 
+_LAST_ROOMS = None
+
+
+def _rooms_to_original(indoor: np.ndarray, v, w: int, h: int) -> np.ndarray:
+    """Indoor-room mask from the CNN's rendered variant back to original pixels (via the variant's mapping)."""
+    out = np.zeros((h, w), np.uint8)
+    cnts, _ = cv2.findContours(indoor * 255, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    for c in cnts:
+        pts = v.to_original([(float(p[0][0]), float(p[0][1])) for p in c])
+        cv2.fillPoly(out, [np.array(pts, np.int32)], 1)
+    return out
+
+
 def cnn_walls(img_bgr: np.ndarray) -> Optional[tuple[list, str]]:
     """CubiCasa CNN wall class -> polygons in original pixels; None when the model is unavailable."""
     try:

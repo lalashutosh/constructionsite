@@ -61,3 +61,13 @@ def test_one_reviewer_is_not_a_consensus():
          "text_mirrored": True}
     out = scancheck.check(img, _walls(40, 360), [], None, [FakeReviewer(a, "fast")])
     assert not any("mirrored" in w or "missing" in w for w in out["warnings"])
+
+
+def test_cnn_wall_reader_does_not_crash_silently():
+    """Regression: a refactor deleted a helper and cnn_walls() returned None (swallowed NameError) on every scan."""
+    import inspect
+    from engine import geometry3d as G
+    src = inspect.getsource(G.cnn_walls)
+    for name in ("_rooms_to_original", "_trace"):
+        if name in src:
+            assert hasattr(G, name), f"cnn_walls uses missing helper {name}"
