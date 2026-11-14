@@ -1,6 +1,50 @@
 # Handoff — where the build stands and how to continue
 
-## UPDATE 2026-11-14 18:20 (interactive lead session, branch `p2-finish`) — read this first
+## UPDATE 2026-11-14 19:15 — START HERE (supersedes the 18:20 section below where they differ)
+
+**Live log: https://github.com/lalashutosh/constructionsite/issues/1** — read the latest comments, post after each step
+(`gh issue comment 1 -R lalashutosh/constructionsite -b "..."`; only the main session can post, subagents report to it).
+Branch `p2-finish`; push is blocked for agents by `.claude/settings.json`, the human pushes.
+
+### Fix first (known bugs, in priority order)
+1. **Uploaded `.dxf` / `.ifc` without a sibling image -> 3D view "geometry 404"** (answers still work: e.g. 29 doors,
+   21 windows verified). `api/main.py::_drawing_png` only renders dxf/ifc through a same-stem png/pdf/svg. Fix: render
+   the DXF itself (ezdxf drawing addon -> matplotlib PNG, cache by sha) and for `/api/geometry` build walls straight
+   from DXF entities (layer WALL / ROOM_OUTLINE polygons, `engine/vector/dxf.py` has the parser) in that PNG's pixel space.
+   IFC: render a plan cut per storey (ifcopenshell geom) or show "BIM model: open per storey" in the UI.
+2. **Project view (folder upload)**: engine fixed in 52b842c (only distinct storeys stack, alternatives, display_label);
+   the UI agent was asked to use it (no "Floor ?", one-line message instead of six identical refusals, non-plan files
+   open flat). Verify in the browser with the Sports_Complex folder.
+3. **1 failing test** at pause: most likely `tests/test_query.py::test_fixed_specs_equal_intent_path_on_cached_facts`
+   (saunas 1 vs 2 on gitignored `cache/raster` facts) caused by the UNCOMMITTED raster WIP; it skips on a clean
+   checkout. Re-check after the raster work is verified or reverted.
+4. Large commercial PDF sheets give almost no walls (line-pair reader tuned for scans); DWG unsupported (no reader).
+
+### In flight / uncommitted at pause
+- `engine/raster/extract.py`, `engine/raster/ocr.py`: raster finetune agent (bedrooms via MH labels, saunas, door
+  overcount, windows). NOT verified. Verify: delete `cache/raster` + `cache/pipeline`, run
+  `.venv/bin/python -m evalkit.run --engine pipeline --split dev --sources cubicasa5k --no-siblings` (baseline 63.8%;
+  colorful-2002 must give 2 bedrooms, key 7 windows). Commit only if it beats 63.8% with no intent below its prior;
+  else `git checkout -- engine/raster/`.
+- UI agent round (web/, uncommitted while running): project explorer polish, realistic low-poly fixtures,
+  upload progress bar, hover-to-see length x breadth, the project-view fixes above. Commit after
+  `cd web && npm run typecheck && npm run build`.
+
+### Done since 18:20 (all pushed up to 1029b94; later commits local until the human pushes)
+- 2923ed3 CNN wall reader crashed silently since 20293de -> fixed + regression test (walls back on all scans)
+- 1029b94 QA sweep (docs/qa/hard-questions-sweep.md: 27/30 OK) fixes: comparisons reuse the Findings readers,
+  'which room' names room + size, IFC count sentences
+- 9d83c26 CI on CRACI (`.github/workflows/ci.yml`): amd64 + arm64 python, web build, egress locked (complete SBOM).
+  Needs the CRACI GitHub App installed on the repo before jobs start.
+- 52b842c folder -> building: only distinct storeys stack; revisions/phases are alternatives; foundation/enlarged typed
+- issue #1 created as the live log; CLAUDE.md + this file point to it
+
+### Remember
+- Restart the API after engine edits (it does not hot-reload) and clear `cache/geometry` + `cache/pipeline`;
+  a stale server hid the wall fix once. Start with LLM on: `LLM_PROVIDER=verda .venv/bin/python -m uvicorn api.main:app --port 8000`.
+- Measured DEV: 75.0% with siblings / 70.4% without (n=6,192). Never run the holdout split.
+
+## UPDATE 2026-11-14 18:20 (interactive lead session, branch `p2-finish`)
 
 > **Live progress log: GitHub issue https://github.com/lalashutosh/constructionsite/issues/1 ("Build log").**
 > Every agent / Claude Code session: read the latest comments there before starting, and post a short comment
