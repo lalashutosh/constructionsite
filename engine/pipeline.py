@@ -332,6 +332,10 @@ class PipelineEngine:
         if ctx.facts is None:
             ctx.facts = self.analyze(path, allow_siblings=allow, _ctx=ctx)
         facts = ctx.facts
+        # --- element overrides (user) ---
+        from engine import overrides_el
+        facts = ctx.facts = overrides_el.apply(facts, sha)
+        # --- end element overrides (user) ---
         po.provenance.fmt = facts.provenance.fmt or po.provenance.fmt
         po.provenance.license = facts.provenance.license
         po.provenance.credit = facts.provenance.credit
@@ -447,6 +451,9 @@ class PipelineEngine:
                         seen.add(i)
                         po.evidence.append(by[i])
 
+        # --- element overrides (user): receipt ---
+        overrides_el.annotate(po, facts)
+        # --- end element overrides (user): receipt ---
         for e in po.evidence:                 # voters may leak numpy scalars into attrs (JSON can't encode them)
             e.attrs = _native(e.attrs)
         unit = next((r.unit for r in results if r.unit), None)

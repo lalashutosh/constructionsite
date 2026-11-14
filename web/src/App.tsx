@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { answerCheck, fetchChecks, MOCK_CHECKS, ask, buildProject, fetchPlan, fetchSamples, setScale, ScaleError, geometry, imageUrl, upload, type Geometry, type Sample, type BuildPlan, type BuildingResult, type Check } from "./api";
+import { answerCheck, fetchChecks, MOCK_CHECKS, ask, buildProject, fetchPlan, fetchSamples, setScale, ScaleError, geometry, imageUrl, upload, type Geometry, type Sample, type BuildPlan, type BuildingResult, type Check, type PlanElement, fetchElements, overrideElement, undoElement, ElementsUnavailable } from "./api";
 import { ChecksBlock, kindWord, scaleBrief } from "./checks";
+import { Inspector, kindName } from "./inspector";
 import { chipsFor, findingSpecs } from "./logic";
 import type { ProofObject } from "./types";
 import { HowPage } from "./how";
@@ -72,6 +73,15 @@ export default function App() {
   const [checkBusy, setCheckBusy] = useState<string | null>(null);
   const [checkNote, setCheckNote] = useState<string | null>(null);
   const [checkErr, setCheckErr] = useState<string | null>(null);
+  // element inspector
+  const [elems, setElems] = useState<Record<string, PlanElement[] | "na">>({});
+  const [elSel, setElSel] = useState<string | null>(null);
+  const [elHover, setElHover] = useState<string | null>(null);
+  const [elLocal, setElLocal] = useState<Record<string, Set<string>>>({});
+  const [elUndo, setElUndo] = useState<Record<string, number>>({});
+  const [elBusy, setElBusy] = useState(false);
+  const [elNote, setElNote] = useState<string | null>(null);
+  const [elErr, setElErr] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const dirRef = useRef<HTMLInputElement>(null);
   const runId = useRef(0);
@@ -153,6 +163,15 @@ export default function App() {
     fetchChecks(path, dims).then((it) => setChecks((c) => ({ ...c, [path]: it }))).catch(() => { /* endpoint missing: no Checks block, nothing invented */ });
   }, [active?.path, geoReady]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // elements (rooms, walls, doors, windows, fixtures, stairs, labels): fetched once the drawing is read
+  useEffect(() => {
+    if (!active || !active.geo || elems[active.path]) return;
+    const path = active.path;
+    setElSel(null);
+    setElHover(null);
+    fetchElements(path).then((it) => setElems((m) => ({ ...m, [path]: it }))).catch((e) => { if (e instanceof ElementsUnavailable) setElems((m) => ({ ...m, [path]: "na" })); });
+  }, [active?.path, geoReady]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const askPath = flat?.path ?? active?.path ?? null;
   const submit = async (q: string) => {
     if (!askPath || !q.trim()) return;
@@ -217,6 +236,58 @@ export default function App() {
       setCheckBusy(null);
     }
   };
+  /** after any element change: re-read elements, the 3D geometry, the checks, and every answer, in place */
+  const refreshAfterElement = async (path: string) => {
+    const [it, g, ck] = await Promise.all([fetchElements(path).catch(() => null), geometry(path).catch(() => null), fetchChecks(path).catch(() => null)]);
+    if (it) setElems((m) => ({ ...m, [path]: it }));
+    if (g) setFloors((fs) => fs.map((f) => (f.path === path ? { ...f, geo: g } : f)));
+    if (ck) setChecks((m) => ({ ...m, [path]: ck }));
+    await reask(path);
+  };
+  const runElement = async (what: string, fn: (path: string) => Promise<{ affected?: string[]; id?: string } | void>, undo = 0) => {
+    if (!active) return;
+    const path = active.path;
+    setElBusy(true);
+    setElErr(null);
+    try {
+      const r = await fn(path);
+      if (r && r.id) setElLocal((m) => ({ ...m, [path]: new Set([...(m[path] ?? []), r.id!]) }));
+      setElUndo((m) => ({ ...m, [path]: Math.max(0, (m[path] ?? 0) + undo) }));
+      await refreshAfterElement(path);
+      const aff = r && r.affected && r.affected.length ? ` Updated: ${r.affected.join(", ")}.` : "";
+      setElNote(`${what}.${aff}`);
+      window.setTimeout(() => setElNote(null), 6000);
+    } catch (e) {
+      setElErr((e as Error).message);
+    } finally {
+      setElBusy(false);
+    }
+  };
+  const elList = active && Array.isArray(elems[active.path]) ? (elems[active.path] as PlanElement[]) : null;
+  const inspector = active ? (
+    <Inspector
+      path={active.path}
+      els={elList}
+      unavailable={elems[active.path] === "na"}
+      selId={elSel}
+      hoverId={elHover}
+      local={elLocal[active.path] ?? new Set()}
+      busy={elBusy}
+      note={elNote}
+      err={elErr}
+      canUndo={(elUndo[active.path] ?? 0) > 0 || !!elList?.some((e) => e.user_changed)}
+      imgSrc={imageUrl(active.path)}
+      dims={active.geo ? { w: active.geo.width, h: active.geo.height } : null}
+      credit={active.geo?.credit || active.credit || ""}
+      synthetic={/synthetic/i.test(active.geo?.credit || active.credit || "")}
+      onSelect={setElSel}
+      onHover={setElHover}
+      onRetype={(e, kind, subtype) => void runElement(`Changed to ${subtype ?? kindName(kind)}`, async (path) => { const r = await overrideElement(path, { element_id: e.id, action: "retype", kind, subtype }); return { affected: r.affected, id: e.id }; }, 1)}
+      onRemove={(e) => void runElement(`Removed (not a ${kindName(e.kind)})`, async (path) => { const r = await overrideElement(path, { element_id: e.id, action: "remove" }); return { affected: r.affected, id: e.id }; }, 1)}
+      onRestore={(e) => void runElement("Restored", async (path) => { const r = await overrideElement(path, { element_id: e.id, action: "restore" }); return { affected: r.affected, id: e.id }; }, 1)}
+      onUndo={() => void runElement("Undone", async (path) => { await undoElement(path); }, -1)}
+    />
+  ) : null;
   const activeChecks = active ? (checks[active.path] ?? null) : null;
   const scaleLine = scaleBrief(activeChecks ?? undefined);
 
@@ -559,6 +630,10 @@ export default function App() {
             projectNote={projectNote}
             onRetryGeo={() => setFloors((fs) => fs.map((f) => (f.key === activeKey ? { ...f, geoErr: null } : f)))}
             checkEv={hoverCheck?.evidence ?? null}
+            elements={elList}
+            elSelId={elSel}
+            elHoverId={elHover}
+            onElPick={(id, how) => (how === "click" ? setElSel(id) : setElHover(id))}
             onWhyRead={() => {
               setSelected(null);
               setWhy(true);
@@ -618,7 +693,7 @@ export default function App() {
               onHover={setHoverIdx}
               imgUrl={active ? imageUrl(active.path) : ""}
               scaleLine={scaleLine}
-              checks={<ChecksBlock items={activeChecks} busyId={checkBusy} note={checkNote} err={checkErr} onAnswer={(c, ans) => void onCheckAnswer(c, ans)} onType={startScale} onHover={setHoverCheck} />}
+              checks={<><ChecksBlock items={activeChecks} busyId={checkBusy} note={checkNote} err={checkErr} onAnswer={(c, ans) => void onCheckAnswer(c, ans)} onType={startScale} onHover={setHoverCheck} />{inspector}</>}
               onSelect={(p) => active && setSelected({ path: active.path, proof: p })}
               onWhy={(p) => {
                 if (active) setSelected({ path: active.path, proof: p });

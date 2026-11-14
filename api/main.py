@@ -305,6 +305,150 @@ async def checks_answer(body: CheckAnswerBody):
         raise HTTPException(422, str(e))
 
 
+# --------------------------------------------------------------------------- element inspector + overrides
+class ElementOverrideBody(PathRef):
+    element_id: str
+    action: str                      # retype | remove | restore
+    kind: Optional[str] = None
+    subtype: Optional[str] = None
+
+
+_SOURCE_WORDS = {"png": "the CubiCasa model", "jpg": "the CubiCasa model", "jpeg": "the CubiCasa model",
+                 "pdf": "the PDF vector data", "dxf": "the CAD file", "ifc": "the BIM model", "svg": "the SVG drawing"}
+_PLURAL_Q = {"doors": "How many doors", "windows": "How many windows", "bedrooms": "How many bedrooms",
+             "kitchens": "How many kitchens", "bathrooms": "How many bathrooms", "wc_rooms": "How many WC rooms",
+             "saunas": "How many saunas", "balconies": "How many balconies", "toilets": "How many toilets",
+             "sinks": "How many sinks", "showers_baths": "How many showers or baths", "rooms": "How many rooms",
+             "total_area": "What is the total floor area"}
+
+
+def _element_rows(eng, path: str, sha: str, facts) -> list[dict]:
+    from engine import overrides_el as OV
+    scale = None
+    try:
+        sc = eng._scale(facts, sha) if hasattr(eng, "_scale") else facts.scale
+        if sc is not None and sc.px_per_m and not getattr(sc, "needs_user", False) and sc.px_per_m != 1.0:
+            scale = sc.px_per_m
+    except Exception:  # noqa: BLE001
+        scale = facts.scale.px_per_m if facts.scale and facts.scale.px_per_m else None
+    src = _SOURCE_WORDS.get((facts.provenance.fmt or "").lower(), "the drawing")
+    rows = []
+    for e in facts.elements:
+        xs = [p[0] if not hasattr(p, "x") else p.x for p in e.polygon]
+        ys = [p[1] if not hasattr(p, "y") else p.y for p in e.polygon]
+        size = None
+        if scale and xs and ys:
+            w, h = (max(xs) - min(xs)) / scale, (max(ys) - min(ys)) / scale
+            size = {"w": round(w, 2), "h": round(h, 2)}
+            if e.kind == "room":
+                a = abs(sum(xs[i] * ys[(i + 1) % len(xs)] - xs[(i + 1) % len(xs)] * ys[i] for i in range(len(xs)))) / 2
+                size["area_m2"] = round(a / scale ** 2, 1)
+        uo = e.attrs.get("user_override")
+        fd = OV.feeds(e.kind, e.subtype)
+        what = e.kind.replace("_", " ") + (f" ({e.subtype})" if e.subtype and e.kind == "room" else "")
+        art = "an" if what[0] in "aeiou" else "a"
+        if uo:
+            frm = uo["from_kind"] + (f" ({uo['from_subtype']})" if uo.get("from_subtype") else "")
+            expl = f"You set this to {art} {what} (it was read as {frm}). This is your decision."
+        else:
+            expl = f"This is {art} {what}, read from {src} ({round(e.conf * 100)}% sure)."
+        qs = [_PLURAL_Q.get(i, i.replace("_", " ")) for i in fd]
+        if qs:
+            expl += " Counts toward " + ", ".join(f"'{q}'" for q in qs) + "."
+        rows.append({"id": e.id, "kind": e.kind, "subtype": e.subtype, "label": e.label, "conf": round(e.conf, 3),
+                     "polygon": [[round(x, 1), round(y, 1)] for x, y in zip(xs, ys)], "size_m": size,
+                     "tag": "chosen" if uo else ("specified" if e.kind == "label" else "drawn"),
+                     "feeds": fd, "explanation": expl, "user_override": uo})
+    return rows
+
+
+def _elements_payload(eng, path: str, sha: str, allow: bool) -> dict:
+    from engine import overrides_el as OV
+    facts = eng.analyze(path, allow_siblings=allow)
+    facts = OV.apply(facts, sha)
+    return {"elements": _element_rows(eng, path, sha, facts),
+            "removed_by_user": [{k: v for k, v in r.items() if k != "element"} for r in facts.extras.get("removed_by_user", [])],
+            "overrides_hash": facts.extras.get("overrides_hash", ""), "allowed_kinds": list(OV.KINDS),
+            "room_subtypes": list(OV.ROOM_SUBTYPES)}
+
+
+@app.get("/api/elements")
+async def elements(path: str, allow_siblings: bool = True):
+    """Every element with what it is, size, tag, confidence, and the answers it feeds (user overrides applied)."""
+    p = _resolve(PathRef(path=path))
+    return await asyncio.to_thread(_elements_payload, engine(), p, _sha(p), allow_siblings)
+
+
+def _affected(eng, p: str, sha: str, allow: bool, kinds: list[tuple]) -> list[dict]:
+    """Recompute the headline question of every intent the changed element touches (before/after the override)."""
+    from engine import overrides_el as OV
+    qs = {"doors": "How many doors are there?", "windows": "How many windows are shown on this floor plan?",
+          "bedrooms": "How many bedrooms are there?", "kitchens": "How many kitchens are there?",
+          "bathrooms": "How many bathrooms are there?", "wc_rooms": "How many separate WC rooms are there?",
+          "saunas": "How many saunas are there?", "balconies": "How many balconies are there?",
+          "toilets": "How many toilets are there?", "sinks": "How many sinks are there?",
+          "showers_baths": "How many showers or baths are there?", "rooms": "How many rooms are there?",
+          "total_area": "What is the total net floor area in m2?"}
+    intents: list[str] = []
+    for k, s in kinds:
+        for i in OV.feeds(k, s):
+            if i in qs and i not in intents:
+                intents.append(i)
+    out = []
+    for i in intents:
+        po = eng.ask(p, qs[i], allow_siblings=allow, benchmark=False)
+        out.append({"intent": i, "question": qs[i], "value": po.value, "unit": po.unit, "tier": po.tier.value,
+                    "answer_text": po.answer_text, "notes": [n for n in po.notes if "you changed" in n or "you removed" in n]})
+    return out
+
+
+@app.post("/api/elements/override")
+async def elements_override(body: ElementOverrideBody):
+    """Apply one user decision about an element (retype / remove / restore); returns the updated element and the
+    findings it changes, recomputed."""
+    from engine import overrides_el as OV
+    p = _resolve(body)
+    sha = _sha(p)
+    eng = engine()
+    base = await asyncio.to_thread(eng.analyze, p, allow_siblings=body.allow_siblings)
+    orig = next((e for e in base.elements if e.id == body.element_id), None)
+    if orig is None and not any(r["element_id"] == body.element_id for r in OV.load(sha)):
+        raise HTTPException(404, f"unknown element: {body.element_id}")
+    try:
+        OV.validate(body.action, body.kind, body.subtype)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    OV.add(sha, body.element_id, body.action, body.kind, body.subtype)
+    payload = await asyncio.to_thread(_elements_payload, eng, p, sha, body.allow_siblings)
+    row = next((r for r in payload["elements"] if r["id"] == body.element_id), None)
+    kinds = []
+    if orig is not None:
+        kinds.append((orig.kind, orig.subtype))
+    if row:
+        kinds.append((row["kind"], row["subtype"]))
+    if body.kind:
+        kinds.append((body.kind, body.subtype))
+    findings = await asyncio.to_thread(_affected, eng, p, sha, body.allow_siblings, kinds)
+    return {"element": row, "removed": row is None, "findings": findings, "overrides_hash": payload["overrides_hash"]}
+
+
+@app.post("/api/elements/undo")
+async def elements_undo(body: PathRef):
+    from engine import overrides_el as OV
+    p = _resolve(body)
+    sha = _sha(p)
+    eng = engine()
+    last = OV.undo(sha)
+    if last is None:
+        return {"undone": None, "findings": [], "overrides_hash": ""}
+    base = await asyncio.to_thread(eng.analyze, p, allow_siblings=body.allow_siblings)
+    kinds = [(e.kind, e.subtype) for e in base.elements if e.id == last["element_id"]]
+    if last.get("kind"):
+        kinds.append((last["kind"], last.get("subtype")))
+    findings = await asyncio.to_thread(_affected, eng, p, sha, body.allow_siblings, kinds)
+    return {"undone": last, "findings": findings, "overrides_hash": OV.overrides_hash(sha)}
+
+
 @app.post("/api/override", response_model=ProofObject)
 async def override(body: OverrideBody):
     """User verdict on one element (Skeptic Duel: "Is this a door? Yes / No") -> recompute the answer.

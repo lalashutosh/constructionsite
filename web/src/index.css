@@ -475,3 +475,35 @@ body { font-size: 15px; }
 }
 .cq.sm2 { font-size: 14px; margin-top: 4px; }
 .crow.open:not(:first-child) { padding: 8px 0; }
+
+/* element inspector */
+.inspector { border-bottom: 1px solid var(--rule); padding: var(--s2) var(--s3) var(--s2); flex: none; }
+.inspector .chead { display: flex; align-items: baseline; gap: var(--s2); flex-wrap: wrap; }
+.inspector .chead .linkbtn { margin-left: auto; }
+.elna, .elhint { margin: 6px 0 0; }
+.elmap { position: relative; margin: 8px 0 4px; border: 1px solid var(--rule); border-radius: var(--r); overflow: hidden; background: #fff; }
+.elmap svg { display: block; width: 100%; max-height: 300px; cursor: pointer; }
+.elmap figcaption { padding: 4px 8px; background: var(--bg, transparent); }
+.elribbon { position: absolute; top: 8px; left: -28px; transform: rotate(-35deg); background: var(--warn); color: #000; font: 700 10px/1 var(--mono, monospace); letter-spacing: .08em; padding: 4px 32px; pointer-events: none; }
+.elpoly { fill: transparent; stroke: var(--accent); stroke-opacity: .55; pointer-events: all; }
+.elpoly.room { stroke-opacity: .25; }
+.elpoly.hov { fill: var(--accent); fill-opacity: .25; stroke-opacity: 1; }
+.elpoly.sel { fill: var(--accent); fill-opacity: .3; stroke-opacity: 1; }
+.elpoly.chg { stroke-dasharray: 6 3; }
+.elpoly.removed { stroke: var(--muted); stroke-dasharray: 2 4; stroke-opacity: .6; }
+.elpoly.selring { fill: none; stroke: var(--pin, var(--accent-text)); pointer-events: none; }
+.eldetail { margin-top: 8px; padding: 10px 0 2px; border-top: 1px solid var(--rule); min-width: 0; }
+.eldetail.gone .elwhat { text-decoration: line-through; }
+.eltop { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.elwhat { font-size: 15px; }
+.elabel { color: var(--muted); font-size: 12px; }
+.elbadge { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 600; padding: 1px 8px; border: 1px solid var(--accent); border-radius: 99px; color: var(--accent-text); }
+.elfacts { margin: 8px 0; display: grid; gap: 4px; }
+.elfacts > div { display: grid; grid-template-columns: 84px 1fr; gap: 8px; align-items: center; }
+.elfacts dt { font-size: 12px; color: var(--muted); }
+.elfacts dd { margin: 0; font-size: 13px; min-width: 0; }
+.elexp { margin: 6px 0 10px; font-size: 13px; line-height: 1.45; }
+.elpick { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; font-size: 13px; }
+.elpick select { min-height: 32px; background: var(--panel, transparent); color: inherit; border: 1px solid var(--rule); border-radius: var(--r); padding: 0 6px; }
+.eldetail .cact { margin-top: 8px; }
+.elundo { margin-top: 8px; display: inline-flex; align-items: center; gap: 4px; }

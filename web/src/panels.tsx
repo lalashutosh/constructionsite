@@ -6,6 +6,8 @@ import ProofView, { ProofCard, SeeProof, verdictLine } from "./proofview";
 import type { ProofObject } from "./types";
 import { PlumbViewer, THEMES, type FloorInput, type Phase } from "./viewer3d";
 import { pct, sizeKinds } from "./checks";
+import { pickAt } from "./inspector";
+import type { PlanElement } from "./api";
 import { floorOf, sheetFloors, splitSheet } from "./sheetfloors";
 
 export type ThemeName = "dark" | "light";
@@ -186,6 +188,11 @@ export function ViewerPane(p: {
   onRetryGeo: () => void;
   /** evidence boxes of the hovered check (image pixels) */
   checkEv?: { box: [number, number, number, number]; label: string }[] | null;
+  /** element inspector: elements of the active drawing (original image px), selection + hover ids */
+  elements?: PlanElement[] | null;
+  elSelId?: string | null;
+  elHoverId?: string | null;
+  onElPick?: (id: string | null, how: "hover" | "click") => void;
 }) {
   const [tip, setTip] = useState<{ text: string; x: number; y: number } | null>(null);
   const [len, setLen] = useState("");
@@ -195,11 +202,12 @@ export function ViewerPane(p: {
   const viewer = useRef<PlumbViewer | null>(null);
   const hoverCb = useRef(p.onHover);
   hoverCb.current = p.onHover;
+  const elPointCb = useRef<(how: "hover" | "click", hit: { floor: string; x: number; y: number } | null) => void>(() => {});
   const measCb = useRef(p.onMeasured);
   measCb.current = p.onMeasured;
 
   useEffect(() => {
-    const v = new PlumbViewer(host.current!, { onHoverPin: (i) => hoverCb.current(i), onDimInfo: (t) => setTip(t) }, THEMES[p.theme]);
+    const v = new PlumbViewer(host.current!, { onHoverPin: (i) => hoverCb.current(i), onDimInfo: (t) => setTip(t), onElementPoint: (how, hit) => elPointCb.current(how, hit) }, THEMES[p.theme]);
     viewer.current = v;
     if (import.meta.env.DEV) (window as unknown as { __plumb?: PlumbViewer }).__plumb = v;   // debugging only
     return () => {
@@ -258,6 +266,32 @@ export function ViewerPane(p: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sig, p.theme, mapped, p.showPins, proof?.id, evKey]);
   useEffect(() => viewer.current?.setHighlight(p.hoverIdx), [p.hoverIdx]);
+
+  // element picking in 3D: ray hits a floor plane -> drawing pixel -> smallest element outline under it
+  const els = p.elements ?? null;
+  const elPart = (e: PlanElement) => {
+    const sub = shown.filter((x) => x.parent === p.active?.key);
+    if (sub.length <= 1) return sub[0] ?? null;
+    const cx = e.polygon.reduce((s, q) => s + q[0], 0) / Math.max(1, e.polygon.length), cy = e.polygon.reduce((s, q) => s + q[1], 0) / Math.max(1, e.polygon.length);
+    return sub.find((x) => x.crop && cx >= x.crop[0] && cx <= x.crop[2] && cy >= x.crop[1] && cy <= x.crop[3]) ?? null;
+  };
+  elPointCb.current = (how, hit) => {
+    if (!els || !hit) return p.onElPick?.(null, how);
+    const part = shown.find((x) => x.key === hit.floor);
+    if (!part || part.parent !== p.active?.key) return p.onElPick?.(null, how);
+    const ox = part.crop?.[0] ?? 0, oy = part.crop?.[1] ?? 0;
+    p.onElPick?.(pickAt(els, hit.x + ox, hit.y + oy, 3)?.id ?? null, how);
+  };
+  useEffect(() => viewer.current?.setElementPicking(!!els && els.length > 0 && p.scale === "off"), [els, p.scale]);
+  useEffect(() => {
+    const id = p.elSelId ?? p.elHoverId;
+    const e = id && els ? els.find((x) => x.id === id) : null;
+    const part = e ? elPart(e) : null;
+    if (!e || !part) return viewer.current?.setElementOutline(null, null, false);
+    const ox = part.crop?.[0] ?? 0, oy = part.crop?.[1] ?? 0;
+    viewer.current?.setElementOutline(part.key, e.polygon.map(([x, y]) => [x - ox, y - oy] as [number, number]), !!p.elSelId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [p.elSelId, p.elHoverId, els, sig]);
   useEffect(() => viewer.current?.setDrawing(p.drawingOn), [p.drawingOn, sig, p.theme]);
   useEffect(() => viewer.current?.setStage(p.stage), [p.stage, sig, p.theme]);
 

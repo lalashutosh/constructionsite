@@ -227,3 +227,41 @@ export async function answerCheck(path: string, id: string, answer: "yes" | "no"
   if (!res.ok) throw new Error(`answer failed (${res.status})`);
   return ((await res.json()) as ChecksResponse).items ?? [];
 }
+
+// ---- element inspector (every drawn element is selectable and can be retyped) ----
+export interface PlanElement {
+  id: string;
+  kind: string;
+  subtype: string | null;
+  label: string | null;
+  conf: number;
+  polygon: [number, number][];
+  size_m: { w: number; h: number; area: number } | null;
+  tag: "drawn" | "specified" | "chosen";
+  feeds: string[];
+  explanation: string;
+  /** set by the engine when the user changed it (optional: also derived client-side) */
+  user_changed?: boolean;
+  removed?: boolean;
+}
+export class ElementsUnavailable extends Error {}
+export async function fetchElements(path: string): Promise<PlanElement[]> {
+  const res = await fetch(`${BASE}/elements?path=${q1(path)}`);
+  if (res.status === 404 || res.status === 405 || res.status === 501) throw new ElementsUnavailable(`elements ${res.status}`);
+  if (!res.ok) throw new Error(`elements ${res.status}`);
+  const j = (await res.json()) as PlanElement[] | { items?: PlanElement[]; elements?: PlanElement[] };
+  return Array.isArray(j) ? j : (j.elements ?? j.items ?? []);
+}
+export interface OverrideBody { element_id: string; action: "retype" | "remove" | "restore"; kind?: string; subtype?: string }
+export async function overrideElement(path: string, b: OverrideBody): Promise<{ element: PlanElement | null; affected: string[] }> {
+  const res = await fetch(`${BASE}/elements/override`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path, ...b }) });
+  if (!res.ok) throw new Error(`could not save the change (${res.status})`);
+  const j = (await res.json()) as { element?: PlanElement | null; affected?: string[] };
+  return { element: j.element ?? null, affected: j.affected ?? [] };
+}
+export async function undoElement(path: string): Promise<boolean> {
+  const res = await fetch(`${BASE}/elements/undo`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path }) });
+  if (!res.ok) throw new Error(`undo failed (${res.status})`);
+  const j = (await res.json().catch(() => ({ ok: true }))) as { ok?: boolean };
+  return j.ok !== false;
+}

@@ -24,6 +24,8 @@ export interface PinInput {
 interface Callbacks {
   onHoverPin: (idx: number | null) => void;
   onDimInfo?: (tip: { text: string; x: number; y: number } | null) => void;
+  /** pointer over/click on a floor plane: floor key + floor-local drawing pixels (null = nothing) */
+  onElementPoint?: (kind: "hover" | "click", hit: { floor: string; x: number; y: number } | null) => void;
 }
 
 export type Phase = "site" | "foundation" | "floor" | "walls" | "openings" | "services" | "finishes" | "roof";
@@ -190,6 +192,9 @@ export class PlumbViewer {
   private dimGroup = new THREE.Group();
   private dims: { sprite: THREE.Sprite; born: number; hover?: DimHover; wpx: number; hpx: number }[] = [];
   private hlGroup = new THREE.Group();
+  private elGroup = new THREE.Group();
+  private elPicking = false;
+  private lastElHover = 0;
   private hoverDim = -1;
   private measureHover: { a: THREE.Vector3; b: THREE.Vector3; px: number } | null = null;
   private measureTyped: string | null = null;
@@ -239,12 +244,18 @@ export class PlumbViewer {
     this.scene.add(this.measureGroup);
     this.scene.add(this.dimGroup);
     this.scene.add(this.hlGroup);
+    this.scene.add(this.elGroup);
     this.camera.position.set(95, 100, 125);
     const dom = this.renderer.domElement;
     dom.addEventListener("pointermove", (e) => {
       const r = dom.getBoundingClientRect();
       this.mouse.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
       this.mousePx = { x: e.clientX - r.left, y: e.clientY - r.top };
+      const now = performance.now();
+      if (this.elPicking && !this.measureKey && now - this.lastElHover > 60 && e.buttons === 0) {
+        this.lastElHover = now;
+        this.cb.onElementPoint?.("hover", this.floorPoint());
+      }
     });
     dom.addEventListener("pointerleave", () => {
       this.mouse.set(9, 9);
@@ -256,7 +267,13 @@ export class PlumbViewer {
       this.skipIntro();
     });
     dom.addEventListener("pointerup", (e) => {
-      if (!this.measureKey) return;
+      if (!this.measureKey) {
+        if (!this.elPicking || Math.hypot(e.clientX - this.downAt.x, e.clientY - this.downAt.y) > 5 || performance.now() - this.downAt.t > 500) return;
+        const r = dom.getBoundingClientRect();
+        this.mouse.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+        this.cb.onElementPoint?.("click", this.floorPoint());
+        return;
+      }
       if (Math.hypot(e.clientX - this.downAt.x, e.clientY - this.downAt.y) > 5 || performance.now() - this.downAt.t > 500) return;
       // aim from THIS click, not the last pointermove (taps and clicks without a prior move missed the drawing)
       const r = dom.getBoundingClientRect();
@@ -757,6 +774,38 @@ export class PlumbViewer {
     window.clearTimeout(this.resumeTimer);
     this.controls.autoRotate = floorKey ? false : !this.reduce;
     this.controls.enableRotate = !floorKey;
+  }
+
+  /** Nearest floor plane under the pointer, as floor-local drawing pixels. Planes are raycast even when the drawing is hidden. */
+  private floorPoint(): { floor: string; x: number; y: number } | null {
+    this.ray.setFromCamera(this.mouse, this.camera);
+    let best: { floor: string; x: number; y: number; d: number } | null = null;
+    for (const [key, fl] of this.floorGroups) {
+      const hit = this.ray.intersectObject(fl.plane, false)[0];
+      if (!hit || (best && hit.distance >= best.d)) continue;
+      const l = fl.group.worldToLocal(hit.point.clone());
+      best = { floor: key, x: l.x + fl.w / 2, y: l.z + fl.h / 2, d: hit.distance };
+    }
+    return best ? { floor: best.floor, x: best.x, y: best.y } : null;
+  }
+
+  /** Turn element picking (hover + click on the model) on or off. */
+  setElementPicking(on: boolean) {
+    this.elPicking = on;
+    if (!on) this.clear(this.elGroup);
+  }
+
+  /** Outline one element on its floor (floor-local drawing pixels); null clears. `hot` = selected, else hover. */
+  setElementOutline(floorKey: string | null, polygon: [number, number][] | null, hot: boolean) {
+    this.clear(this.elGroup);
+    const fl = floorKey ? this.floorGroups.get(floorKey) : undefined;
+    if (!fl || !polygon || polygon.length < 2) return;
+    const y = fl.H * 0.55;
+    const pts = polygon.map(([x, z]) => fl.group.localToWorld(new THREE.Vector3(x - fl.w / 2, y, z - fl.h / 2)));
+    const mat = new THREE.LineBasicMaterial({ color: hot ? this.T.pin : this.T.accent, depthTest: false, transparent: true, opacity: hot ? 1 : 0.8 });
+    const line = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(pts), mat);
+    line.renderOrder = 11;
+    this.elGroup.add(line);
   }
 
   private measureClick() {
