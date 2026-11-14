@@ -143,7 +143,9 @@ def extract(path: str, *, allow_siblings: bool = True) -> SheetFacts:
             ))
 
     facts = SheetFacts(
-        provenance=Provenance(file=path, sha256=sha, fmt="png", license=LICENSE, credit=CREDIT),
+        provenance=Provenance(file=path, sha256=sha, fmt="png",                    # the CubiCasa licence only for CubiCasa files
+                              license=LICENSE if "cubicasa5k" in str(path) else None,
+                              credit=CREDIT if "cubicasa5k" in str(path) else None),
         sheet_type="floor_plan", legible=True, width_px=w, height_px=h, language="fi",
         elements=elements, extras=extras,
     )

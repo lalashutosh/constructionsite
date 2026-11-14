@@ -332,6 +332,8 @@ def _element_rows(eng, path: str, sha: str, facts) -> list[dict]:
     except Exception:  # noqa: BLE001
         scale = facts.scale.px_per_m if facts.scale and facts.scale.px_per_m else None
     src = _SOURCE_WORDS.get((facts.provenance.fmt or "").lower(), "the drawing")
+    if facts.extras.get("route") == "cad":           # construction sheets are not read by the residential CNN
+        src = "the sheet's line geometry at its printed scale"
     rows = []
     for e in facts.elements:
         xs = [p[0] if not hasattr(p, "x") else p.x for p in e.polygon]
@@ -340,7 +342,7 @@ def _element_rows(eng, path: str, sha: str, facts) -> list[dict]:
         if scale and xs and ys:
             w, h = (max(xs) - min(xs)) / scale, (max(ys) - min(ys)) / scale
             size = {"w": round(w, 2), "h": round(h, 2)}
-            if e.kind == "room":
+            if e.kind in ("room", "region", "zone", "footprint"):
                 a = abs(sum(xs[i] * ys[(i + 1) % len(xs)] - xs[(i + 1) % len(xs)] * ys[i] for i in range(len(xs)))) / 2
                 size["area_m2"] = round(a / scale ** 2, 1)
         uo = e.attrs.get("user_override")
@@ -621,16 +623,22 @@ async def geometry(path: str):
         raise HTTPException(415, "svg geometry not supported; ask for the pdf sibling")
     sha = facts_cache.sha256_file(str(f))
     out = GEOM / f"{sha}-{coords}.json"
-    if out.exists():
-        return json.loads(out.read_text())
+
+    def fresh():                                     # 3D built by an older reader is rebuilt, never served stale
+        if not out.exists():
+            return None
+        g = json.loads(out.read_text())
+        return g if g.get("reader_version") == facts_cache.READER_VERSION else None
+    got = fresh()
+    if got is not None:
+        return got
     with _GEO_GUARD:
         lock = _GEO_LOCKS.setdefault(out.name, threading.Lock())
 
     def build_once():
         with lock:                                   # parallel opens of one new drawing build it once
-            if out.exists():
-                return json.loads(out.read_text())
-            return build()
+            g = fresh()
+            return g if g is not None else build()
 
     def build():
         import cv2
@@ -656,7 +664,7 @@ async def geometry(path: str):
                 credit = credits.lookup(siblings.dataset_root(), path)[1]
             except Exception:  # noqa: BLE001
                 pass
-            g.update(path=path, coords=coords, credit=credit, check=None)
+            g.update(path=path, coords=coords, credit=credit, check=None, reader_version=facts_cache.READER_VERSION)
             GEOM.mkdir(parents=True, exist_ok=True)
             out.write_text(json.dumps(g))
             return g
@@ -676,7 +684,18 @@ async def geometry(path: str):
                      "llm_calls": (rv.get("asked", 0) if rv.get("used") else 0) + (len(revs or []) if au.get("used") else 0),
                      "usd": round(rv.get("cost_usd", 0.0) + au.get("cost_usd", 0.0), 5),
                      "note": "reading the drawing + 3D walls + scan check, paid once per file (cached by sha256)"}
-        g.update(path=path, coords=coords, credit=(facts.provenance.credit if facts else None))
+        g.update(path=path, coords=coords, credit=(facts.provenance.credit if facts else None),
+                 reader_version=facts_cache.READER_VERSION)
+        if facts is not None and coords == "pixels":     # printed evidence solved the scale: sizes show by default
+            try:
+                sc = engine()._scale(facts, sha)
+                if (sc.px_per_m and not sc.needs_user and not sc.widths_relative
+                        and any(a.kind in ("dimension", "scale_bar", "printed_ratio", "printed_area", "user")
+                                and "REJECTED" not in (a.note or "") for a in sc.anchors)):
+                    g["px_per_m"] = float(sc.px_per_m)
+                    g["scale_note"] = "; ".join(a.note or a.kind for a in sc.anchors if "REJECTED" not in (a.note or ""))[:300]
+            except Exception:  # noqa: BLE001
+                pass
         GEOM.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(g))
         return g
@@ -822,16 +841,63 @@ async def findings(path: str):
     p = _resolve(PathRef(path=path))
     from evalkit.intents import source_of
     src = source_of(p) or "cubicasa5k"
-    qs = _finding_questions().get(src) or _finding_questions().get("cubicasa5k", [])
     eng = engine()
 
     def run():
+        facts = eng.analyze(p)
+        cad = facts.extras.get("route") == "cad"
+        qs = CAD_FINDINGS if cad else (_finding_questions().get(src) or _finding_questions().get("cubicasa5k", []))
         rows = []
         for intent, q in qs:
             po = eng.ask(p, q, benchmark=False)
+            if po.value is None or po.tier.value == "grey":
+                continue                      # nothing found -> no finding (never "0 bedrooms" on a pump house)
+            if po.kind == "count" and isinstance(po.value, (int, float)) and po.value == 0:
+                continue
             rows.append({"intent": intent, "question": q, "proof": json.loads(po.model_dump_json())})
+        if cad:
+            rows += _printed_findings(p, facts)
         return rows
-    return {"source": src, "findings": await asyncio.to_thread(run)}
+    return {"source": "construction_sheet" if facts_is_cad(eng, p) else src, "findings": await asyncio.to_thread(run)}
+
+
+CAD_FINDINGS = [("scale_info", "What is the scale of this drawing?"),
+                ("overall_size", "What is the overall length and width of the building?"),
+                ("total_room_area", "What is the total area of all rooms?")]
+
+
+def facts_is_cad(eng, p: str) -> bool:
+    try:
+        return eng.analyze(p).extras.get("route") == "cad"
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _printed_findings(p: str, facts) -> list[dict]:
+    """What the sheet prints (area / count tables, tagged equipment, pipe sizes, slab types) as findings, each with
+    the printed words as evidence (engine/sheet_findings.py). Tag `specified`: the sheet says so."""
+    from contracts.proof import Element, ProofObject, Provenance, Tier
+    from engine import sheet_findings
+    from engine.pipeline import _abs
+    from engine.scale import sheet_text
+    ap = _abs(p)
+    sha = facts.provenance.sha256 or facts_cache.sha256_file(ap)
+    out = []
+    for f in sheet_findings.findings(sheet_text.words(ap, sha)):
+        if f["kind"] == "note":
+            continue
+        ev = []
+        for i, it in enumerate(f["items"]):
+            for j, b in enumerate(it["boxes"][:12]):
+                x0, y0, x1, y1 = [float(v) for v in b]
+                ev.append(Element(id=f"{f['id']}_{i}_{j}", kind="label", polygon=[(x0, y0), (x1, y0), (x1, y1), (x0, y1)],
+                                  label=f"{it['label']}: {it['value']}", conf=0.9, attrs={"printed": True}))
+        po = ProofObject(id=f"{sha[:8]}-{f['id']}", question=f["title"], intent=f["kind"], kind="text", value=f["text"],
+                         unit="label", tier=Tier.amber, evidence=ev[:60], provenance=Provenance(file=p, sha256=sha),
+                         answer_text=f"{f['title']}: {f['text']}",
+                         notes=["read from the sheet's own print (OCR words; boxes show each value)"])
+        out.append({"intent": f["kind"], "question": f["title"], "proof": json.loads(po.model_dump_json())})
+    return out
 
 
 @app.post("/api/decide")

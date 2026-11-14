@@ -315,12 +315,69 @@ def extract_facts(path: str, abs_path: str, prof: dict):
     els = elements(img, prof, words)
     H, W = img.shape[:2]
     extras = {"route": "cad", "profile": light(prof), "n_words": len(words), "plan_kind": plan_kind(prof, words)}
+    try:                       # at a solved scale the verified outline + its zones replace the line-geometry guesses
+        ol = _outline_elements(abs_path, prof, words)
+    except Exception as e:  # noqa: BLE001
+        ol = None
+        extras["outline_error"] = f"{type(e).__name__}: {e}"
+    if ol is not None:
+        els_ol, info = ol
+        colour = [e for e in els if e.kind == "zone"]           # legend-matched colour modules stay (they are read
+        els = colour + els_ol                                   # from the legend); slivers / hatch 'rooms' go
+        extras["outline"] = info
     notes = []
     if not any(e.kind == "room" for e in els):
         notes.append(f"no rooms recognised (plan kind: {extras['plan_kind']})")
     return SheetFacts(provenance=Provenance(file=path, sha256=prof["sha256"], fmt=abs_path.rsplit(".", 1)[-1].lower()),
                       sheet_type="floor_plan", legible=True, width_px=W, height_px=H, elements=els, extras=extras,
                       legibility_note="; ".join(notes) or None)
+
+
+def _outline_elements(abs_path: str, prof: dict, words: list[dict]):
+    """Footprint + zones from engine/outline.py at the sheet's own solved scale (None when the scale is not solid)."""
+    from engine import outline as O
+    from engine.scale import sheet_scale as S
+    sha = prof["sha256"]
+    st = S.sheet_state(abs_path, sha)
+    win = st["cons"]["winner"]
+    if not win or st["conf"] < 0.4:
+        return None
+    ppm = float(win["ppm"])
+    r = O.outline(abs_path, sha, ppm, prof.get("main_view"))
+    if not r or r["area_m2"] < 4:
+        return None
+    try:                       # cross-check against the printed overall dimensions (verified ones only)
+        from engine import sheet_lookup as L
+        od = L.overall_dims(abs_path, sha, ppm) or {}
+        if "w" in od and "d" in od:
+            pw, pd = sorted([od["w"]["m"], od["d"]["m"]])
+            mw, md = sorted(r["bbox_m"])
+            if abs(mw / pw - 1) > 0.15 or abs(md / pd - 1) > 0.15:
+                return None    # the traced outline is not the building the sheet dimensions: do not show it
+    except Exception:  # noqa: BLE001
+        pass
+    from shapely.geometry import Polygon, Point
+    out = [Element(id="footprint_ol", kind="footprint", polygon=[tuple(p) for p in r["polygon"]], conf=0.7,
+                   attrs={"area_m2": r["area_m2"], "bbox_m": r["bbox_m"], "method": r["method"], "px_per_m": ppm,
+                          "from_walls": True, "source": "outline"})]
+    labels = []
+    for w in words:
+        t = w["text"].strip()
+        if len(t) >= 3 and re.search(r"[A-Za-z]{3}", t) and not DIM_RX.match(t) and t.upper() not in STOP:
+            b = w["box"]
+            labels.append(((b[0] + b[2]) / 2, (b[1] + b[3]) / 2, t, b[3] - b[1]))
+    for i, z in enumerate(r["zones"]):
+        if z["area_m2"] < 0.02 * r["area_m2"]:
+            continue
+        poly = Polygon(z["polygon"])
+        inside = [l for l in labels if poly.contains(Point(l[0], l[1]))]
+        inside.sort(key=lambda l: (round(l[1] / max(l[3], 1)), l[0]))      # reading order
+        lab = " ".join(l[2] for l in inside[:6]) or None
+        out.append(Element(id=f"zone_ol_{i}", kind="region", subtype="zone", polygon=[tuple(p) for p in z["polygon"]],
+                           label=lab, conf=0.6, attrs={"area_m2": z["area_m2"], "source": "outline zones",
+                                                        "px_per_m": ppm}))
+    return out, {"area_m2": r["area_m2"], "bbox_m": r["bbox_m"], "method": r["method"], "px_per_m": ppm,
+                 "zones": len(out) - 1}
 
 
 def light(prof: dict) -> dict:

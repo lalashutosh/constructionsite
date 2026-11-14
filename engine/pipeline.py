@@ -723,7 +723,9 @@ class PipelineEngine:
         if rt.intent == "overall_size":
             fps = sorted((e.id for e in facts.elements if e.kind == "footprint"),
                          key=lambda i: (not next(x for x in facts.elements if x.id == i).attrs.get("from_walls"),
-                                        int(i.rsplit("_", 1)[-1])))   # wall-network outlines first, then main view first
+                                        next(x for x in facts.elements if x.id == i).attrs.get("source") != "outline",
+                                        int(i.rsplit("_", 1)[-1]) if i.rsplit("_", 1)[-1].isdigit() else -1))
+                                         # verified outline first, then wall-network outlines, then main view first
             if fps:                                  # several plan views (foundation + roof): the main view's outline
                 spec = {**spec, "where": {"id": fps[0]}}
                 if len(fps) > 1:
@@ -793,8 +795,35 @@ class PipelineEngine:
             notes.append(f"printed answer: {v} ({src}" + (f"; but {other[0].note}" if other else "") + ").")
             return res, "count"
 
+        fp = next((e for e in facts.elements if e.kind == "footprint" and e.attrs.get("source") == "outline"), None)
+        area_q = kind == "area" or (rt.intent == "unknown" and bool(L.AREA_CUE.search(q)))
+
+        def outline_area():
+            if fp is None:
+                return None
+            a = float(fp.attrs["area_m2"])
+            notes.append(f"printed answer: {a:.1f} m² measured inside the building outline "
+                         f"({fp.attrs.get('bbox_m', ['?', '?'])[0]} x {fp.attrs.get('bbox_m', ['?', '?'])[1]} m, "
+                         f"{fp.attrs.get('method')}; scale {fp.attrs.get('px_per_m', 0):.1f} px/m from the sheet).")
+            return [VoterResult(Voter(name="outline_area", value=a, element_ids=[fp.id],
+                                      note=f"area inside the building outline read from {fp.attrs.get('method')}"),
+                                evidence=[fp], unit="m2")], "area"
+
+        if area_q and kind != "area":
+            lk = L.lookup(ap, sha, q)
+            if lk and lk["kind"] == "area" and lk["coverage"] >= 0.99:
+                kind = "area"
+            else:
+                return outline_area()
         if kind == "area":
             lk = L.lookup(ap, sha, q)
+            generic = {"building", "room", "floor", "plan", "house", "structure", "space", "sheet", "drawing", "everything"}
+            if (lk and lk["kind"] == "text" and lk["coverage"] >= 0.99
+                    and not set(lk["keywords"]) <= generic and rt.intent == "total_room_area"):
+                # 'how big is the SUMP?' names a printed thing: its note answers, not the building's total area
+                notes.append(f"printed answer: the sheet prints '{lk['printed']}'.")
+                return [vr("printed_note", lk["printed"], lk["boxes"], lk["text"], f"the sheet prints '{lk['text']}'",
+                           unit="label")], "text"
             if lk and lk["kind"] == "area" and lk["coverage"] >= 0.99:
                 notes.append(f"printed answer: {lk['printed']} = {lk['value']:.1f} m² (the sheet prints '{lk['text']}').")
                 return [vr("printed_area", float(lk["value"]), lk["boxes"], lk["text"], f"the sheet prints '{lk['text']}'",
@@ -810,6 +839,8 @@ class PipelineEngine:
                     notes.append(f"printed answer: {pt['printed']} = {pt['m2']:.1f} m² (the sheet prints '{pt['text']}'{cmp}).")
                     return [vr("printed_total_area", float(pt["m2"]), [pt["box"]], pt["text"],
                                f"the sheet prints '{pt['text']}'", unit="m2")] + results, "area"
+                if not results:
+                    return outline_area()
             return None
 
         if rt.intent == "unknown" or (kind == "text" and not results):

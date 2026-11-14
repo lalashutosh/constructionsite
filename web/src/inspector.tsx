@@ -149,7 +149,10 @@ function Detail(p: InspectorProps & { el: PlanElement }) {
   const [room, setRoom] = useState(e.kind === "room" && e.subtype && ROOM_TYPES.includes(e.subtype) ? e.subtype : "");
   const word = kindName(e.kind);
   const what = e.removed ? "Removed by you" : `${word.charAt(0).toUpperCase() + word.slice(1)}${e.subtype && e.kind !== "room" ? ` · ${e.subtype}` : ""}`;
-  const size = e.size_m ? (e.kind === "room" ? `${e.size_m.area.toFixed(1)} m²` : `${e.size_m.w.toFixed(2)} × ${e.size_m.h.toFixed(2)} m`) : null;
+  const sm = (e.size_m ?? null) as { w?: number; h?: number; area?: number; area_m2?: number } | null;
+  const area = sm ? (sm.area_m2 ?? sm.area) : undefined;             // the API sends area_m2
+  const size = !sm ? null : typeof area === "number" ? `${area.toFixed(1)} m²` + (typeof sm.w === "number" && typeof sm.h === "number" ? ` (${sm.w.toFixed(2)} × ${sm.h.toFixed(2)} m)` : "")
+    : typeof sm.w === "number" && typeof sm.h === "number" ? `${sm.w.toFixed(2)} × ${sm.h.toFixed(2)} m` : null;
   const apply = () => {
     if (pick === "none") return p.onRemove(e);
     const k = PICK.find((x) => x.id === pick)?.kind;
@@ -166,8 +169,8 @@ function Detail(p: InspectorProps & { el: PlanElement }) {
       <dl className="elfacts">
         <div><dt>Size</dt><dd>{size ?? "not known: scale not solved"}</dd></div>
         <div><dt>Source</dt><dd>{TAG_WORD[e.tag] ?? e.tag}</dd></div>
-        <div><dt>Confidence</dt><dd>{changed && e.tag === "chosen" ? "You decided this" : <Meter value={e.conf} label={word} />}</dd></div>
-        <div><dt>Feeds</dt><dd>{e.feeds.length ? e.feeds.join(", ") : "no answer"}</dd></div>
+        <div><dt>Confidence</dt><dd>{changed && e.tag === "chosen" ? "You decided this" : <Meter value={typeof e.conf === "number" ? e.conf : 0.5} label={word} />}</dd></div>
+        <div><dt>Feeds</dt><dd>{e.feeds?.length ? e.feeds.join(", ") : "no answer"}</dd></div>
       </dl>
       <p className="elexp">{e.explanation || `This is a ${word}${e.label ? ` labelled “${e.label}”` : ""}.`}</p>
       {e.removed ? (

@@ -613,7 +613,7 @@ export default function App() {
             scaleKind={scaleKind}
             scaleSrc={scaleSrc}
             scaleIssue={scaleIssue}
-            ppm={active ? (ppmByPath[active.path] ?? null) : null}
+            ppm={active ? (ppmByPath[active.path] ?? active.geo?.px_per_m ?? null) : null}
             banner={banner}
             applying={asking}
             onScaleStart={startScale}

@@ -38,6 +38,8 @@ export interface Geometry {
   credit?: string | null;
   wall_note?: string | null;
   check?: ScanCheck | null;
+  px_per_m?: number | null;        // the sheet's own scale when printed evidence solved it (sizes shown without asking)
+  scale_note?: string | null;
   cost?: { ms: number; cpu_s?: number; llm_calls: number; usd: number; note?: string | null } | null;
 }
 export interface ScanView {
@@ -236,7 +238,7 @@ export interface PlanElement {
   label: string | null;
   conf: number;
   polygon: [number, number][];
-  size_m: { w: number; h: number; area: number } | null;
+  size_m: { w: number; h: number; area?: number; area_m2?: number } | null;
   tag: "drawn" | "specified" | "chosen";
   feeds: string[];
   explanation: string;

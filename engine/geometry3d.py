@@ -223,13 +223,24 @@ def _cad_model(img, facts, coords) -> Optional[dict]:
         words = P.words_for(_abs(facts.provenance.file), facts.provenance.sha256, img)
     except Exception:  # noqa: BLE001
         words = []
-    walls = bigsheet.walls(img, {**prof, "width_px": w, "height_px": h}, words)
+    fp = next((e for e in facts.elements if e.kind == "footprint" and e.attrs.get("source") == "outline"), None)
+    if fp is not None:         # verified outline: ONE clean slab-edge / outer-wall ring, zones as labelled floors
+        from shapely.geometry import Polygon
+        ppm = float(fp.attrs.get("px_per_m") or 50.0)
+        outer = Polygon(fp.polygon).buffer(0)
+        inner = outer.buffer(-max(2.0, 0.3 * ppm), join_style=2)
+        walls = [{"outer": [list(map(float, c)) for c in outer.exterior.coords],
+                  "holes": [[list(map(float, c)) for c in inner.exterior.coords]] if not inner.is_empty and inner.geom_type == "Polygon" else []}]
+        note = (f"construction sheet: outline {fp.attrs.get('bbox_m', ['?', '?'])[0]} x {fp.attrs.get('bbox_m', ['?', '?'])[1]} m "
+                f"from {fp.attrs.get('method')}; notes, legends, title block and dimension chains excluded")
+    else:
+        walls = bigsheet.walls(img, {**prof, "width_px": w, "height_px": h}, words)
+        note = (f"construction sheet: walls read from line geometry of the main plan view ({len(walls)} pieces); "
+                "title block, notes, schedules and dimension chains excluded")
     out = {"width": w, "height": h, "walls": walls, "rooms": [], "doors": [], "windows": [], "fixtures": [],
-           "elements_aligned": True,
-           "wall_note": f"construction sheet: walls read from line geometry of the main plan view ({len(walls)} pieces); "
-                        "title block, notes, schedules and dimension chains excluded"}
+           "elements_aligned": True, "wall_note": note}
     for e in facts.elements:
-        if e.kind == "room" and len(e.polygon) >= 3:
+        if e.kind in ("room", "zone", "region") and len(e.polygon) >= 3:
             out["rooms"].append(_el(e))
     views = []
     for v in prof.get("views", []):
