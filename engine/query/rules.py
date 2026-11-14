@@ -82,6 +82,7 @@ RULES: dict[str, Callable] = {
     "reader_saunas": _reader,
     "reader_bedrooms": _reader,
     "reader_kitchens": _reader,
+    "reader_wc_rooms": _reader,
     "door_requires_leaf": door_requires_leaf,
     "double_bowl_one_sink": double_bowl_one_sink,
     "separate_wc_not_bathroom": separate_wc_not_bathroom,

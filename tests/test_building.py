@@ -24,9 +24,12 @@ def test_organise_orders_floors_and_sets_aside_non_plans():
     assert out["other"][0]["type"] == "section"
 
 
-def test_same_storey_plans_are_alternatives_not_floors():
+def test_same_storey_plans_are_alternatives_not_floors(tmp_path):
     from engine import building as B
-    files = [{"path": f"p{i}", "name": n} for i, n in enumerate(["a/footing.pdf", "b/foundation.pdf", "c/floor plan.pdf"])]
+    for i in range(3):
+        (tmp_path / f"p{i}").write_bytes(b"x")
+    files = [{"path": str(tmp_path / f"p{i}"), "name": n}
+             for i, n in enumerate(["a/footing.pdf", "b/foundation.pdf", "c/floor plan.pdf"])]
     geos = {f["path"]: {"check": {"views": [{"type": "floor_plan"}]}} for f in files}
 
     class Fake:
@@ -40,6 +43,6 @@ def test_same_storey_plans_are_alternatives_not_floors():
                         '{"i": 2, "doc_type": "floor_plan", "level": null, "version": "2015-07"}], "building": "x"}')
             return R()
     out = B.organise(files, lambda p: geos[p], abs_of=lambda p: p, thinker=Fake())
-    assert len(out["floors"]) == 1 and out["floors"][0]["path"] == "p2"          # newest shown, nothing stacked
-    assert [a["path"] for a in out["alternatives"]] == ["p1"]
+    assert len(out["floors"]) == 1 and out["floors"][0]["path"].endswith("p2")   # newest shown, nothing stacked
+    assert [a["path"][-2:] for a in out["alternatives"]] == ["p1"]
     assert out["other"][0]["doc_type"] == "foundation_plan"

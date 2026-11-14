@@ -1,0 +1,83 @@
+# Plan-label glossary (Finnish first, plus Swedish / German / French / Italian / English).
+# Used by: the vision label reader (engine/label_reader.py), the query planner and the AI reviewers, so every model
+# reads plan abbreviations the same way. Keys are matched case-insensitively after removing digits, dots and spaces
+# at the end ("MH 2", "MH.1", "mh2" -> "MH"). Room types are the engine's vocabulary.
+
+room_labels:
+  # Finnish (CubiCasa plans)
+  MH: bedroom              # makuuhuone
+  MAKUUHUONE: bedroom
+  OH: living_room          # olohuone
+  OLOHUONE: living_room
+  TUPA: living_room        # tupa = main living room in houses/cottages
+  K: kitchen               # keittiö
+  KK: kitchen              # keittokomero = kitchenette
+  KEITTIÖ: kitchen
+  AK: kitchen              # avokeittiö = open kitchen
+  RT: dining               # ruokailutila
+  KH: bathroom             # kylpyhuone
+  PH: bathroom             # pesuhuone
+  KPH: bathroom            # kylpyhuone
+  PESUH: bathroom
+  SH: bathroom             # suihkuhuone (shower room)
+  WC: wc                   # separate toilet room
+  S: sauna
+  SAUNA: sauna
+  LH: sauna                # löylyhuone
+  LÖYLYH: sauna
+  ET: hallway              # eteinen (entrance hall)
+  AULA: hallway
+  KÄYTÄVÄ: hallway
+  VH: wardrobe             # vaatehuone (walk-in closet)
+  TK: storage              # tekninen tila / tuulikaappi-varasto
+  VAR: storage             # varasto
+  KHH: utility             # kodinhoitohuone (laundry / utility)
+  TH: office               # työhuone
+  PARVEKE: balcony
+  LASITETTU PARVEKE: balcony
+  TERASSI: terrace
+  AT: garage               # autotalli
+  AUTOTALLI: garage
+  # Swedish
+  SOVRUM: bedroom
+  VARDAGSRUM: living_room
+  KÖK: kitchen
+  BADRUM: bathroom
+  TAMBUR: hallway
+  BALKONG: balcony
+  # German
+  SCHLAFZIMMER: bedroom
+  ZIMMER: room
+  WOHNEN: living_room
+  KÜCHE: kitchen
+  BAD: bathroom
+  FLUR: hallway
+  BALKON: balcony
+  # French / Italian
+  CHAMBRE: bedroom
+  PIÈCE: room
+  SÉJOUR: living_room
+  CUISINE: kitchen
+  BAIN: bathroom
+  COULOIR: hallway
+  CAMERA: bedroom
+  CUCINA: kitchen
+  BAGNO: bathroom
+  # English
+  BEDROOM: bedroom
+  BR: bedroom
+  LIVING: living_room
+  KITCHEN: kitchen
+  BATH: bathroom
+  BATHROOM: bathroom
+  HALL: hallway
+  BALCONY: balcony
+
+# question intent -> room type(s) whose LABELS are the evidence (one label per room)
+intent_room_types:
+  bedrooms: [bedroom]
+  kitchens: [kitchen]
+  bathrooms: [bathroom]
+  wc_rooms: [wc]
+  saunas: [sauna]
+  balconies: [balcony]

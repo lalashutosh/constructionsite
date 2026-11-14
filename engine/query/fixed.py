@@ -17,7 +17,7 @@ CUBICASA: dict = {
     "kitchens": {"select": _RL, "where": {"subtype": "kitchen"}, "aggregate": "count",
                  "rules": ["cluster_instances", "kitchenettes_count", "prior_fallback_not1"]},
     "bedrooms": {"select": _RL, "where": {"subtype": "bedroom"}, "aggregate": "count", "rules": ["reader_bedrooms"]},
-    "wc_rooms": {"select": _RL, "where": {"subtype": "wc"}, "aggregate": "count", "rules": ["cluster_instances"]},
+    "wc_rooms": {"select": _RL, "where": {"subtype": "wc"}, "aggregate": "count", "rules": ["reader_wc_rooms"]},
     "bathrooms": {"select": _RL, "where": {"subtype": "bathroom"}, "aggregate": "count",
                   "rules": ["cluster_instances", "separate_wc_not_bathroom", "prior_fallback_not1"]},
     "balconies": {"select": _RL, "where": {"subtype": "balcony"}, "aggregate": "count",

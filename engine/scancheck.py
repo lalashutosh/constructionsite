@@ -26,6 +26,8 @@ REVIEW_SYSTEM = (
     '"level": <floor number printed or implied for a floor plan: 0 ground/1st floor, 1 the floor above, -1 basement; '
     'null if unclear>, "level_label": "<floor name as printed, e.g. 1. KERROS, or empty>"}], '
     '"text_mirrored": true|false, "notes": "<= 20 words"}. '
+    "Room labels may be Nordic abbreviations (MH=bedroom, OH=living room, K=kitchen, KH/PH=bathroom, WC=toilet room, "
+    "S=sauna, ET=hall, VH=wardrobe, PARVEKE=balcony): text like that means a floor plan. "
     "Overlay A (blue) and overlay B (orange) are two different wall readers. 'better' = which one follows the real "
     "walls of that view more closely. Never invent counts or measurements."
 )

@@ -87,7 +87,7 @@ CLASSIFY_SYSTEM = (
     "name, the title-block text and the machine checks given. Think carefully: a sheet called 'Floor & Site Plan' that "
     "the scan check sees as a site plan is a site plan sheet; a '3D View' is a render, never a floor; sheet prefixes "
     "A=architectural, S=structural, M/E/P=services; a .ifc file is a BIM model; .dwg is a CAD drawing. Floor plans need "
-    "a level: 0 = ground/first floor as printed (use the printed floor names), -1 = basement, null if not stated. "
+    "a level. Titles must use only words from the file name or title-block text; never add words. 0 = ground/first floor as printed (use the printed floor names), -1 = basement, null if not stated. "
     "Footing / foundation plans are foundation_plan, partial or enlarged plans are enlarged_plan: neither is a storey. "
     "Several plans of the SAME storey (revisions, phases, dates) are alternatives, not separate floors: give them the "
     "same level and a \"version\" note (date or phase). "
@@ -215,6 +215,26 @@ def organise(files: list[dict], geometry_of: Callable[[str], dict], llm=None,
 
 
 def _organise_smart(files, geometry_of, thinker, abs_of) -> dict:
+    import os
+    missing = [f for f in files if not os.path.exists(abs_of(f["path"]))]
+    files = [f for f in files if f not in missing]
+    if not files:
+        return {"building": "", "method": "no readable files", "floors": [], "alternatives": [],
+                "other": [{"path": f["path"], "name": f.get("name") or f["path"], "doc_type": "missing",
+                           "why": "file not found", "display_label": f.get("name") or f["path"]} for f in missing],
+                "groups": {"missing": [f.get("name") or f["path"] for f in missing]} if missing else {},
+                "notes": [f"{len(missing)} file(s) not found"] if missing else ["empty folder"]}
+    out = _organise_present(files, geometry_of, thinker, abs_of)
+    for f in missing:
+        out["other"].append({"path": f["path"], "name": f.get("name") or f["path"], "doc_type": "missing",
+                             "why": "file not found", "display_label": f.get("name") or f["path"]})
+        out["groups"].setdefault("missing", []).append(f.get("name") or f["path"])
+    if missing:
+        out["notes"].append(f"{len(missing)} file(s) not found")
+    return out
+
+
+def _organise_present(files, geometry_of, thinker, abs_of) -> dict:
     # Classification needs only cheap signals (name, title-block text, IFC storeys). The 3D geometry + scan check
     # (CNN + 2 AI reviews per file) is built later, only for the floors the user opens: building it for every file
     # here made big folders run for minutes and time out. A scan check already cached for a file is still used.

@@ -64,7 +64,9 @@ def _parse_json(text: str) -> dict:
 
 def plan(question: str, facts: SheetFacts, llm: LLM) -> Plan:
     vocab = drawing_vocabulary(facts)
-    user = f"Question: {question}\nSchema: {json.dumps(SCHEMA)}\nThis drawing: {json.dumps(vocab)}"
+    from engine.label_reader import glossary_text
+    user = (f"Question: {question}\nSchema: {json.dumps(SCHEMA)}\nThis drawing: {json.dumps(vocab)}\n"
+            f"Plan abbreviations (label -> room type): {glossary_text()}")
     reply = llm.complete(SYSTEM, user, max_tokens=500)
     cost = Cost(tokens_in=reply.tokens_in, tokens_out=reply.tokens_out, usd=reply.usd, llm_calls=1, planner_calls=1)
     if not re.search(r"\{.*\}", reply.text or "", re.S):        # empty / prose reply: one stricter retry
