@@ -44,8 +44,16 @@ class VerdaLLM:
         self.v = _verda_module()
         self.prov = prov
         self.kind = kind or os.environ.get("LLM_MODEL_KIND", "fast")
+        self.no_think = False
 
-    def complete(self, system: str, user: str, max_tokens: int = 400) -> LLMReply:
+    def complete_vision(self, system: str, user: str, image_png: bytes, max_tokens: int = 400) -> LLMReply:
+        """Same endpoint, OpenAI-style image content. Raises if the model cannot take images."""
+        import base64
+        url = "data:image/png;base64," + base64.b64encode(image_png).decode()
+        return self.complete(system, [{"type": "text", "text": user},
+                                      {"type": "image_url", "image_url": {"url": url}}], max_tokens)
+
+    def complete(self, system: str, user, max_tokens: int = 400) -> LLMReply:
         import httpx
 
         v, env = self.v, self.v.load_env()
@@ -65,6 +73,9 @@ class VerdaLLM:
             raise RuntimeError("LLM budget reached")
         body = {"model": model, "max_tokens": max_tokens, "temperature": 0,
                 "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}
+        if self.no_think:                   # judge-style calls: answer directly, no hidden reasoning tokens
+            body["chat_template_kwargs"] = {"thinking": False, "enable_thinking": False}
+            body["reasoning_effort"] = "low"
         r = httpx.post(f"{base}/chat/completions", json=body, timeout=60, headers=headers)
         r.raise_for_status()
         data = r.json()

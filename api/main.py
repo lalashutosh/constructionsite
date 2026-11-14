@@ -249,6 +249,19 @@ async def image(path: str, max_px: int = 2000):
 GEOM = ROOT / "cache" / "geometry"
 
 
+def _reviewers():
+    """Two independent vision reviewers for the scan check (engine/scancheck.py), when an LLM is configured."""
+    from engine.query import llm as L
+    if L.provider() not in ("verda", "featherless"):
+        return None
+    out = []
+    for kind in ("fast", "strong"):
+        r = L.VerdaLLM(L.provider(), kind)
+        r.no_think = True
+        out.append(r)
+    return out
+
+
 @app.get("/api/geometry")
 async def geometry(path: str):
     """3D model data in the SAME pixel space as /api/image: walls (with holes) to extrude, plus rooms, doors,
@@ -268,7 +281,7 @@ async def geometry(path: str):
         if img is None:
             raise HTTPException(415, "image could not be read")
         facts = engine().analyze(path) if coords == "pixels" else None
-        g = geometry3d.model(img, facts, coords, use_cnn=(coords == "pixels"))
+        g = geometry3d.model(img, facts, coords, use_cnn=(coords == "pixels"), scan_check=True, llm=_reviewers())
         g.update(path=path, coords=coords, credit=(facts.provenance.credit if facts else None))
         GEOM.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(g))

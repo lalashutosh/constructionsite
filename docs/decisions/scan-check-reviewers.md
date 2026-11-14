@@ -1,0 +1,3 @@
+User direction 2026-11-14: the image->3D step needs several methods working together with LLMs to catch mistakes (a mirrored model and walls invented in a site plan got through).
+Decision: engine/scancheck.py = views (CV) + two wall readers (CNN, stroke tracing; IoU agreement) + two vision reviewers (Verda fast + strong, thinking off, fixed JSON form) whose CONSENSUS labels views and raises flags; code picks walls. Reviewers judge, never produce numbers or geometry; LLM off -> CV rules only.
+This sends drawing images to our own Verda/Modal endpoints when LLM_PROVIDER is set (user-approved purpose; overrides ORCHESTRATOR's "never send dataset images to Verda" for this feature only). Cost measured: ~$0.0045 per sheet, cached by sha256.
