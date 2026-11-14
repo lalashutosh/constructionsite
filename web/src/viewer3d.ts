@@ -920,15 +920,34 @@ export class PlumbViewer {
       });
     };
     const mat = new THREE.LineDashedMaterial({ color: this.T.accent, dashSize: 1.2, gapSize: 0.8, transparent: true, opacity: 0.9 });
+    const stepMat = new THREE.MeshBasicMaterial({ color: this.T.accent, transparent: true, opacity: 0.6, depthWrite: false });
+    const edgeMat = new THREE.LineBasicMaterial({ color: this.T.accent, transparent: true, opacity: 0.85 });
     for (let i = 0; i + 1 < floors.length; i++) {
       const lo = at(floors[i], i), hi = at(floors[i + 1], i + 1);
       for (const a of lo) {
         if (!hi.length) break;
         const b = hi.reduce((best, p) => (Math.hypot(p.x - a.x, p.z - a.z) < Math.hypot(best.x - a.x, best.z - a.z) ? p : best), hi[0]);
-        const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints([a.clone().setY(a.y + 3.6), b]), mat);
+        const from = a.clone().setY(a.y + 3.6);
+        const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints([from, b]), mat);
         line.computeLineDistances();
         line.userData.stairLink = true;
         this.root.add(line);
+        // a see-through flight of steps climbing from this staircase to the one on the floor above
+        const n = Math.max(8, Math.round((b.y - from.y) / 1.6));
+        const dir = new THREE.Vector3(b.x - from.x, 0, b.z - from.z);
+        const yaw = Math.atan2(dir.x, dir.z);
+        for (let k = 0; k < n; k++) {
+          const t = (k + 0.5) / n;
+          const g = new THREE.BoxGeometry(4.2, (b.y - from.y) / n, Math.max(0.8, dir.length() / n + 0.4));
+          const step = new THREE.Mesh(g, stepMat);
+          step.position.set(from.x + dir.x * t, from.y + (b.y - from.y) * t, from.z + dir.z * t);
+          step.rotation.y = yaw;
+          step.userData.stairLink = true;
+          const ed = new THREE.LineSegments(new THREE.EdgesGeometry(g), edgeMat);
+          ed.position.copy(step.position);
+          ed.rotation.copy(step.rotation);
+          this.root.add(step, ed);
+        }
       }
     }
   }

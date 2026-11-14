@@ -198,6 +198,7 @@ export function ViewerPane(p: {
   useEffect(() => {
     const v = new PlumbViewer(host.current!, { onHoverPin: (i) => hoverCb.current(i), onDimInfo: (t) => setTip(t) }, THEMES[p.theme]);
     viewer.current = v;
+    if (import.meta.env.DEV) (window as unknown as { __plumb?: PlumbViewer }).__plumb = v;   // debugging only
     return () => {
       v.dispose();
       viewer.current = null;
