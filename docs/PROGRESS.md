@@ -1,7 +1,15 @@
 # Plumb: where we are
 
 Plain-language status. Updated after every milestone. Branch `p2-finish` on GitHub (`main` untouched).
-Last update: **17:20**
+Last update: **17:45**
+
+## 17:45 update: the new screen is in
+
+- **One story:** open a drawing → a status line narrates "Reading the drawing… → Found 1 floor plan · checked by 2 readers + 2 AI reviewers → Built in 3D"; the 3D model takes most of the screen; findings appear one by one as sentences ("There are **10** doors. · 84% reliable").
+- **Answers are sentences**, no big numbers; details live behind **Why?** (steps, checks, assumptions, sources).
+- **Set real size** is the big moment: top-down view, click both ends of something you know, type its length → wall lengths and room m² appear, totals count up, checklist fills in.
+- **How it works** page (book icon in the left rail): Read → Check → Answer → Plan with diagrams, and the measured numbers straight from the evaluation reports.
+- The scan check's orientation warning now says "upside down or mirrored" (the reviewers were right: that sample's labels are upside down).
 
 ## 17:20 update: first real accuracy numbers, sentence answers, uploads fixed
 

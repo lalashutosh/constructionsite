@@ -206,7 +206,7 @@ def check(img: np.ndarray, walls_cnn: Optional[list], walls_trace: list, rooms_c
         for f in flags:
             warnings.append(f"View {v['n']} (floor plan): {f}")
     if review and review.get("text_mirrored"):
-        warnings.append("Text on the sheet reads mirrored: the scan itself may be flipped")
+        warnings.append("Text on the sheet reads upside down or mirrored: the scan is rotated or flipped (counts are unaffected)")
     return {"views": vs, "walls": chosen, "warnings": warnings,
             "reviewer": {"used": used, "models": names, "answered": len(reviews), "asked": len(llms),
                          "cost_usd": round(cost, 5), "notes": (review or {}).get("notes", "")}}
