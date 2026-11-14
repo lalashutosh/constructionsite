@@ -4,6 +4,15 @@ Mission: when the drawing exists in an exact format, read the exact format and s
 
 Read first: `AGENTS.md`, `engine/registry.py`, `vendor/planlab/README.md` + `analysis.py` (DXF parser from our earlier prototype), `docs/recon.md` (swiss, ifc_models, opening_design templates), `docs/handoff/evaluator.md`.
 
+<!-- gate:w1 -->
+## Measured facts from gate w1 (commit 5bfd71c)
+- DEV prior by source/type: swiss count 24.5% (n=1102) · swiss area 6.2% (n=520) · ifc area 2.9% (n=816) · ifc count 9.2% (n=131) · ifc length 62.5% (n=16) · ifc volume 56.2% (n=32) · opening_design count 25.0% (n=20). You own the biggest headroom in the repo: ~2,600 DEV questions sit at < 25%.
+- Largest buckets, fix in this order: ifc `room_net_area` n=776 @ 1.0% · swiss `room_labelled` n=546 @ 28.6% · swiss `doors` (part of n=384 @ 4.7%) · `room_area` n=180 @ 2.2% · `apartment_net_area` n=160 @ 12.5% · `count_on_storey` n=80 @ 2.5% · `apartments` n=90 @ 35.6% · `washbasins` n=90 @ 17.8%.
+- `ifcopenshell` is NOT installed in `.venv` yet (`ModuleNotFoundError`): install it first; if the wheel fails within 10 minutes, write `docs/decisions/ifc.md` and do DXF + schedules first.
+- `ifc_bench` (text, n=83 DEV) and opening_design text: skip in W2 (free-form, not in the headline).
+- opening_design is tiny (41 DEV Qs): do it last.
+- Report every number twice, with and without siblings (the gate needs both).
+
 You own: `engine/vector/`, `engine/siblings.py`, `tests/test_vector*.py`. Expose through `engine/vector/plugin.py::register()`.
 
 ## Step 1 · sibling resolver (`engine/siblings.py`, `register_resolver`, priority 10)

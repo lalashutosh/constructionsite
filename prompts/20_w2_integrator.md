@@ -2,12 +2,26 @@
 
 Mission: one service that takes (file, question) and returns a `ProofObject` with tier, evidence, cost; cached so analysis happens once per drawing and questions are lookups. Other W2 agents (skeptic, vector) work IN PARALLEL and plug in through `engine/registry.py`; you must not wait for them.
 
-Read first: `AGENTS.md`, `engine/registry.py` (the plugin API, already written and tested), `contracts/interfaces.py`, `docs/handoff/{evaluator,raster,takeoff}.md`, `docs/STATUS.md`. <!-- the gate step inserts measured facts here -->
+Read first: `AGENTS.md`, `engine/registry.py` (the plugin API, already written and tested), `contracts/interfaces.py`, `docs/handoff/{evaluator,raster,takeoff}.md`, `docs/STATUS.md`.
+
+<!-- gate:w1 -->
+## Measured facts from gate w1 (commit 5bfd71c)
+- Baselines (DEV): stub 6.9%, **prior 37.3%** (n=6192). Prior by source/type: cubicasa count 54.6% · swiss count 24.5% · swiss area 6.2% · ifc area 2.9% (n=816) · ifc count 9.2% · opening_design count 25.0%. Every intent must reach >= prior or be amber (W2 core gate). Per-intent prior: `evalkit/out/20261114-130042-prior/report.md` section 3.
+- NO plugins exist yet: `engine/raster/plugin.py`, `engine/takeoff/plugin.py`, `engine/skeptic/`, `engine/vector/`, `engine/triage/` are all absent. Step 1 is yours.
+- Correct raster entry points: `engine.count.count(intent, facts) -> (value, element_ids, runs)` (NOT `engine.count.intents.count`) and `engine.raster.extract.extract(path, allow_siblings=True) -> SheetFacts` (cached by sha256 in `cache/raster/`). Cold extract median 2.21 s/image, 4.3 s first call (model load): load once per process.
+- **count_defaults -> Tag.defaulted (REQUIRED).** For showers_baths, kitchens, bathrooms the raster rule may return the dev-median prior instead of a detection and writes `facts.extras["count_defaults"][intent] = {value, reason}`. When that key is present for the asked intent: the value's Tag is `defaulted` (never `drawn`), add an Assumption with the `reason` as source, the detector voter's note says "prior fallback, no detector evidence", and that voter does NOT count toward green agreement. Add a test with a fixture carrying `count_defaults`. Reviewer checks this (docs/decisions/count-defaults-tag.md).
+- Raster DEV150 (in-sample): windows 40 · floors 87.5 · toilets 70.6 · sinks 46.2 (BELOW prior 53.8: keep sinks amber or prefer another voter) · doors 57.1 · saunas 61.5 · bedrooms 33.3 · wc_rooms 60 · balconies 100 (n=4). Prior-vs-raster per intent is the input for the "never below prior" rule: where a voter is below the intent's prior, the pipeline should fall back to amber.
+- Biggest DEV buckets by lost questions (n x (1 - prior)): ifc room_net_area 776 @ 1.0% · swiss room_labelled 546 @ 28.6% · windows 488 @ 6.6% · doors 384 @ 4.7% · room_area 180 @ 2.2% · apartment_net_area 160 @ 12.5%. These come from vector and raster voters; your job is that the route reaches them and never crashes.
+- Takeoff gaps: `engine.decide.quote(facts, request, vibe, choices)` does NOT exist (only `ledger.rank(specs)`). For `POST /api/decide` return 501 with a clear message or a thin wrapper in YOUR file; do not edit `engine/decide/`. `engine/reconcile/` is a stub.
+- UI uses fixtures; it needs `/api/ask`, `/api/facts`, `/api/scale` live. Keep response = `ProofObject` JSON exactly.
+- Hard set: `evalkit/hard_questions.jsonl` has 10 rows, **0 verified** -> `--hard` scores nothing until a human verifies rows. Build the planner path and its FAKE-LLM tests anyway; do not invent verified rows.
+- `ifcopenshell` is not installed in `.venv` (vector installs it); the pipeline must not import it at module level.
+- Skip in W2: `a2a/` (W3), SSE stream polish beyond stage names.
 
 You own: `engine/pipeline.py`, `engine/api.py`, `engine/router.py`, `engine/query/`, `engine/cache.py`, `api/`, `a2a/`, `tests/test_pipeline*.py`, `tests/test_api*.py`. Do not edit other packages; if you need a hook, write `docs/decisions/hook-<topic>.md`.
 
 ## Step 1 · plugins for W1 code (20 min, do this first, commit immediately)
-Create thin `engine/raster/plugin.py` and `engine/takeoff/plugin.py` ONLY if the owners did not (check first; owners win). `register()` must call `registry.register_voter("detector", ..., kinds=("count",))` using `engine.count.intents.count` and `engine.raster.extract`, and `registry.register_voter("area_polygons", ..., kinds=("area",))` using `engine.takeoff`. Voters return `VoterResult(Voter(name, value, element_ids, runs, note), evidence=[...])`.
+Create thin `engine/raster/plugin.py` and `engine/takeoff/plugin.py` ONLY if the owners did not (check first; owners win). `register()` must call `registry.register_voter("detector", ..., kinds=("count",))` using `engine.count.count` and `engine.raster.extract.extract` <!-- gate:w1 corrected name -->, and `registry.register_voter("area_polygons", ..., kinds=("area",))` using `engine.takeoff`. Voters return `VoterResult(Voter(name, value, element_ids, runs, note), evidence=[...])`.
 
 ## Step 2 · router (`engine/router.py`)
 `route(question, path) -> Ctx fields (intent, params, kind, lang)`. Layers, cheapest first, stop at the first confident hit:

@@ -4,6 +4,16 @@ Mission: be the independent second opinion. The product claim "two independent v
 
 Read first: `AGENTS.md`, `engine/registry.py`, `contracts/proof.py` (Voter, SheetFacts), `docs/recon.md` (cubicasa and swiss sections), `docs/handoff/evaluator.md`. You MAY read pixels and contract types. You may NOT import from `engine/raster` or read its cached outputs (`cache/raster/`): independence is the point.
 
+<!-- gate:w1 -->
+## Measured facts from gate w1 (commit 5bfd71c)
+- DEV prior (per-intent median) per cubicasa intent, full DEV: windows 6.6 · doors 4.7 (mixed with swiss) · bedrooms 30.2 · sinks 54.8 · toilets 52.7 · saunas 57.4 · balconies 59.3 · wc_rooms 60.2 · showers_baths 72.9 · floors 80.4 · bathrooms 88.0 · kitchens 96.3. A voter below its intent's prior is not worth registering for that intent.
+- Raster (the voter you must be independent of) on DEV150: windows 40 · doors 57 (over-counts by 1-3 on busy plans) · sinks 46 · bedrooms 33 · toilets 71 · showers_baths/kitchens/bathrooms = prior fallback (no detector evidence; the CNN has NO shower class and over-segments rooms).
+- Priority order for your voters (where a second opinion moves the score most): 1) `doors_arc` and `windows_lines` (largest buckets, n=384/488, prior < 7%), 2) `fixtures_template` for shower/bath and sink (raster has no shower detector; sinks are below prior), 3) `rooms_fixture_logic` for bathrooms/kitchens/bedrooms. `floors_ocr` last (prior already 80%).
+- Only 27/150 (18%) of raster's DEV150 images are outside the pretrained CNN's train split (docs/handoff/raster.md); report your voter accuracy on all DEV AND on that clean subset if you can get the list (`engine/raster/leakage.py` is a file you may read, not import).
+- Triage: there are no non-plan folders confirmed in the preview set yet; check `ls $DATASET_ROOT/data` first and say so in the handoff if none exist (then use small/odd cubicasa images as the hard negatives).
+- Calibration inputs today are prior/stub runs only (all amber); train the script, but expect real training after the W2 integration run (prompts/25 step 5).
+- Skip if short on time: stacker (Step 3.2). Keep triage + doors_arc + windows_lines + fixtures_template.
+
 You own: `engine/skeptic/`, `engine/triage/`, `tests/test_skeptic*.py`. Expose everything through `engine/skeptic/plugin.py::register()`.
 
 ## Step 1 · independent voters (`engine/skeptic/voters/`)

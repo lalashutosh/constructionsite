@@ -1,6 +1,6 @@
 STATUS: IN_PROGRESS
 
-Next action: G1 gate (prompts/05_gate.md WAVE=w1, skip merge). NOTE: background subagents get Bash denied; spawn builders with run_in_background=false.
+Next action: P2 — vector(22), skeptic(21), integrator(20) in parallel (foreground). Human TODO: verify evalkit/hard_questions.jsonl rows (0/10 verified).
 
 ## Checklist
 ### P0 Bootstrap
@@ -18,8 +18,8 @@ Next action: G1 gate (prompts/05_gate.md WAVE=w1, skip merge). NOTE: background 
 - [x] ui-builder (prompts/13): typecheck+build+shot green, 19 shots, fixture-driven
 
 ### G1 Gate
-- [ ] gate w1 numbers in docs/STATUS.md, GO/NO-GO per agent
-- [ ] fix tasks for NO-GOs (or none needed)
+- [x] gate w1 numbers in docs/STATUS.md, GO/NO-GO per agent (all GO; raster w/ conditions)
+- [x] fix tasks for NO-GOs (none needed)
 
 ### P2 Exact sources, voters, routing
 - [ ] vector (prompts/22): IFC, DXF, schedule devchecks
@@ -48,3 +48,4 @@ Next action: G1 gate (prompts/05_gate.md WAVE=w1, skip merge). NOTE: background 
 - 12:40 C1 BLOCKED: workspace trust gate denies all exec (python/pytest/make/npm/git) for lead AND subagents. raster-extractor+ui-builder did no real work; both stopped. Human must accept trust dialog. STATE/MORNING written to disk (uncommitted, git blocked). See docs/decisions/workspace-trust-block.md.
 - 12:50 C1 restart: exec works again (trust fixed). Respawned raster-extractor (re-measure) + ui-builder (build+shots) in parallel.
 - ~13:15 C1 P1 done: ui build+19 shots; raster DEV150 50.0%->61.3% after 2 prior-fallback fixes (CLEAN 44.4->63.0, n=27). Background subagents lack Bash -> use foreground.
+- ~13:25 C1 G1 GO all 4: 94 tests, stub 6.9%, prior 37.3% DEV; raster cold 2.21s/img; ifcopenshell missing; hard set 0/10 verified.
