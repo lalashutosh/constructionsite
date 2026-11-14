@@ -128,16 +128,24 @@ def audit(img: np.ndarray, rooms: list[dict], llms: list, stairs: list[dict] | N
     png, _ = _overlay(img, rooms, stairs)
     sys = SYSTEM.format(gloss=LR.glossary_text(40))
     got = []
-    for L in llms:
+    from concurrent.futures import ThreadPoolExecutor
+
+    def ask(L):
         try:
-            r = L.complete_vision(sys, f"{len(rooms)} numbered rooms.", png, max_tokens=1800 if getattr(L, "no_think", True) else 9000)
-            out["cost_usd"] += r.usd
-            out["used"] = True
-            p = _parse(r.text)
-            if p:
-                got.append(p)
+            return L.complete_vision(sys, f"{len(rooms)} numbered rooms.", png,
+                                     max_tokens=1800 if getattr(L, "no_think", True) else 7000)
         except Exception:  # noqa: BLE001  (the audit is optional)
-            pass
+            return None
+    with ThreadPoolExecutor(max_workers=len(llms)) as ex:          # both reviewers at once
+        replies = list(ex.map(ask, llms))
+    for r in replies:
+        if r is None:
+            continue
+        out["cost_usd"] += r.usd
+        out["used"] = True
+        p = _parse(r.text)
+        if p:
+            got.append(p)
     out["answered"] = len(got)
     out["cost_usd"] = round(out["cost_usd"], 5)
     if not got:

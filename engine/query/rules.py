@@ -80,6 +80,7 @@ def _reader(els, facts):
 
 RULES: dict[str, Callable] = {
     "reader_saunas": _reader,
+    "reader_doors": _reader,
     "reader_bedrooms": _reader,
     "reader_kitchens": _reader,
     "reader_wc_rooms": _reader,

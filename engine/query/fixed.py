@@ -8,7 +8,7 @@ _RL = ["room", "label"]
 # the 12 cubicasa intents (mirror engine.count.rules; tests/test_query.py checks equality on cached facts)
 CUBICASA: dict = {
     "windows": {"select": "window", "aggregate": "count"},
-    "doors": {"select": "door", "aggregate": "count"},  # raster door icons are leaf-only already
+    "doors": {"select": "door", "aggregate": "count", "rules": ["reader_doors"]},  # leaf-only icons, fragments merged
     "toilets": {"select": "toilet", "aggregate": "count"},
     "sinks": {"select": "sink", "aggregate": "count"},
     "showers_baths": {"select": "bath", "aggregate": "count", "rules": ["prior_fallback_1"]},

@@ -9,6 +9,8 @@ TTA of the pretrained CNN (that would cost >10s/image on this CPU).
 """
 from __future__ import annotations
 
+import statistics
+
 import math
 
 from contracts.proof import SheetFacts
@@ -102,12 +104,59 @@ def windows(facts: SheetFacts):
     return _icon_count(facts, "window")
 
 
+# One door leaf the CNN returns in 2-3 collinear pieces (high_quality-11553: 11 -> 9, the key). DEV, 147 drawings:
+# exact 63 -> 64, 6 counts closer to the key, 4 further.
+def _box(e):
+    xs = [p[0] for p in e.polygon]; ys = [p[1] for p in e.polygon]
+    return [min(xs), min(ys), max(xs), max(ys)]
+
+def merge_fragments(els, short=0.8, gap=0.35):
+    """Collinear pieces of one door leaf -> one group; closest pair merged first. Returns groups of elements."""
+    groups = [([e], _box(e)) for e in els]
+    if len(groups) < 2:
+        return [g for g, _ in groups]
+    med = statistics.median(max(b[2] - b[0], b[3] - b[1]) for _, b in groups)
+    while True:
+        best = None
+        for a in range(len(groups)):
+            for b in range(a + 1, len(groups)):
+                A, B = groups[a][1], groups[b][1]
+                la, lb = max(A[2] - A[0], A[3] - A[1]), max(B[2] - B[0], B[3] - B[1])
+                if la > short * med or lb > short * med:
+                    continue
+                va, vb = (A[3] - A[1]) >= (A[2] - A[0]), (B[3] - B[1]) >= (B[2] - B[0])
+                if va != vb:
+                    continue
+                if va:
+                    if abs((A[0] + A[2]) / 2 - (B[0] + B[2]) / 2) > max(A[2] - A[0], B[2] - B[0], 3):
+                        continue
+                    g = max(A[1], B[1]) - min(A[3], B[3])
+                else:
+                    if abs((A[1] + A[3]) / 2 - (B[1] + B[3]) / 2) > max(A[3] - A[1], B[3] - B[1], 3):
+                        continue
+                    g = max(A[0], B[0]) - min(A[2], B[2])
+                if g <= gap * med and (best is None or g < best[0]):
+                    best = (g, a, b)
+        if best is None:
+            return [g for g, _ in groups]
+        _, a, b = best
+        A, B = groups[a][1], groups[b][1]
+        groups[a] = (groups[a][0] + groups[b][0], [min(A[0], B[0]), min(A[1], B[1]), max(A[2], B[2]), max(A[3], B[3])])
+        groups.pop(b)
+
+
 def doors(facts: SheetFacts):
     """'How many doors are shown ... Count doorways fitted with a door; open doorways without a
     door leaf do not count.' CubiCasa5k's own icon annotation only draws a door icon (leaf + arc)
     where there IS a leaf; a bare opening in the wall has no icon at all, so counting the model's
-    `door` icon class already implements the 'leaf only' rule -- no extra filtering needed."""
-    return _icon_count(facts, "door")
+    `door` icon class already implements the 'leaf only' rule. Collinear fragments of one leaf are merged."""
+    _, _, runs = _icon_count(facts, "door")
+    groups = merge_fragments([e for e in facts.elements if e.kind == "door" and len(e.polygon) >= 2])
+    ids = [g[0].id for g in groups]
+    if len(groups) != sum(len(g) for g in groups):
+        facts.extras.setdefault("count_notes", {})["doors"] = (
+            f"{sum(len(g) for g in groups) - len(groups)} door fragments merged into the leaf they belong to")
+    return len(ids), ids, list(runs)
 
 
 def toilets(facts: SheetFacts):

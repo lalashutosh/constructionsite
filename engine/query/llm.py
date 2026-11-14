@@ -76,7 +76,9 @@ class VerdaLLM:
         if self.no_think:                   # judge-style calls: answer directly, no hidden reasoning tokens
             body["chat_template_kwargs"] = {"thinking": False, "enable_thinking": False}
             body["reasoning_effort"] = "low"
-        r = httpx.post(f"{base}/chat/completions", json=body, timeout=60, headers=headers)
+        elif getattr(self, "effort", None):
+            body["reasoning_effort"] = self.effort
+        r = httpx.post(f"{base}/chat/completions", json=body, timeout=getattr(self, "timeout", 60), headers=headers)
         r.raise_for_status()
         data = r.json()
         text = data["choices"][0]["message"].get("content") or ""

@@ -201,18 +201,27 @@ def check(img: np.ndarray, walls_cnn: Optional[list], walls_trace: list, rooms_c
     reviews = []
     if llms:
         png = _review_image(img, vs, wa, wb)
-        for L in llms:                       # independent reviewers, same picture, same fixed form
+        from concurrent.futures import ThreadPoolExecutor
+
+        def ask(L):
+            import copy
+            Q = copy.copy(L)
+            Q.no_think = True                # view types + wall choice: quick; the thinking goes to the audit
             try:
-                r = L.complete_vision(REVIEW_SYSTEM, f"There are {len(vs)} numbered views.", png,
-                                      max_tokens=700 if getattr(L, "no_think", True) else 8000)
-                cost += r.usd
-                used = True
-                p = _parse(r.text)
-                if p is not None:
-                    reviews.append(p)
-                    names.append(getattr(L, "kind", "reviewer"))
+                return L, Q.complete_vision(REVIEW_SYSTEM, f"There are {len(vs)} numbered views.", png, max_tokens=700)
             except Exception:  # noqa: BLE001  (reviewers are optional; CV rules still decide)
-                pass
+                return L, None
+        with ThreadPoolExecutor(max_workers=len(llms)) as ex:      # independent reviewers, in parallel
+            done = list(ex.map(ask, llms))
+        for L, r in done:                    # same order as llms: strongest last
+            if r is None:
+                continue
+            cost += r.usd
+            used = True
+            p = _parse(r.text)
+            if p is not None:
+                reviews.append(p)
+                names.append(getattr(L, "kind", "reviewer"))
     disputed: set[int] = set()
     if reviews:
         two = len(reviews) >= 2                         # a consensus needs at least two reviewers' answers

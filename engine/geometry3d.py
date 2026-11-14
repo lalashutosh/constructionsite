@@ -187,8 +187,8 @@ def _drop_stairs_in_walls(out: dict, shape) -> None:
     if not st or not out.get("walls"):
         return
     m = np.zeros(shape[:2], np.uint8)
-    for wl in out["walls"]:
-        cv2.fillPoly(m, [np.array(wl["outer"], np.int32)], 1)
+    for wl in out["walls"]:                 # outer ring minus holes (the rooms) = the wall itself
+        cv2.fillPoly(m, [np.array(wl["outer"], np.int32)] + [np.array(h, np.int32) for h in wl.get("holes", [])], 1)
     keep_ids = set()
     for f in st:
         b = np.zeros(shape[:2], np.uint8)
