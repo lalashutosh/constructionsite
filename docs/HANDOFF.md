@@ -20,6 +20,13 @@ Branch `p2-finish`; push is blocked for agents by `.claude/settings.json`, the h
    checkout. Re-check after the raster work is verified or reverted.
 4. Large commercial PDF sheets give almost no walls (line-pair reader tuned for scans); DWG unsupported (no reader).
 
+### 19:40 additions (committed 82a1abe, e991a6e)
+- Scale from PLAIN printed dimensions too (mm values matched to plan lengths, >= 2 must agree within 3%):
+  1967 -> 67.95 px/m, walls 7.70 m vs 7.79 m printed. First OCR of a sheet ~70 s, cached in `cache/scale_dims`.
+- One sheet with several floor plans: `check.floors` in /api/geometry (level read by the AI reviewers). UI agent asked
+  to add "All · Floor 1 · Floor 2" tabs + a stacked view (uncommitted while running).
+- UI round committed: project explorer, real-looking fixtures, progress bar, hover length x breadth.
+
 ### In flight / uncommitted at pause
 - `engine/raster/extract.py`, `engine/raster/ocr.py`: raster finetune agent (bedrooms via MH labels, saunas, door
   overcount, windows). NOT verified. Verify: delete `cache/raster` + `cache/pipeline`, run
