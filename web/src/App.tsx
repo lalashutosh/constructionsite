@@ -720,6 +720,7 @@ export default function App() {
               imgUrl={active ? imageUrl(active.path) : ""}
               scaleLine={scaleLine}
               checks={<>{active && <ChecklistPanel path={active.path} deepHint={active.geo?.deep ?? null}
+                services={active.geo?.layers?.quantities ?? null}
                 onShow={(polys) => vref.current?.setMulti(active.key, polys)}
                 onRoom={(id, poly) => { setElSel(id); vref.current?.setMulti(active.key, [poly]); }}
                 onLoaded={(c) => { setCkN((m) => ({ ...m, [active.path]: c.elements.length }));

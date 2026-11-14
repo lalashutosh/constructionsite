@@ -734,9 +734,10 @@ export class PlumbViewer {
           const nm = r.label ?? (r.subtype && r.subtype !== "room" ? r.subtype : null);
           return { px: Math.abs(a2 / 2), cx: cx / r.polygon.length, cy: cy / r.polygon.length, bw: x1 - x0, nm, poly: r.polygon as Ring };
         })
-        .filter((r) => r.bw >= long * 0.03 && (scaled || r.nm))
+        .filter((r) => r.bw >= long * 0.05 && (scaled || r.nm))
+        .filter((r) => !r.nm || !/^(space|zone|region)$/i.test(r.nm))
         .sort((a, b) => b.px - a.px)
-        .slice(0, 24);
+        .slice(0, 12);
       for (const r of rooms) {
         const area = scaled && ppm ? r.px / (ppm * ppm) : null;
         if (area !== null && area < 2 && !r.nm) continue;
@@ -887,8 +888,8 @@ export class PlumbViewer {
     if (layers.rooms?.length) mk("rooms", layers.rooms, fl.H * 0.04, true);       // room boundaries as thin lines
     if (layers.furniture?.length) {          // furniture: low translucent blocks, about knee height
       const g = new THREE.Group();
-      const mat = new THREE.MeshBasicMaterial({ color: colours.furniture ?? 0x2dd4bf, transparent: true, opacity: 0.6, depthWrite: false });
-      const hgt = fl.H * 0.18;
+      const mat = new THREE.MeshBasicMaterial({ color: colours.furniture ?? 0x2dd4bf, transparent: true, opacity: 0.38, depthWrite: false });
+      const hgt = fl.H * 0.08;                  // low blocks: the building reads first, furniture second
       for (const f of layers.furniture) {
         const xs = f.polygon.map((q) => q[0]), zs = f.polygon.map((q) => q[1]);
         const x0 = Math.min(...xs), x1 = Math.max(...xs), z0 = Math.min(...zs), z1 = Math.max(...zs);
@@ -1268,6 +1269,7 @@ export class PlumbViewer {
         const plan = v.type === "floor_plan";
         const pts = [[bx0, by0], [bx1, by0], [bx1, by1], [bx0, by1]].map(([x, y]) => new THREE.Vector3(x - w / 2, 0.4, y - h / 2));
         vg.add(new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color: plan ? T.accent : T.tileLine, transparent: true, opacity: plan ? 0.9 : 0.5 })));
+        if (v.type === "other" || views.length === 1) continue;     // no tag for generic regions (clutter, no information)
         const { tex, aspect } = labelTexture(viewName(v.type), plan, T);
         const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, opacity: plan ? 1 : 0.55, depthTest: false, fog: false }));
         const sh = long * 0.05;

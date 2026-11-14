@@ -51,14 +51,18 @@ export function ViewCube({ viewer }: { viewer: () => PlumbViewer | null }) {
 export const LAYER_COLOURS: Record<string, number> = { rooms: 0x94a3b8, envelope: 0xe7c98a, walls: 0xcbd5e1, furniture: 0x2dd4bf, piping: 0x3b82f6, electrical: 0xf59e0b };
 const LAYER_NAMES: [string, string][] = [["envelope", "Envelope"], ["walls", "Walls"], ["furniture", "Furniture"], ["piping", "Piping"], ["electrical", "Electrical"]];
 export type Layers = { envelope?: [number, number][][]; walls?: [number, number][][]; furniture?: { id: string; kind: string; polygon: [number, number][] }[];
-  piping?: [number, number][][]; electrical?: [number, number][][]; notes?: Record<string, string> };
+  piping?: [number, number][][]; electrical?: [number, number][][]; notes?: Record<string, string>; estimated?: boolean;
+  quantities?: Record<string, { value: number; unit: string; tag: string; basis: string }> };
 export function LayerToggles({ viewer, layers, extra }: { viewer: () => PlumbViewer | null; layers: Layers | null | undefined; extra?: Record<string, number> }) {
   const [on, setOn] = useState<Record<string, boolean>>({ envelope: true, walls: true, furniture: true, piping: true, electrical: true });
   const [msg, setMsg] = useState<string | null>(null);
   useEffect(() => { if (!msg) return; const t = setTimeout(() => setMsg(null), 3500); return () => clearTimeout(t); }, [msg]);
+  const [open, setOpen] = useState(false);
   if (!layers) return null;
   return (
-    <div className="layers">
+    <div className={`layers ${open ? "open" : ""}`}>
+      <button className="layers-btn" onClick={() => setOpen((o) => !o)} aria-expanded={open}>Layers {open ? "▾" : "▸"}</button>
+      {open && <div className="layers-list">
       {LAYER_NAMES.map(([k, label]) => {
         const has = k === "walls" || ((layers as Record<string, unknown[] | undefined>)[k]?.length ?? 0) > 0 || (extra?.[k] ?? 0) > 0;
         const why = layers.notes?.[k];
@@ -70,10 +74,12 @@ export function LayerToggles({ viewer, layers, extra }: { viewer: () => PlumbVie
               const nv = !on[k]; setOn({ ...on, [k]: nv }); viewer()?.setLayerVisible(k, nv);
             }}>
             <i style={{ background: `#${LAYER_COLOURS[k].toString(16).padStart(6, "0")}` }} />{label}
+            {layers.estimated && (k === "piping" || k === "electrical") && has ? <small className="est"> estimated</small> : null}
           </button>
         );
       })}
       {msg && <div className="layer-msg">{msg}</div>}
+      </div>}
     </div>
   );
 }
@@ -90,6 +96,7 @@ export type Checklist = {
   cost?: { usd: number; ms: number };
 };
 export function ChecklistPanel(p: { path: string | null; deepHint?: { on: boolean; eta_s: number; reason: string } | null;
+  services?: Record<string, { value: number; unit: string; tag: string; basis: string }> | null;
   onShow: (polys: [number, number][][]) => void; onRoom: (id: string, poly: [number, number][]) => void;
   onLoaded?: (c: Checklist) => void }) {
   const [data, setData] = useState<Checklist | null>(null);
@@ -156,6 +163,17 @@ export function ChecklistPanel(p: { path: string | null; deepHint?: { on: boolea
               </li>
             ))}
           </ul>
+          {!!p.services && Object.keys(p.services).length > 0 && (
+            <details className="ckrooms" open>
+              <summary>Services (estimated, no MEP sheet)</summary>
+              <ul>
+                {Object.entries(p.services).map(([k, v]) => (
+                  <li key={k} title={v.basis}><span>{({ pipe_m: "Pipework", cable_m: "Cable", lights: "Light fittings", sockets: "Sockets", wet_points: "Wet points" } as Record<string, string>)[k] ?? k}</span>
+                    <span className="muted sm">{v.value} {v.unit}</span><div className="sm muted">{v.basis}</div></li>
+                ))}
+              </ul>
+            </details>
+          )}
           {!!data.zones?.length && (
             <details className="ckrooms" open>
               <summary>By wing / zone</summary>

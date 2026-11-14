@@ -606,3 +606,20 @@ body { font-size: 15px; }
   opacity: 0; transition: opacity 150ms ease-out, background 150ms ease-out; }
 .cktotals li:hover .ck-rename { opacity: 1; }
 .ck-rename:hover { background: var(--hover); color: var(--text); }
+
+/* layers: one compact menu bottom-left (no overlapping pills) */
+.layers { position: absolute; left: 14px; bottom: 62px !important; top: auto !important; z-index: 7; display: block; max-width: none; }
+.layers-btn { font-size: 12px; padding: 5px 12px; border-radius: 999px; border: 1px solid var(--rule); background: var(--panel); color: var(--text);
+  cursor: pointer; transition: border-color 160ms ease-out; }
+.layers-btn:hover, .layers.open .layers-btn { border-color: var(--accent); }
+.layers-list { position: absolute; bottom: calc(100% + 6px); left: 0; display: flex; flex-direction: column; gap: 4px; padding: 8px;
+  background: var(--panel); border: 1px solid var(--rule); border-radius: 12px; min-width: 190px; box-shadow: 0 10px 30px rgba(0,0,0,.25);
+  animation: fadeUp 180ms ease-out; }
+.layers-list .layer { width: 100%; justify-content: flex-start; }
+.layers-list .layer-msg { position: static; white-space: normal; max-width: 220px; margin-top: 4px; }
+/* view cube below the measuring button, not over it */
+.vcube { top: 118px !important; right: 18px; }
+.layer .est { color: var(--warn); font-size: 10px; margin-left: 2px; }
+/* the receipt is the product: make "See proof" a clear, inviting button */
+.ask .pv-see { background: var(--accent); color: var(--on-accent); border-color: var(--accent); padding: 5px 12px; font-weight: 600; }
+.ask .pv-see:hover { filter: brightness(1.08); }

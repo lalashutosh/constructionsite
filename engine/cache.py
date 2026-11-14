@@ -15,7 +15,7 @@ CACHE_DIR = pathlib.Path(os.environ.get("PLUMB_CACHE_DIR", str(ROOT / "cache")))
 _MEM: dict = {}
 # Bump when a reader or the routing changes what a drawing's facts are (e.g. construction sheets stopped going through
 # the residential CNN). Facts / 3D built by an older reader are re-read instead of being served forever.
-READER_VERSION = "2026-11-15.layers"
+READER_VERSION = "2026-11-15.services"
 MEM_MAX = 256
 
 

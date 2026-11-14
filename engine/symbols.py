@@ -27,7 +27,7 @@ import numpy as np
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 CACHE = ROOT / "cache" / "symbols"
-VERSION = "v14"
+VERSION = "v16"
 NAMES = ["bed", "side table", "desk", "chair", "sofa", "lounge chair", "seating group", "exercise bike", "treadmill", "table", "closet", "wardrobe", "toilet", "sink",
          "shower", "bathtub", "door", "window", "stair", "tv", "kitchen counter", "fridge", "gym equipment", "washer",
          "plant", "column", "other"]
@@ -104,6 +104,18 @@ def _desc(lab, st, i, S: int = 24, ink=None):
     pad[(side - h) // 2:(side - h) // 2 + h, (side - w) // 2:(side - w) // 2 + w] = m
     d = cv2.resize(pad, (S, S), interpolation=cv2.INTER_AREA) > 40
     return cv2.dilate(d.astype(np.uint8), np.ones((2, 2), np.uint8)) > 0, (max(w, h), min(w, h))
+
+
+def _plain_box(d) -> bool:
+    """A symbol that is only a rectangle outline (side table, cabinet) matches every box on the sheet: not distinctive."""
+    ys, xs = np.where(d)
+    if not len(xs):
+        return True
+    y0, y1, x0, x1 = ys.min(), ys.max(), xs.min(), xs.max()
+    band = np.zeros_like(d)
+    band[y0:y1 + 1, x0:x1 + 1] = True
+    band[y0 + 3:y1 - 2, x0 + 3:x1 - 2] = False
+    return float((d & band).sum()) / max(1.0, float(d.sum())) >= 0.8
 
 
 def _v8(d):
@@ -301,7 +313,24 @@ def candidates(long_m: float, short_m: float) -> list[str]:
 
 
 def _name_types(png: bytes, n: int, llm, cands: Optional[list[list[str]]] = None) -> tuple[dict[int, str], float, dict[int, str]]:
-    """Two reviewers name the types independently (parallel). Returns (names, usd, agreement per type)."""
+    """Two reviewers name the types independently (parallel). Returns (names, usd, agreement per type).
+    Cached by the contact sheet's hash: the same symbols get the same names on every re-run."""
+    import hashlib
+    cf = CACHE / f"names-{hashlib.sha256(png).hexdigest()[:20]}.json"
+    if cf.exists():
+        try:
+            d = json.loads(cf.read_text())
+            return {int(k): v for k, v in d["names"].items()}, 0.0, {int(k): v for k, v in d["agree"].items()}
+        except Exception:  # noqa: BLE001
+            pass
+    names, usd, agree = _name_types_live(png, n, llm, cands)
+    if names:
+        CACHE.mkdir(parents=True, exist_ok=True)
+        cf.write_text(json.dumps({"names": names, "agree": agree}))
+    return names, usd, agree
+
+
+def _name_types_live(png: bytes, n: int, llm, cands: Optional[list[list[str]]] = None) -> tuple[dict[int, str], float, dict[int, str]]:
     llms = [L for L in (llm if isinstance(llm, (list, tuple)) else [llm]) if L is not None and hasattr(L, "complete_vision")]
     if not llms:
         return {}, 0.0, {}
@@ -430,8 +459,10 @@ def _checklist(abs_path: str, sha: str, facts, llm) -> dict:
             hits = [hc for hc in hits if _same_shape(g, mask, r["d"], hc, w, h)]
         n = len(r["members"])
         ncc = len(hits) if hits is not None else None
-        ncc_ok = ncc is not None and n <= ncc <= 3.5 * n
-        out["types"].append({"n": k + 1, "name": nm, "count": n, "ncc": ncc, "size_m": [round(w / ppm, 2), round(h / ppm, 2)]})
+        plain = _plain_box(r["d"])
+        ncc_ok = ncc is not None and not plain and n <= ncc <= 8 * n   # distinctive symbols: every copy, even on walls
+        out["types"].append({"n": k + 1, "name": nm, "count": n, "ncc": ncc, "plain": bool(plain),
+                             "size_m": [round(w / ppm, 2), round(h / ppm, 2)]})
         by_name.setdefault(nm, []).append({"k": k, "rep": r, "w": w, "h": h, "n": n, "hits": hits if ncc_ok else None})
     for nm, cands in by_name.items():
         # the count of a symbol = all copies of its best exemplar (template matching finds copies touching walls that
@@ -465,28 +496,46 @@ def _checklist(abs_path: str, sha: str, facts, llm) -> dict:
         out["totals"].append({"kind": nm, "label": LABEL.get(nm, nm.title() + ("s" if not nm.endswith("s") else "")),
                               "count": len(ids), "ids": ids, "tier": "green" if agree else "amber", "note": note,
                               "thumb": _thumb(g, boxes[0]) if boxes else ""})
+    try:                                     # door swings: grey quarter-circle arcs, found and counted by geometry
+        dboxes = door_arcs(abs_path, mask, ppm)
+        if dboxes:
+            out["totals"] = [t for t in out["totals"] if t["kind"] != "door"]
+            out["elements"] = [e for e in out["elements"] if e["kind"] != "door"]
+            ids = []
+            for j, b in enumerate(dboxes):
+                c = Point((b[0] + b[2]) / 2, (b[1] + b[3]) / 2)
+                rid = next((rr.id for rr, pp in room_polys if pp.contains(c)), None)
+                if rid:
+                    per_room[rid]["door"] = per_room[rid].get("door", 0) + 1
+                out["elements"].append({"id": f"door_{j}", "kind": "door", "label": f"door ({rnames.get(rid, 'outside rooms')})",
+                                        "polygon": [[b[0], b[1]], [b[2], b[1]], [b[2], b[3]], [b[0], b[3]]], "room_id": rid})
+                ids.append(f"door_{j}")
+            out["totals"].append({"kind": "door", "label": "Doors", "count": len(ids), "ids": ids, "tier": "amber",
+                                  "note": "door swing arcs found by geometry (grey quarter-circle, door radius 0.55-1.25 m "
+                                          "at the sheet's scale); bifold closet doors count as doors",
+                                  "thumb": _thumb(g, dboxes[0])})
+    except Exception as e:  # noqa: BLE001
+        out["doors_error"] = f"{type(e).__name__}: {e}"
     _add_printed(out, words, g)
     # stair flights: the tread detector inside the outline (downscaled so a 10k px sheet stays fast)
     try:
-        from engine.raster import stairs as ST
-        k = min(1.0, 3000 / max(g.shape))
-        col = cv2.imread(abs_path, cv2.IMREAD_COLOR)
-        small = cv2.resize(col, None, fx=k, fy=k, interpolation=cv2.INTER_AREA) if k < 1 else col
-        msk = cv2.resize(mask, (small.shape[1], small.shape[0]), interpolation=cv2.INTER_NEAREST)
-        flights = [f for f in ST.detect(small)
-                   if msk[int(np.clip(np.mean([q[1] for q in f["polygon"]]), 0, msk.shape[0] - 1)),
-                          int(np.clip(np.mean([q[0] for q in f["polygon"]]), 0, msk.shape[1] - 1))]]
+        flights = stair_flights(abs_path, mask, ppm)
         ids = []
         for j, f in enumerate(flights):
-            poly = [[q[0] / k, q[1] / k] for q in f["polygon"]]
+            poly = f["polygon"]
             eid = f"stairs_{j}"
             out["elements"].append({"id": eid, "kind": "stair", "label": f"stair flight ({f['attrs']['treads']} treads)",
                                     "polygon": poly, "room_id": None})
             ids.append(eid)
         if ids:
             xs = [q[0] for q in out["elements"][-len(ids)]["polygon"]]; ys = [q[1] for q in out["elements"][-len(ids)]["polygon"]]
+            n_sets = len({f.get("set", j) for j, f in enumerate(flights)})
+            out["totals"].append({"kind": "staircase", "label": "Staircases", "count": n_sets, "ids": ids, "tier": "amber",
+                                  "note": f"{len(ids)} stair flights (evenly spaced treads, full-resolution tiles); flights "
+                                          "within 3 m of each other are one staircase",
+                                  "thumb": _thumb(g, [min(xs), min(ys), max(xs), max(ys)])})
             out["totals"].append({"kind": "stair", "label": "Stair flights", "count": len(ids), "ids": ids, "tier": "amber",
-                                  "note": "tread-line detector (evenly spaced treads) inside the building outline",
+                                  "note": "tread-line detector on full-resolution tiles of the building",
                                   "thumb": _thumb(g, [min(xs), min(ys), max(xs), max(ys)])})
     except Exception as e:  # noqa: BLE001
         out["stairs_error"] = f"{type(e).__name__}: {e}"
@@ -631,10 +680,119 @@ def _summary(abs_path: str, sha: str, facts, words: list[dict], fp, ck: dict) ->
     return out
 
 
+def door_arcs(abs_path: str, mask: np.ndarray, ppm: float) -> list[list[float]]:
+    """Door swings drawn as thin GREY arcs (CAD draws the swing lighter than the walls): grey, colourless strokes inside
+    the building, then a RANSAC circle fit per stroke: radius 0.55-1.25 m at the solved scale, the arc spanning a
+    quarter circle (55-135 deg). The leaf line in the same stroke is an outlier. Code only, no model. Boxes in px."""
+    col = cv2.imread(abs_path, cv2.IMREAD_COLOR)
+    if col is None:
+        return []
+    g = cv2.cvtColor(col, cv2.COLOR_BGR2GRAY)
+    sat = cv2.cvtColor(col, cv2.COLOR_BGR2HSV)[:, :, 1]
+    dark = cv2.dilate((g < 100).astype(np.uint8), np.ones((3, 3), np.uint8))
+    grey = ((g >= 110) & (g <= 215) & (sat < 40) & (mask > 0) & (dark == 0)).astype(np.uint8)
+    n, lab, st, _ = cv2.connectedComponentsWithStats(grey, 8)
+    rng = np.random.default_rng(7)
+    out: list[list[float]] = []
+    r_lo, r_hi = 0.55 * ppm, 1.25 * ppm
+    for i in range(1, n):
+        x, y, w, h, a = st[i]
+        if not (0.4 * ppm <= max(w, h) <= 2.8 * ppm and min(w, h) >= 0.3 * ppm and a >= 0.6 * ppm):
+            continue
+        ys, xs = np.nonzero(lab[y:y + h, x:x + w] == i)
+        pts = np.stack([xs + x, ys + y], 1).astype(np.float64)
+        if len(pts) > 400:
+            pts = pts[rng.choice(len(pts), 400, replace=False)]
+        best = None
+        for _ in range(80):
+            a1, b1, c1 = pts[rng.choice(len(pts), 3, replace=False)]
+            d = 2 * (a1[0] * (b1[1] - c1[1]) + b1[0] * (c1[1] - a1[1]) + c1[0] * (a1[1] - b1[1]))
+            if abs(d) < 1e-6:
+                continue
+            ux = ((a1 @ a1) * (b1[1] - c1[1]) + (b1 @ b1) * (c1[1] - a1[1]) + (c1 @ c1) * (a1[1] - b1[1])) / d
+            uy = ((a1 @ a1) * (c1[0] - b1[0]) + (b1 @ b1) * (a1[0] - c1[0]) + (c1 @ c1) * (b1[0] - a1[0])) / d
+            r = float(np.hypot(a1[0] - ux, a1[1] - uy))
+            if not (r_lo <= r <= r_hi):
+                continue
+            dist = np.abs(np.hypot(pts[:, 0] - ux, pts[:, 1] - uy) - r)
+            inl = dist < max(2.0, 0.05 * r)
+            if best is None or inl.sum() > best[0]:
+                best = (int(inl.sum()), ux, uy, r, inl)
+        if best is None or best[0] < 0.45 * len(pts):
+            continue
+        _, ux, uy, r, inl = best
+        ang = np.degrees(np.arctan2(pts[inl, 1] - uy, pts[inl, 0] - ux))
+        ang = np.sort(np.mod(ang, 360))
+        gaps = np.diff(np.concatenate([ang, [ang[0] + 360]]))
+        span = 360 - gaps.max()
+        if not (55 <= span <= 135):
+            continue
+        cx, cy = x + w / 2, y + h / 2
+        if any((cx - (b[0] + b[2]) / 2) ** 2 + (cy - (b[1] + b[3]) / 2) ** 2 < (0.4 * ppm) ** 2 for b in out):
+            continue
+        out.append([float(x), float(y), float(x + w), float(y + h)])
+    return out
+
+
+def stair_flights(abs_path: str, mask: np.ndarray, ppm: float) -> list[dict]:
+    """Stair flights on a big sheet: the tread detector (engine/raster/stairs.py) runs on full-resolution tiles of the
+    building (treads ~0.28 m apart stay ~10+ px apart; a whole-sheet downscale loses them). Polygons in original px,
+    kept when their centre is inside (or within 3 m of) the outline, de-duplicated across overlapping tiles."""
+    from engine.raster import stairs as ST
+    col = cv2.imread(abs_path, cv2.IMREAD_COLOR)
+    if col is None:
+        return []
+    near = cv2.dilate(mask, np.ones((int(3 * ppm) | 1,) * 2, np.uint8))      # exterior stairs sit just outside
+    ys, xs = np.where(near > 0)
+    if not len(xs):
+        return []
+    X0, X1, Y0, Y1 = xs.min(), xs.max(), ys.min(), ys.max()
+    T = max(800, min(2400, int(40 * ppm)))
+    step = int(T * 0.8)
+    out: list[dict] = []
+    for y0 in range(Y0, max(Y0 + 1, Y1 - int(0.2 * T)) + 1, step):
+        for x0 in range(X0, max(X0 + 1, X1 - int(0.2 * T)) + 1, step):
+            if (near[y0:y0 + T, x0:x0 + T] > 0).mean() < 0.03:
+                continue
+            tile = col[y0:min(Y1, y0 + T), x0:min(X1, x0 + T)]
+            old_ratio = ST.MAX_RATIO
+            try:                                   # at a known scale a wide exterior stair (2.4 m treads, 0.28 m apart)
+                ST.MAX_RATIO = 10.0                # is checked in metres below; the slat-ratio guard can relax
+                found = ST.detect(tile)
+            except Exception:  # noqa: BLE001
+                continue
+            finally:
+                ST.MAX_RATIO = old_ratio
+            for f in found:
+                poly = [[q[0] + x0, q[1] + y0] for q in f["polygon"]]
+                cx, cy = float(np.mean([q[0] for q in poly])), float(np.mean([q[1] for q in poly]))
+                if not near[int(np.clip(cy, 0, near.shape[0] - 1)), int(np.clip(cx, 0, near.shape[1] - 1))]:
+                    continue
+                L = max(np.ptp([q[0] for q in poly]), np.ptp([q[1] for q in poly])) / ppm
+                if not (0.8 <= L <= 12):            # a flight is ~1-10 m long at the solved scale
+                    continue
+                if any((cx - o["c"][0]) ** 2 + (cy - o["c"][1]) ** 2 < (1.0 * ppm) ** 2 for o in out):
+                    continue
+                out.append({"polygon": poly, "c": (cx, cy), "attrs": f["attrs"]})
+    # flights within 3 m of each other are one staircase (a U-stair has two flights)
+    sets: list[list[int]] = []
+    for i, f in enumerate(out):
+        for st_ in sets:
+            if any((f["c"][0] - out[j]["c"][0]) ** 2 + (f["c"][1] - out[j]["c"][1]) ** 2 < (3 * ppm) ** 2 for j in st_):
+                st_.append(i)
+                break
+        else:
+            sets.append([i])
+    for k, st_ in enumerate(sets):
+        for j in st_:
+            out[j]["set"] = k
+    return out
+
+
 # ---------------------------------------------------------------- the chatbot reads the stored deep read
 SYN = {"washbasin": "sink", "basin": "sink", "lavatory": "sink", "wc": "toilet", "loo": "toilet", "nightstand": "side table",
        "bedside": "side table", "wardrobe": "closet", "cupboard": "closet", "couch": "sofa", "armchair": "lounge chair",
-       "television": "tv", "staircase": "stair", "stairway": "stair", "flight": "stair", "step": "stair", "treadmill": "gym equipment",
+       "television": "tv", "stairway": "staircase", "stairwell": "staircase", "stairs": "staircase", "flight": "stair", "step": "stair", "treadmill": "gym equipment",
        "gym": "gym equipment", "refrigerator": "fridge", "tub": "bathtub", "bath": "bathtub"}
 
 

@@ -248,6 +248,9 @@ class PipelineEngine:
             _ck = None
         if _ck is not None:
             return self._checklist_answer(path, question, _sha, _ck, t0)
+        _sv = self._services_answer(path, question, t0)      # 'how much pipe / cable / how many sockets'
+        if _sv is not None:
+            return _sv
         # --- end deep read ---
         rt = route_question(question, path, classifier=self.classifier)
         from engine.query import measure as _measure
@@ -598,6 +601,38 @@ class PipelineEngine:
                           "voter confirmed at the same spot").strip()
         notes.append(f"door fusion: {old} confident detections + {len(added)} weak detections confirmed by a door "
                      "swing arc at the same place")
+
+    def _services_answer(self, path: str, question: str, t0: float) -> Optional[ProofObject]:
+        """Estimated pipework / electrical (engine/layers.estimate_services) when the set has no MEP sheet."""
+        import re as _re
+        q = question.lower()
+        key = ("pipe_m" if _re.search(r"\b(pipe|pipes|piping|pipework|plumbing)\b", q) else
+               "cable_m" if _re.search(r"\b(cable|cabling|wiring|wire|electrical)\b", q) and not _re.search(r"socket|light", q) else
+               "sockets" if _re.search(r"\bsockets?|outlets?\b", q) else
+               "lights" if _re.search(r"\blights?|light fittings?|luminaires?\b", q) else None)
+        if key is None or not _re.search(r"how\s+(much|many|long)|length|metres|meters|total|estimate", q):
+            return None
+        from engine import symbols as _sym
+        from engine.layers import estimate_services
+        facts = self.analyze(path)
+        fp = next((e for e in facts.elements if e.kind == "footprint" and e.attrs.get("px_per_m")), None)
+        if fp is None or facts.extras.get("route") != "cad":
+            return None
+        est = estimate_services(facts, _sym.cached(facts.provenance.sha256), float(fp.attrs["px_per_m"]))
+        qv = est["quantities"].get(key)
+        if not qv:
+            return None
+        po = ProofObject(id=hashlib.sha1(f"{path}|{question}|svc".encode()).hexdigest()[:12], question=question,
+                         intent=f"estimated_{key}", kind="length" if key.endswith("_m") else "count", value=qv["value"],
+                         unit=qv["unit"], tier=Tier.amber, provenance=Provenance(file=path, sha256=facts.provenance.sha256),
+                         voters=[Voter(name="services_estimate", value=qv["value"], note=qv["basis"])])
+        po.assumptions.append(Assumption(key=f"estimate:{key}", value=qv["value"], tag=Tag.defaulted, source=qv["basis"]))
+        what = {"pipe_m": "of pipework", "cable_m": "of cable", "sockets": "sockets", "lights": "light fittings"}[key]
+        po.answer_text = (f"About {qv['value']:g} {qv['unit'] + ' ' if key.endswith('_m') else ''}{what} (ESTIMATE: this set has "
+                          f"no {'plumbing' if key == 'pipe_m' else 'electrical'} sheet; {qv['basis']}).")
+        po.notes.append("estimated services (engine/layers.estimate_services); upload the MEP sheet for drawn quantities")
+        po.cost.ms = (time.perf_counter() - t0) * 1000
+        return po
 
     def _checklist_answer(self, path: str, question: str, sha: str, ck: dict, t0: float) -> ProofObject:
         ev = [Element(id=f"ck_{i}", kind=ck["label"].rstrip("s") or "symbol", polygon=[(q[0], q[1]) for q in poly], conf=0.8,
