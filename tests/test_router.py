@@ -1,0 +1,36 @@
+import json
+import pathlib
+
+from engine.router import lolo_accuracy, normalise, route
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+
+
+def test_regex_layer_en_and_localized():
+    r = route("How many windows are shown on this floor plan?", "data/cubicasa5k/a.png")
+    assert (r.intent, r.layer, r.kind) == ("windows", "regex", "count")
+    r = route("Kuinka monta ikkunaa pohjapiirustuksessa on?", "data/cubicasa5k/a.png")
+    assert r.intent == "windows"
+
+
+def test_normalise_strips_digits_and_quotes():
+    assert normalise("Room 12 'Küche' on 'EG'") == normalise("Room 7 'Bad' on 'OG'")
+
+
+def test_ngram_layer_catches_unseen_phrasing():
+    r = route("how many windows are shown on this floor plan ?!", "data/cubicasa5k/a.png")
+    assert r.intent == "windows"
+
+
+def test_unknown_without_llm():
+    r = route("what colour is the sky", "data/cubicasa5k/a.png")
+    assert r.intent == "unknown" and r.layer == "none"
+
+
+def test_leave_one_language_out_report():
+    res = lolo_accuracy()
+    assert res["n_templates"] > 100 and res["overall"] > 0.6
+    out = ROOT / "docs" / "claims" / "integrator.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps({"router_lolo": res["overall"]}) + "\n")
+    assert json.loads(out.read_text())["router_lolo"] == res["overall"]

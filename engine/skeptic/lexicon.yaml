@@ -1,0 +1,9 @@
+# Skeptic's own room-label lexicon (Finnish + English). Written independently of engine/raster.
+# Each entry is a regex matched (case-insensitive, full token) against OCR tokens; digits suffix allowed (MH1, MH 2).
+bedrooms: ['mh\d?', 'makuuhuone', 'bedroom', 'br\d?', 'makuuh']
+bathrooms: ['kh', 'kph', 'ph', 'kylpyhuone', 'pesuhuone', 'bath', 'bathroom', 'washroom', 'pesu', 'suihku']
+wc_rooms: ['wc', 'vessa']
+kitchens: ['k', 'kt', 'keitti\w*', 'kitchen', 'kk', 'keittokomero', 'ruokailu']
+saunas: ['sauna', 's', 'saunatila']
+balconies: ['parveke', 'balcony', 'lasitettu']
+floors: ['kerros', 'krs', 'floor', 'kellari']

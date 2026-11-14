@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "QuerySpec",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["select", "aggregate"],
+  "properties": {
+    "select": {"description": "element kind(s): door, window, room, label, sink, wall, slab, ... or '*'",
+               "oneOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}, "minItems": 1}]},
+    "where": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "room_type": {"type": "string"},
+        "subtype": {"type": "string"},
+        "label": {"type": "string"},
+        "id": {"type": "string"},
+        "storey": {"type": "string"},
+        "apartment": {"type": "string"},
+        "has": {"type": "object", "additionalProperties": false, "required": ["kind"],
+                "properties": {"kind": {"type": "string"}, "min": {"type": "integer"}}},
+        "adjacent_to": {"type": "object", "additionalProperties": false,
+                        "properties": {"room_type": {"type": "string"}, "label": {"type": "string"}}}
+      }
+    },
+    "group_by": {"enum": [null, "storey", "subtype", "label", "apartment"]},
+    "aggregate": {"enum": ["count", "sum_area", "max_area", "list", "sum_length", "sum_attr"]},
+    "attr": {"type": "string", "description": "attribute name summed when aggregate == sum_attr"},
+    "rules": {"type": "array", "items": {"type": "string"}, "description": "named convention rules, see engine/query/rules.py"}
+  }
+}
