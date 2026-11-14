@@ -16,7 +16,7 @@ def test_two_agreeing_printed_sizes_give_a_specified_scale(tmp_path, monkeypatch
     toks = [{"text": "248x149", "w_m": 2.48, "x": 178, "y": 30, "conf": 90},
             {"text": "133x149", "w_m": 1.33, "x": 542, "y": 30, "conf": 90},
             {"text": "248x149", "w_m": 2.48, "x": 820, "y": 30, "conf": 90}]      # misread / wrong match: disagrees
-    (tmp_path / "abc.json").write_text(json.dumps(toks))
+    (tmp_path / "abc-v2.json").write_text(json.dumps(toks))
     a = printed_dims.anchor(_facts(), "unused.png", "abc")
     assert a is not None and a.tag.value == "specified" and a.kind == "dimension"
     assert 62 < a.px_per_m < 64 and "1 other labels disagreed" in a.note
@@ -24,5 +24,5 @@ def test_two_agreeing_printed_sizes_give_a_specified_scale(tmp_path, monkeypatch
 
 def test_one_label_is_not_enough(tmp_path, monkeypatch):
     monkeypatch.setattr(printed_dims, "CACHE", tmp_path)
-    (tmp_path / "one.json").write_text(json.dumps([{"text": "248x149", "w_m": 2.48, "x": 178, "y": 30, "conf": 90}]))
+    (tmp_path / "one-v2.json").write_text(json.dumps([{"text": "248x149", "w_m": 2.48, "x": 178, "y": 30, "conf": 90}]))
     assert printed_dims.anchor(_facts(), "unused.png", "one") is None

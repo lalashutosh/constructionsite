@@ -22,7 +22,9 @@ VIEW_TYPES = ("floor_plan", "site_plan", "elevation", "section", "title_block", 
 REVIEW_SYSTEM = (
     "You review machine readings of an architectural drawing. Reply with JSON only, no prose, exactly this shape: "
     '{"views": [{"n": <view number>, "type": "floor_plan|site_plan|elevation|section|title_block|legend|photo|other", '
-    '"better": "A|B|neither", "walls_missing": true|false, "false_walls": true|false}], '
+    '"better": "A|B|neither", "walls_missing": true|false, "false_walls": true|false, '
+    '"level": <floor number printed or implied for a floor plan: 0 ground/1st floor, 1 the floor above, -1 basement; '
+    'null if unclear>, "level_label": "<floor name as printed, e.g. 1. KERROS, or empty>"}], '
     '"text_mirrored": true|false, "notes": "<= 20 words"}. '
     "Overlay A (blue) and overlay B (orange) are two different wall readers. 'better' = which one follows the real "
     "walls of that view more closely. Never invent counts or measurements."
@@ -160,6 +162,9 @@ def check(img: np.ndarray, walls_cnn: Optional[list], walls_trace: list, rooms_c
             merged["walls_missing"] = full and all(g.get("walls_missing") for g in got)
             merged["false_walls"] = full and all(g.get("false_walls") for g in got)
             merged["agree"] = len(types) == 1 and len(got) == len(reviews)
+            lv = [g.get("level") for g in got if isinstance(g.get("level"), int)]
+            merged["level"] = lv[-1] if lv else None            # strongest reviewer's reading
+            merged["level_label"] = next((str(g.get("level_label")) for g in reversed(got) if g.get("level_label")), "")
             review["views"][n] = merged
     chosen, warnings = [], []
     for v in vs:
@@ -195,6 +200,8 @@ def check(img: np.ndarray, walls_cnn: Optional[list], walls_trace: list, rooms_c
             pick = "A" if a_here else "B"
             why = f"readers disagree ({(agree or 0):.0%} overlap); default reader"
             flags.append("walls uncertain")
+        if rv:
+            v["level"], v["level_label"] = rv.get("level"), rv.get("level_label", "")
         v["reader"] = {"A": "CNN wall class", "B": "stroke tracing"}[pick]
         v["why"] = why
         if rv and rv.get("walls_missing"):
@@ -207,6 +214,18 @@ def check(img: np.ndarray, walls_cnn: Optional[list], walls_trace: list, rooms_c
             warnings.append(f"View {v['n']} (floor plan): {f}")
     if review and review.get("text_mirrored"):
         warnings.append("Text on the sheet reads upside down or mirrored: the scan is rotated or flipped (counts are unaffected)")
-    return {"views": vs, "walls": chosen, "warnings": warnings,
+    # several floor plans on ONE sheet = several floors: list them in level order (unknown: top-to-bottom, left-to-right)
+    plans = [v for v in vs if v.get("type") == "floor_plan"]
+    floors = []
+    for k, v in enumerate(sorted(plans, key=lambda v: (v.get("level") if isinstance(v.get("level"), int) else 50,
+                                                       v["box"][1] // 200, v["box"][0]))):
+        idx = [i for i, wl in enumerate(chosen) if _in_box(wl, v["box"])]
+        lv = v.get("level")
+        floors.append({"view": v["n"], "box": v["box"], "level": lv, "level_label": v.get("level_label") or "",
+                       "label": v.get("level_label") or (f"Level {lv}" if isinstance(lv, int) else f"Floor {k + 1}"),
+                       "wall_indices": idx, "level_source": "read by AI reviewers" if isinstance(lv, int) else "position on sheet"})
+    if len(floors) > 1:
+        warnings.append(f"{len(floors)} floor plans on one sheet: shown as {len(floors)} floors")
+    return {"views": vs, "walls": chosen, "warnings": warnings, "floors": floors,
             "reviewer": {"used": used, "models": names, "answered": len(reviews), "asked": len(llms),
                          "cost_usd": round(cost, 5), "notes": (review or {}).get("notes", "")}}

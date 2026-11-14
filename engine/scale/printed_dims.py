@@ -30,19 +30,24 @@ def _tokens(img_bgr: np.ndarray) -> list[dict]:
     import pytesseract
     g = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY) if img_bgr.ndim == 3 else img_bgr
     h, w = g.shape
-    up = 2.0 if max(h, w) < 1600 else 1.0
+    up = 2.0 if max(h, w) < 1600 else 1.0           # small text needs 2x; timeout raised to 60 s for it
     G = cv2.resize(g, None, fx=up, fy=up, interpolation=cv2.INTER_CUBIC)
     H, W = G.shape
     out = []
     for code in (None, cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_180, cv2.ROTATE_90_COUNTERCLOCKWISE):
         im = G if code is None else cv2.rotate(G, code)
         try:
-            d = pytesseract.image_to_data(im, config="--psm 11", output_type=pytesseract.Output.DICT, timeout=20)
+            d = pytesseract.image_to_data(im, config="--psm 11", output_type=pytesseract.Output.DICT, timeout=60)
         except Exception:  # noqa: BLE001
             continue
         for t, x, y, bw, bh, c in zip(d["text"], d["left"], d["top"], d["width"], d["height"], d["conf"]):
-            m = WXH.match((t or "").strip())
-            if not m or float(c) < 60:
+            tt = (t or "").strip()
+            m = WXH.match(tt)
+            if not m:
+                if re.fullmatch(r"\d{3,5}", tt) and float(c) >= 70 and 600 <= int(tt) <= 30000:
+                    out.append({"text": tt, "plain_mm": int(tt)})      # a dimension line value in millimetres
+                continue
+            if float(c) < 60:
                 continue
             cx, cy = x + bw / 2, y + bh / 2
             if code is None:
@@ -70,16 +75,18 @@ def _long_side_px(poly) -> float:
 def anchor(facts: SheetFacts, abs_path: str, sha: str) -> Optional[ScaleAnchor]:
     """One `dimension` anchor (tag specified) or None."""
     CACHE.mkdir(parents=True, exist_ok=True)
-    f = CACHE / f"{sha}.json"
+    f = CACHE / f"{sha}-v2.json"
     if f.exists():
         toks = json.loads(f.read_text())
     else:
         img = cv2.imread(abs_path, cv2.IMREAD_COLOR)
         toks = _tokens(img) if img is not None else []
         f.write_text(json.dumps(toks))
+    plain = _plain_anchor([t for t in toks if "plain_mm" in t], facts)
+    toks = [t for t in toks if "w_m" in t]
     openings = [e for e in facts.elements if e.kind in ("window", "door") and len(e.polygon) >= 2]
     if not toks or not openings:
-        return None
+        return plain
     size = max(facts.width_px or 0, facts.height_px or 0) or 1000
     cands = []
     for t in toks:
@@ -103,7 +110,7 @@ def anchor(facts: SheetFacts, abs_path: str, sha: str) -> Optional[ScaleAnchor]:
         if len(grp) > len(best_group):
             best_group = grp
     if len(best_group) < 2:
-        return None
+        return plain
     pv = statistics.median(c["px_per_m"] for c in best_group)
     spread = (max(c["px_per_m"] for c in best_group) / min(c["px_per_m"] for c in best_group)) - 1
     labels = ", ".join(sorted({c["text"] for c in best_group}))
@@ -111,3 +118,42 @@ def anchor(facts: SheetFacts, abs_path: str, sha: str) -> Optional[ScaleAnchor]:
                        note=f"printed opening sizes ({labels}) matched to {len(best_group)} openings that agree "
                             f"within {spread:.0%}; {len(cands) - len(best_group)} other labels disagreed",
                        element_ids=[c["id"] for c in best_group])
+
+
+def _plain_anchor(toks: list[dict], facts: SheetFacts) -> Optional[ScaleAnchor]:
+    """Plain dimension values (mm) matched to real lengths on the plan: room sides and the extents of each building
+    outline. Accepted only when >= 2 DIFFERENT printed values agree on one px/m within 3% (chance agreement is rare)."""
+    from shapely.geometry import Polygon
+    from shapely.ops import unary_union
+    nums = sorted({t["plain_mm"] for t in toks})
+    rooms = []
+    for e in facts.elements:
+        if e.kind == "room" and len(e.polygon) >= 3:
+            try:
+                rooms.append(Polygon(e.polygon))
+            except Exception:  # noqa: BLE001
+                pass
+    if len(nums) < 2 or not rooms:
+        return None
+    L = []
+    for r in rooms:
+        x0, y0, x1, y1 = r.bounds
+        L += [x1 - x0, y1 - y0]
+    u = unary_union([r.buffer(2) for r in rooms])
+    for g in getattr(u, "geoms", [u]):
+        x0, y0, x1, y1 = g.bounds
+        L += [x1 - x0, y1 - y0]
+    L = [l for l in L if l > 20]
+    cands = [(l / (n / 1000.0), n) for n in nums for l in L]
+    best, sup = None, set()
+    for r, _ in cands:
+        s_ = {n for rr, n in cands if abs(rr / r - 1) <= 0.03}
+        if len(s_) > len(sup):
+            best, sup = r, s_
+    if best is None or len(sup) < 2:
+        return None
+    vals = [rr for rr, n in cands if abs(rr / best - 1) <= 0.03]
+    pv = statistics.median(vals)
+    return ScaleAnchor(kind="dimension", px_per_m=pv, rel_sigma=0.03, tag=Tag.specified,
+                       note=f"printed dimensions ({', '.join(str(n) for n in sorted(sup))} mm) match plan lengths "
+                            f"at one scale within 3%")
