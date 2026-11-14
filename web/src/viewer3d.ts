@@ -855,7 +855,7 @@ export class PlumbViewer {
 
   // ---- layers (envelope / walls / furniture / piping / electrical) and multi-highlight
   private layerObjs: Record<string, THREE.Object3D> = {};
-  setLayers(floorKey: string | null, layers: { envelope?: [number, number][][]; furniture?: { polygon: [number, number][] }[];
+  setLayers(floorKey: string | null, layers: { envelope?: [number, number][][]; rooms?: [number, number][][]; furniture?: { polygon: [number, number][] }[];
     piping?: [number, number][][]; electrical?: [number, number][][] } | null, colours: Record<string, number>) {
     for (const o of Object.values(this.layerObjs)) o.parent?.remove(o);
     this.layerObjs = {};
@@ -877,6 +877,7 @@ export class PlumbViewer {
       fl.group.add(g);
     };
     if (layers.envelope?.length) mk("envelope", layers.envelope, fl.H * 0.03, true);
+    if (layers.rooms?.length) mk("rooms", layers.rooms, fl.H * 0.04, true);       // room boundaries as thin lines
     if (layers.furniture?.length) {          // furniture: low translucent blocks, about knee height
       const g = new THREE.Group();
       const mat = new THREE.MeshBasicMaterial({ color: colours.furniture ?? 0x2dd4bf, transparent: true, opacity: 0.6, depthWrite: false });

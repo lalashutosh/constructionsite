@@ -577,3 +577,11 @@ body { font-size: 15px; }
 .flist .crow .cq { margin-top: 0; font-size: 14px; white-space: nowrap; }
 .flist .crow .cq small { margin-left: 3px; }
 .flist .crow .tag { min-width: 64px; text-align: right; }
+
+/* layer bar at the bottom-left, clear of the title; its message floats above it */
+.layers { top: auto !important; bottom: 62px !important; left: 14px; flex-wrap: nowrap; max-width: none; }
+.layer-msg { position: absolute; bottom: calc(100% + 6px); left: 0; white-space: nowrap; flex-basis: auto; }
+.scalebadge { display: inline-flex; gap: 6px; align-items: baseline; flex-wrap: wrap; justify-content: flex-end; }
+.scalebadge b { color: var(--accent-text); font-weight: 600; }
+.nothere details summary { cursor: pointer; }
+.nothere p { margin: 4px 0 0; }

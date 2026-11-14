@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { answerCheck, fetchChecks, MOCK_CHECKS, ask, buildProject, fetchPlan, fetchSamples, setScale, ScaleError, geometry, imageUrl, upload, type Geometry, type Sample, type BuildPlan, type BuildingResult, type Check, type PlanElement, fetchElements, overrideElement, undoElement, ElementsUnavailable } from "./api";
-import { ChecksBlock, kindWord, scaleBrief } from "./checks";
+import { ChecksBlock, kindWord, scaleBrief, pct as pctNum } from "./checks";
 import { Inspector, kindName } from "./inspector";
 import { chipsFor, findingSpecs } from "./logic";
 import type { ProofObject } from "./types";
@@ -616,6 +616,8 @@ export default function App() {
           <ViewerPane
             vref={vref}
             layerExtra={active ? { furniture: ckN[active.path] ?? 0 } : undefined}
+            scaleText={scaleLine ? `${scaleLine.text.split(":")[0]} · ${pctNum(scaleLine.conf)}% sure` : null}
+            onScaleWhere={() => { const sc = activeChecks?.find((c) => c.kind === "scale"); setHoverCheck(sc ?? null); vref.current?.setView("top"); }}
             floors={floors}
             active={active}
             selected={selected}

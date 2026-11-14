@@ -567,7 +567,7 @@ _GEO_GUARD = threading.Lock()
 def _reviewers():
     """Two independent vision reviewers for the scan check (engine/scancheck.py), when an LLM is configured."""
     from engine.query import llm as L
-    if L.provider() not in ("verda", "featherless"):
+    if L.provider() not in ("verda", "featherless", "gemini"):
         return None
     out = []
     for kind in ("fast", "strong"):

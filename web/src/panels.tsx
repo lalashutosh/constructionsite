@@ -198,6 +198,9 @@ export function ViewerPane(p: {
   vref?: { current: PlumbViewer | null };
   /** layer contents that arrive later than the 3D (the deep read's furniture nodes) */
   layerExtra?: Record<string, number>;
+  /** the sheet's own scale, shown by the measuring button, and a jump to where it was read */
+  scaleText?: string | null;
+  onScaleWhere?: () => void;
 }) {
   const [tip, setTip] = useState<{ text: string; x: number; y: number } | null>(null);
   const [len, setLen] = useState("");
@@ -237,7 +240,7 @@ export function ViewerPane(p: {
   useEffect(() => {                        // body-system layers of the first shown floor (after the floors are built)
     const t = window.setTimeout(() => {
       const f = parts.find((x) => x.geo.layers);
-      viewer.current?.setLayers(f ? f.key : null, f ? (f.geo.layers as never) : null, LAYER_COLOURS);
+      viewer.current?.setLayers(f ? f.key : null, f ? ({ ...(f.geo.layers as object), rooms: f.geo.rooms.map((r) => r.polygon) } as never) : null, LAYER_COLOURS);
     }, 900);
     return () => window.clearTimeout(t);
   }, [layerSig]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -385,7 +388,13 @@ export function ViewerPane(p: {
       {a && p.scale === "off" && (
         <div className="scalecta">
           <button className="ctabtn" onClick={p.onScaleStart}><Ruler {...ic} size={18} />{p.scaleKind === "specified" ? "Check real size" : p.scaleKind === "chosen" ? "Change real size" : "Set real size"}</button>
-          {p.scaleKind === "defaulted" ? <span>One real measurement unlocks every size.</span> : <span title={p.scaleSrc ?? undefined}>{p.scaleKind === "specified" ? "Sizes from measurements printed on the drawing" : "Sizes from your measurement"}</span>}
+          {p.scaleKind === "defaulted" ? <span>One real measurement unlocks every size.</span> : (
+            <span className="scalebadge" title={p.scaleSrc ?? undefined}>
+              <b>{p.scaleKind === "specified" ? "Scale read from the drawing" : "Scale from your measurement"}</b>
+              {p.scaleText ? <> · {p.scaleText}</> : null}
+              {p.onScaleWhere && <button className="linkbtn" onClick={p.onScaleWhere}>Where?</button>}
+            </span>
+          )}
         </div>
       )}
       {measuring && (
@@ -572,6 +581,7 @@ export function Findings(p: {
         {!sameRefusal && p.specs.map((s) => {
           const st = p.states[s.key];
           if (!st) return null;
+          if (st.proof && (st.proof.tier === "grey" || (st.proof.kind === "count" && st.proof.value === 0))) return null;
           if (st.loading) return <li key={s.key} className="frow wait"><span className="ficon"><span className="spin sm" /></span><span className="ftext"><span className="fsent muted">Counting {s.noun}…</span></span></li>;
           if (st.err || !st.proof) return <li key={s.key} className="frow grey"><span className="ficon"><TierIcon tier="grey" /></span><span className="ftext"><span className="fsent">{s.noun}: can't answer.</span><small>{st.err}</small></span></li>;
           const pr = st.proof;
@@ -592,6 +602,16 @@ export function Findings(p: {
             </li>
           );
         })}
+        {!sameRefusal && (() => {
+          const none = p.specs.filter((s) => { const pr = p.states[s.key]?.proof; return pr && (pr.tier === "grey" || (pr.kind === "count" && pr.value === 0)); });
+          return none.length ? (
+            <li className="pad muted sm nothere">
+              <details><summary>Not found on this sheet: {none.map((s) => s.noun).join(", ")}</summary>
+                {none.map((s) => <p key={s.key}>{s.noun}: {p.states[s.key]!.proof!.refusal ?? "none drawn"}</p>)}
+              </details>
+            </li>
+          ) : null;
+        })()}
       </ul>
     </div>
   );

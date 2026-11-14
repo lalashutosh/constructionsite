@@ -48,7 +48,7 @@ export function ViewCube({ viewer }: { viewer: () => PlumbViewer | null }) {
 }
 
 // ---------------------------------------------------------------- layers
-export const LAYER_COLOURS: Record<string, number> = { envelope: 0xe7c98a, walls: 0xcbd5e1, furniture: 0x2dd4bf, piping: 0x3b82f6, electrical: 0xf59e0b };
+export const LAYER_COLOURS: Record<string, number> = { rooms: 0x94a3b8, envelope: 0xe7c98a, walls: 0xcbd5e1, furniture: 0x2dd4bf, piping: 0x3b82f6, electrical: 0xf59e0b };
 const LAYER_NAMES: [string, string][] = [["envelope", "Envelope"], ["walls", "Walls"], ["furniture", "Furniture"], ["piping", "Piping"], ["electrical", "Electrical"]];
 export type Layers = { envelope?: [number, number][][]; walls?: [number, number][][]; furniture?: { id: string; kind: string; polygon: [number, number][] }[];
   piping?: [number, number][][]; electrical?: [number, number][][]; notes?: Record<string, string> };

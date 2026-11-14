@@ -27,7 +27,7 @@ import numpy as np
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 CACHE = ROOT / "cache" / "symbols"
-VERSION = "v10"
+VERSION = "v11"
 NAMES = ["bed", "side table", "desk", "chair", "sofa", "lounge chair", "table", "closet", "wardrobe", "toilet", "sink",
          "shower", "bathtub", "door", "window", "stair", "tv", "kitchen counter", "fridge", "gym equipment", "washer",
          "plant", "column", "other"]
@@ -72,8 +72,7 @@ def deep_info(prof: dict, n_rooms: int = 0) -> dict:
 
 
 def _components(g: np.ndarray, mask: np.ndarray, words: list[dict], ppm: float):
-    bg = cv2.dilate(g, np.ones((9, 9), np.uint8))          # local paper / floor-fill brightness
-    ink = ((((bg.astype(np.int16) - g) > 28) | (g < 160)) & (mask > 0)).astype(np.uint8)   # grey linework too (door swings)
+    ink = ((g < 160) & (mask > 0)).astype(np.uint8)       # (local-contrast ink tried: pulls floor-fill edges in; worse)
     for w in words:
         a, b, c, d = [int(v) for v in w["box"]]
         ink[max(0, b - 1):d + 2, max(0, a - 1):c + 2] = 0
@@ -115,9 +114,9 @@ def _cluster(lab, st, keep) -> list[dict]:
             best[1]["members"].append(i)
         else:
             reps.append({"d": d, "dims": dims, "members": [i]})
-    reps = [r for r in reps if len(r["members"]) >= 4]
+    reps = [r for r in reps if len(r["members"]) >= 3]   # gym machines, sofas: a few per sheet
     reps.sort(key=lambda r: -len(r["members"]))
-    return reps[:30]
+    return reps[:36]
 
 
 def _ncc_hits(g: np.ndarray, mask: np.ndarray, box: list[int]) -> Optional[list[tuple[float, float]]]:
@@ -184,6 +183,39 @@ def _thumb(g: np.ndarray, box: list[float], size: int = 72) -> str:
     sq[(side - c.shape[0]) // 2:(side - c.shape[0]) // 2 + c.shape[0], (side - c.shape[1]) // 2:(side - c.shape[1]) // 2 + c.shape[1]] = c
     sq = cv2.resize(sq, (size, size), interpolation=cv2.INTER_AREA)
     return "data:image/png;base64," + base64.b64encode(cv2.imencode(".png", sq)[1].tobytes()).decode()
+
+
+def _add_printed(out: dict, words: list[dict], g: np.ndarray) -> None:
+    """Tagged equipment (FP-1..5, CV-1..4 ...) and what the sheet prints (tables, slab types, pipe sizes)."""
+    # tagged equipment (FP-1..5, CV-1..4 ...) and what the sheet prints (tables, slab types, pipe sizes)
+    try:
+        from engine import sheet_findings as SF
+        from engine import sheet_lookup as SL
+        defs = SL._sheet_defs(SL.rows(words))
+        printed = SF.findings(words)
+        out["printed"] = [{"title": f["title"], "text": f["text"], "kind": f["kind"]} for f in printed if f["kind"] != "note"]
+        for f in printed:
+            if f["kind"] != "equipment":
+                continue
+            for it in f["items"]:
+                series = it["label"]
+                m = re.match(r"(\d+)", str(it["value"]))
+                if not m or not it.get("boxes"):
+                    continue
+                meaning, why = SL.expand(series, defs, numbered=True)
+                label = (f"{meaning.capitalize()}s ({series})" if meaning and not meaning.endswith("s") else
+                         f"{meaning.capitalize()} ({series})" if meaning else f"{series} tags")
+                ids = []
+                for j, b in enumerate(it["boxes"]):
+                    eid = f"tag_{series}_{j}"
+                    out["elements"].append({"id": eid, "kind": f"tag {series}", "label": f"{series} tag",
+                                            "polygon": [[b[0], b[1]], [b[2], b[1]], [b[2], b[3]], [b[0], b[3]]], "room_id": None})
+                    ids.append(eid)
+                out["totals"].append({"kind": f"tag {series}", "label": label, "count": int(m.group(1)), "ids": ids,
+                                      "tier": "amber", "note": f"equipment tags {it['value']} read on the sheet"
+                                      + (f"; {why}" if why else ""), "thumb": _thumb(g, it["boxes"][0])})
+    except Exception as e:  # noqa: BLE001
+        out["printed_error"] = f"{type(e).__name__}: {e}"
 
 
 def _contact_sheet(g: np.ndarray, st, reps: list[dict], ppm: float) -> bytes:
@@ -314,6 +346,16 @@ def _checklist(abs_path: str, sha: str, facts, llm) -> dict:
     reps = _cluster(lab, st, keep)
     names, usd, agree_n = (_name_types(_contact_sheet(g, st, reps, ppm), len(reps), llm) if reps else ({}, 0.0, {}))
     out["naming"] = {str(k): v for k, v in agree_n.items()}
+    unnamed = [k for k in range(len(reps)) if not names.get(k + 1)][:8]
+    if unnamed and llm is not None:                   # second pass: each unnamed type alone, with more context
+        strong = llm[-1] if isinstance(llm, (list, tuple)) else llm
+        for k in unnamed:
+            png1 = _contact_sheet(g, st, [reps[k]], ppm)
+            got, u1 = _ask_names(png1, 1, strong)
+            usd += u1
+            if got.get(1):
+                names[k + 1] = got[1]
+                agree_n[k + 1] = "named alone (second pass)"
     rejected = []
     for k, r in enumerate(reps):                    # code verifies each name against the measured size
         nm = names.get(k + 1)
@@ -372,35 +414,7 @@ def _checklist(abs_path: str, sha: str, facts, llm) -> dict:
         out["totals"].append({"kind": nm, "label": LABEL.get(nm, nm.title() + ("s" if not nm.endswith("s") else "")),
                               "count": len(ids), "ids": ids, "tier": "green" if agree else "amber", "note": note,
                               "thumb": _thumb(g, boxes[0]) if boxes else ""})
-    # tagged equipment (FP-1..5, CV-1..4 ...) and what the sheet prints (tables, slab types, pipe sizes)
-    try:
-        from engine import sheet_findings as SF
-        from engine import sheet_lookup as SL
-        defs = SL._sheet_defs(SL.rows(words))
-        printed = SF.findings(words)
-        out["printed"] = [{"title": f["title"], "text": f["text"], "kind": f["kind"]} for f in printed if f["kind"] != "note"]
-        for f in printed:
-            if f["kind"] != "equipment":
-                continue
-            for it in f["items"]:
-                series = it["label"]
-                m = re.match(r"(\d+)", str(it["value"]))
-                if not m or not it.get("boxes"):
-                    continue
-                meaning, why = SL.expand(series, defs, numbered=True)
-                label = (f"{meaning.capitalize()}s ({series})" if meaning and not meaning.endswith("s") else
-                         f"{meaning.capitalize()} ({series})" if meaning else f"{series} tags")
-                ids = []
-                for j, b in enumerate(it["boxes"]):
-                    eid = f"tag_{series}_{j}"
-                    out["elements"].append({"id": eid, "kind": f"tag {series}", "label": f"{series} tag",
-                                            "polygon": [[b[0], b[1]], [b[2], b[1]], [b[2], b[3]], [b[0], b[3]]], "room_id": None})
-                    ids.append(eid)
-                out["totals"].append({"kind": f"tag {series}", "label": label, "count": int(m.group(1)), "ids": ids,
-                                      "tier": "amber", "note": f"equipment tags {it['value']} read on the sheet"
-                                      + (f"; {why}" if why else ""), "thumb": _thumb(g, it["boxes"][0])})
-    except Exception as e:  # noqa: BLE001
-        out["printed_error"] = f"{type(e).__name__}: {e}"
+    _add_printed(out, words, g)
     # stair flights: the tread detector inside the outline (downscaled so a 10k px sheet stays fast)
     try:
         from engine.raster import stairs as ST
@@ -498,6 +512,16 @@ DISCIPLINE = {"A": "architectural", "S": "structural", "M": "mechanical / piping
               "E": "electrical", "C": "civil", "G": "general", "L": "landscape"}
 
 
+TITLE_WORDS = ["FIRST", "SECOND", "THIRD", "FOURTH", "FIFTH", "GROUND", "BASEMENT", "FLOOR", "PLAN", "ROOF", "FOUNDATION",
+               "SLAB", "PIPING", "ELECTRICAL", "MECHANICAL", "PLUMBING", "LEVEL", "SITE", "LIGHTING", "POWER", "ELEVATION", "SECTION"]
+
+
+def _title_word(t: str) -> str:
+    import difflib
+    m = difflib.get_close_matches(t.upper(), TITLE_WORDS, n=1, cutoff=0.75)
+    return m[0] if m else t
+
+
 def _summary(abs_path: str, sha: str, facts, words: list[dict], fp, ck: dict) -> list[str]:
     """What this sheet is and what is on it, in plain sentences (all from code: title block, scale, outline, counts)."""
     from engine import layers as LY
@@ -506,10 +530,21 @@ def _summary(abs_path: str, sha: str, facts, words: list[dict], fp, ck: dict) ->
     titles = []
     for r in __import__("engine.sheet_lookup", fromlist=["rows"]).rows(words):
         t = r["text"].strip()
+        if r.get("angle") == 90:                      # vertical title-block text: read in whichever order makes a title
+            ws_ = sorted(r["words"], key=lambda w: -(w["box"][3] - w["box"][1]))
+            kept = []
+            for w in ws_:                             # OCR duplicates overlapping along the line: keep the longer word
+                if all(min(w["box"][3], k["box"][3]) - max(w["box"][1], k["box"][1]) < 0.5 * (w["box"][3] - w["box"][1]) for k in kept):
+                    kept.append(w)
+            kept.sort(key=lambda w: w["box"][1])
+            rev = " ".join(_title_word(w["text"]) for w in reversed(kept)).strip()
+            if re.search(r"\b(PLAN|ELEVATION|SECTION|DETAILS?|SCHEDULE)\b\W*$", rev.upper()):
+                t = rev
         if re.search(r"\bPLAN\b|\bELEVATION\b|\bSECTION\b|\bDETAILS?\b|\bSCHEDULE\b", t.upper()) and 2 <= len(t.split()) <= 7 \
                 and "=" not in t and not re.search(r"\bSEE\b|\bNOTE\b", t.upper()):
             titles.append((r["h"], t))
-    title = max(titles)[1].title() if titles else None
+    titles.sort(key=lambda x: (-bool(re.search(r"\b(PLAN|ELEVATION|SECTION)\W*$", x[1].upper())), -x[0]))
+    title = titles[0][1].title() if titles else None
     disc = LY.discipline(words)
     Wx = max((w["box"][2] for w in words), default=1)
     Hy = max((w["box"][3] for w in words), default=1)
@@ -605,3 +640,16 @@ def missing_note(sha: str, question: str) -> Optional[str]:
     kinds = ", ".join(t["label"].lower() for t in ck.get("totals", [])[:6]) or "no repeated symbols"
     return (f"the deep read of this sheet found no {m.group(1).lower()} symbols (it found: {kinds}); "
             "if they are drawn on another sheet of the set, upload that sheet")
+
+
+def enrich(abs_path: str, sha: str, facts, ck: dict) -> dict:
+    """Add equipment tags, printed tables and the sheet summary to an existing deep read (no symbol re-discovery)."""
+    from engine.scale import sheet_text as T
+    g = cv2.imread(abs_path, cv2.IMREAD_GRAYSCALE)
+    words = T.words(abs_path, sha)
+    if not any(t["kind"].startswith("tag ") for t in ck.get("totals", [])):
+        _add_printed(ck, words, g)
+        ck["totals"].sort(key=lambda t: -t["count"])
+    fp = next((e for e in facts.elements if e.kind == "footprint" and e.attrs.get("px_per_m")), None)
+    ck["summary"] = _summary(abs_path, sha, facts, words, fp, ck)
+    return ck
