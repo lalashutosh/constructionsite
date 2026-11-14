@@ -94,6 +94,20 @@ print), outer walls (legend-zone union), wings, printed tables. What they want n
 - Dorm cache currently = the best read (v11 copied to v14): sinks 48 / toilets 48 / beds 46 / closets 29 / showers 23.
 - UI: right panel scrolls as a whole; element map collapsed by default; idle camera drift after 45 s at 1/4 speed.
 
+## Update 2026-11-15 ~02:45
+- Doors: `symbols.door_arcs` = grey, colourless strokes + RANSAC circle fit (radius 0.55-1.25 m, 55-135 deg span):
+  dorm 141 doors (bifold closet doors count; angled corridor double doors and a few arcs missed). Code only.
+- Staircases: `symbols.stair_flights` = tread detector on full-resolution tiles (whole-sheet downscale lost the treads);
+  flights within 3 m = one staircase: dorm 4 staircases / 7 flights (wing ends, north end, central). The wide exterior
+  stair beside the common area is still missed.
+- Template counts: used only for DISTINCTIVE symbols (`_plain_box` rejects plain rectangles), up to 8x the clusters.
+  Names cached per contact sheet (`cache/symbols/names-*.json`) so re-runs are stable.
+- Estimated services (`engine/layers.estimate_services`) for sets without an MEP sheet: pipework 2023 m to 109 wet
+  points, 418 m cable, 156 lights, 376 sockets on the dorm; layers marked "estimated", listed in the checklist,
+  chatbot answers "how much pipework / how many sockets" with the basis. Tag: defaulted.
+- UI: layers in a compact menu, no 'Other'/'space' tags in 3D, max 12 room tags, cube below the measuring button,
+  low/light furniture blocks, "See proof" as a primary button.
+
 ## How to run / test
 API: `LLM_PROVIDER=verda .venv/bin/python -m uvicorn api.main:app --port 8001`; web: `cd web && VITE_ENGINE=http://localhost:8001/api npx vite`.
 Stress: `.venv/bin/python scripts/stress_big.py` (manifest `cache/stress/manifest.json`, 3 full-res Stoa sheets).
