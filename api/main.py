@@ -393,6 +393,39 @@ async def build_plan(path: str, vibe: str = "standard", it_load_kw: Optional[flo
     return await asyncio.to_thread(run)
 
 
+class BuildingBody(BaseModel):
+    files: list[dict[str, str]]          # [{path: <from /api/upload or dataset path>, name: <relative name in the folder>}]
+
+
+@app.post("/api/building")
+async def building(body: BuildingBody):
+    """A folder of drawings -> floors in order (+ where each level came from) and the non-plan sheets.
+    Runs the scan check per file (cached) and, with the LLM on, reads floor titles the file names do not give."""
+    from engine.building import organise
+    for f in body.files:
+        _resolve(PathRef(path=f.get("path")))
+
+    def geo(path):
+        return asyncio.run(geometry(path))
+
+    def img(path):
+        import cv2
+        fp, _, _ = _drawing_png(path, 1400)
+        im = cv2.imread(str(fp))
+        return cv2.imencode(".png", im)[1].tobytes()
+
+    def abs_of(path):
+        from engine.pipeline import _abs
+        return _abs(path)
+
+    thinker = None
+    from engine.query import llm as L
+    if L.provider() in ("verda", "featherless"):
+        thinker = L.VerdaLLM(L.provider(), "strong")      # reasoning ON: organising a project is a hard task
+        thinker.no_think = False
+    return await asyncio.to_thread(organise, body.files, geo, None, img, abs_of, thinker)
+
+
 @app.post("/api/decide")
 async def decide(body: DecideBody):
     """Apply a choice -> recompute. engine.decide.quote may not exist yet: 501 with a clear message."""
