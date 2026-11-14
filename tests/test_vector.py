@@ -87,7 +87,15 @@ def test_plugin_registers_resolver_and_voters():
     registry.reset()
 
 
-@pytest.mark.skipif(not __import__("evalkit.data", fromlist=["dataset_root"]).dataset_root().joinpath("questions.jsonl").exists(), reason="dataset not available")
+def _has_dataset() -> bool:
+    try:
+        from evalkit.data import dataset_root
+        return dataset_root().joinpath("questions.jsonl").exists()
+    except Exception:  # noqa: BLE001  (DATASET_ROOT unset on CI raises; that means: no dataset)
+        return False
+
+
+@pytest.mark.skipif(not _has_dataset(), reason="dataset not available")
 def test_real_dxf_and_ifc_round_trip():
     from evalkit.data import load_questions
     from engine.vector import plugin
