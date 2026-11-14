@@ -1,5 +1,69 @@
 # Handoff — where the build stands and how to continue
 
+## UPDATE 2026-11-14 ~23:30 (Ashutosh's session: big sheets, scale, confidence) — START HERE
+
+Goal of this round (user): judges will use BIG, complex blueprints. (1) If a sheet has a scale, USE it so room sizes
+are right. (2) When unsure, show a confidence meter and ask the user yes/no. (3) Adapt processing to the image
+(size/type/complexity) instead of going haywire. Stress-test, iterate to GOOD (not perfect, no spiral).
+
+**Stress set** (local, gitignored): `cache/stress/` — stoa1-3.png (the 3 Stoa example sheets, 768 px; source
+`stoa*.webp` in repo root) + USACE 34x22 sheets rendered at 150 dpi (5100x3300) and as vector PDFs, from the public
+WBDG set STD 123-335-03 (https://www.wbdg.org/FFC/DOD/COS/STD_123-335-03.pdf, pages 1, 13, 14, 33). Rebuild:
+render those pages with PyMuPDF at dpi=150. Truth: `cache/stress/truth.json`. Harness: `scripts/stress_big.py`
+(on branch wip/big-sheets). Last report: `docs/stress-report-wip.md` (on that branch).
+
+**Done + committed on `p2-finish` (lead-verified):**
+- `884ac2f` scale from the sheet itself: `engine/scale/sheet_text.py` (PDF text layer / tiled OCR),
+  `engine/scale/sheet_scale.py` (scale notes 1/2"=1'-0", 1"=40'-0", 1:50, NTS; graphic scale bars; ft-in + mm dimension
+  strings matched to dimension lines; paper size from aspect). px/m vs truth: S-101 246.02/246.06 (was 610.7 falsely
+  'specified'), S-102 123.09/123.03, stoa3 3.67/3.71 (half-size print), no-scale sheets ask. 6-11 s, <150 MB.
+- `884ac2f` + `f90cc62` confidence meter + yes/no questions: `GET /api/checks`, `POST /api/checks/answer`
+  (contract `docs/decisions/checks-api.md`, engine `engine/scale/checks.py`), UI `web/src/checks.tsx` (meter with word +
+  icon, max 3 open questions, evidence pins on hover, answer -> sizes refresh). Live-verified on stoa3:
+  "Is the depth 137'-4" (41.9 m)?" 0.79 -> yes -> 0.99.
+- `5346352` derived quantities: `engine/takeoff/derive.py` ("how many 3x3 metre tiles for my living room" ->
+  ceil(A*1.1/9) in code; paint/carpet/lights/skirting; en/fi/de/fr/it; missing size -> asks). 22 tests.
+  **Its hook in `PipelineEngine.ask` is only on branch `wip/big-sheets`** (mixed with the routing WIP) — the live UI
+  does not answer tile questions until that block is moved to p2-finish (it is the clearly delimited `derive` block at
+  the top of `ask`; cherry-pick just that hunk).
+- `5346352` + `f31dce6` + `662aeab` Verda worker: `scripts/verda_task.py` (Verda writes ONE file from a spec, check
+  runs, errors fed back, retries, output STAGED for Claude review). Division of labour in ORCHESTRATOR.md: Opus decides
+  + judges, sonnet specs/integrates/verifies, haiku chores, Verda types. ALWAYS `--no-think` on verda.py reviews
+  (thinking models otherwise return empty output and still bill).
+- `1faa0e4` .dxf/.ifc without a sibling image render + build 3D from their own entities.
+
+**WIP branches (pushed by the human, NOT merged):**
+- `wip/big-sheets` (`f97d3f2`): `engine/profile.py` (sheet profiler: residential_scan / archival_scan / cad_sheet / ...),
+  `engine/bigsheet.py` (construction sheets: walls from line geometry of the main plan view, title block/notes/schedules
+  excluded; colour-filled zones as rooms — stoa3 gets 14 rooms), routing in `engine/pipeline.py`, router phrases
+  `engine/router_sheet.yaml` (total area / overall size / scale questions), `tests/test_bigsheet.py`. Tests 286 pass.
+  **Blocker before merge:** the profiler classes 3/40 sampled CubiCasa plans and all Swiss PNGs as `cad_sheet`, which
+  skips the CubiCasa CNN -> DEV regression. Fix the profiler (CubiCasa-size residential plans must stay
+  residential_scan; Swiss PNGs with a DXF sibling resolve via siblings anyway), then run
+  `.venv/bin/python -m evalkit.run --engine pipeline --split dev --sources cubicasa5k --no-siblings` before and after
+  (must not drop). Current behaviour on construction sheets is honest refusal (doors not read on CAD sheets; rooms only
+  where enclosed/colour zones exist) — no haywire output, but few answers. Next: doors/windows on CAD sheets (arc +
+  leaf symbols at known scale), room labels from `sheet_text.words`, overall size from the scale, schedule/table values.
+- `wip/archival-walls` (`7f3ee15`): unverified wall filter for hand-drawn scans (see the 20:30 section).
+
+**NEW TASKS from the user (not started):**
+1. **Every element must be selectable** (in 3D and on the 2D overlay: rooms, walls, doors, windows, fixtures, stairs,
+   labels). Selecting one shows what it is, its size (via the solved scale), its source/tag (drawn/specified/chosen),
+   confidence, and which answers it feeds. If the element has no instructions/explanation shown yet, show them
+   (e.g. "This is a door, read from the CubiCasa model (82% sure). Counts toward 'How many doors'. Wrong? change it").
+2. **User can change what an element is** (door <-> window <-> wall opening <-> fixture <-> not-an-element, room type
+   bedroom/kitchen/...), when they disagree. Engine side: store per-file element overrides by sha (like
+   `/api/override` and `cache/checks/`), apply them to SheetFacts before voting so every count/area recomputes, tag the
+   element `chosen` (user), keep the original in the receipt, and make the tier say a user decided it. UI: an element
+   inspector with a type picker + "Not a door / remove" + undo; findings refresh in place. Reuse the checks pattern
+   (`engine/scale/checks.py`, `web/src/checks.tsx`) for storage/invalidation.
+3. Finish the WIP branches above (big-sheets blocker first, then the derive hook, then archival walls).
+4. Scale follow-ups: per-view scales on multi-view sheets, OCR digit repair (133'-10" read as 139'-10"), distinct
+   evidence labels per box in /api/checks, plan_view / sheet_type / units checks.
+
+**Known:** `tests/test_count_rules_finetune.py::test_colorful_2002_has_two_bedrooms` fails (pre-existing, raster
+finetune). Verda spend this round ≈ $0.7. Push (human): `git push origin p2-finish wip/big-sheets wip/archival-walls`.
+
 ## UPDATE 2026-11-14 ~19:30 — START HERE: open problems and how to fix each
 
 Live log: https://github.com/lalashutosh/constructionsite/issues/1 . Restart the API after engine edits
