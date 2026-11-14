@@ -210,8 +210,48 @@ def _trace_full(img: np.ndarray) -> tuple[list, str]:
     return walls, note
 
 
+def _cad_model(img, facts, coords) -> Optional[dict]:
+    """Construction sheet (title block, border, several views): walls from LINE GEOMETRY of the main plan view only
+    (engine/bigsheet.py). No CubiCasa CNN, no vision reviewer: the sheet profile already says what each region is."""
+    prof = (facts.extras.get("profile") if facts is not None else None) or {}
+    if prof.get("sheet_type") != "cad_sheet" or facts.extras.get("route") != "cad" or coords != "pixels":
+        return None
+    from engine import bigsheet, profile as P
+    from engine.pipeline import _abs
+    h, w = img.shape[:2]
+    try:
+        words = P.words_for(_abs(facts.provenance.file), facts.provenance.sha256, img)
+    except Exception:  # noqa: BLE001
+        words = []
+    walls = bigsheet.walls(img, {**prof, "width_px": w, "height_px": h}, words)
+    out = {"width": w, "height": h, "walls": walls, "rooms": [], "doors": [], "windows": [], "fixtures": [],
+           "elements_aligned": True,
+           "wall_note": f"construction sheet: walls read from line geometry of the main plan view ({len(walls)} pieces); "
+                        "title block, notes, schedules and dimension chains excluded"}
+    for e in facts.elements:
+        if e.kind == "room" and len(e.polygon) >= 3:
+            out["rooms"].append(_el(e))
+    views = []
+    for v in prof.get("views", []):
+        views.append({"n": v["n"], "box": v["box"], "type": "floor_plan" if v["kind"] == "plan" else
+                      {"notes": "other", "schedule": "legend", "legend": "legend", "key_plan": "other", "detail": "other"}.get(v["kind"], "other"),
+                      "type_source": "sheet profile", "reader": "line geometry" if v["kind"] == "plan" else None,
+                      "flags": [], "title": v.get("title"), "kind": v["kind"]})
+    warns = [f"Construction sheet: {len(views)} regions found; walls read only inside the main plan view"]
+    if prof.get("title_block"):
+        warns.append("Title block excluded from the model")
+    out["check"] = {"views": views, "walls": walls, "warnings": warns, "floors": [], "profile": {
+        k: prof.get(k) for k in ("sheet_type", "route", "complexity", "main_view", "title_block", "border")},
+        "reviewer": {"used": False, "models": [], "answered": 0, "asked": 0, "cost_usd": 0.0,
+                     "notes": "the sheet profile decided; no vision reviewer was needed"}}
+    return out
+
+
 def _checked(img, facts, coords, use_cnn, llm) -> dict:
     """Both wall readers + engine.scancheck (views, agreement, optional vision reviewer) decide the walls."""
+    cad = _cad_model(img, facts, coords)
+    if cad is not None:
+        return cad
     from engine import scancheck
     global _LAST_ROOMS
     _LAST_ROOMS = None
@@ -228,8 +268,9 @@ def _checked(img, facts, coords, use_cnn, llm) -> dict:
             out["rooms"] = [r for r in out["rooms"] if r["id"] not in set(aud["drop"])] + aud["add"]
     except Exception:  # noqa: BLE001  (the audit is optional)
         aud = None
+    bud = ((facts.extras.get("profile") or {}).get("review") if facts is not None else None) or None
     chk = scancheck.check(img, wa, wb, _LAST_ROOMS, llm, cuts=(aud or {}).get("cuts"),
-                          plan_labels=(aud or {}).get("plan_labels"))
+                          plan_labels=(aud or {}).get("plan_labels"), budget=bud)
     if aud:
         chk["audit"] = {k: aud[k] for k in ("used", "answered", "cost_usd", "drop", "actions", "issues", "drop_stairs")}
         chk["audit"]["added"] = [r["id"] for r in aud["add"]]

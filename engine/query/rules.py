@@ -74,6 +74,12 @@ def prior_fallback_1(els, facts):
     return els, None  # handled in run(): value = 1 when detector says 0 (showers_baths)
 
 
+def rooms_only(els, facts):
+    """Colour-filled zones of a CAD sheet (legend colours) are areas, not individual rooms."""
+    kept = [e for e in els if e.subtype != "colour_module"]
+    return kept, "colour-filled zones are not counted as rooms" if len(kept) != len(els) else None
+
+
 def _reader(els, facts):
     return els, None  # handled in run(): the value comes from that intent's reader in engine.count.rules
 
@@ -88,6 +94,7 @@ RULES: dict[str, Callable] = {
     "double_bowl_one_sink": double_bowl_one_sink,
     "separate_wc_not_bathroom": separate_wc_not_bathroom,
     "exclude_outdoor": exclude_outdoor,
+    "rooms_only": rooms_only,
     "cluster_instances": cluster_instances,
     "min_one": min_one,
     "prior_fallback_1": prior_fallback_1,

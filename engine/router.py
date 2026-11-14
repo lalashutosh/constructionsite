@@ -299,11 +299,50 @@ def _not_a_count(question: str, name: str) -> bool:
     return kind_of(name) == "count" and not COUNT_CUE.search(question) and not _known_template(question)
 
 
+# ----------------------------------------------------------------------------- sheet-level intents
+SHEET_TABLE = pathlib.Path(__file__).with_name("router_sheet.yaml")
+_SHEET: Optional[dict] = None
+
+
+def _sheet_table() -> dict:
+    global _SHEET
+    if _SHEET is None:
+        import yaml
+        d = yaml.safe_load(SHEET_TABLE.read_text(encoding="utf-8")) if SHEET_TABLE.exists() else {}
+        spec = re.compile(re.sub(r"\s+", "", d.get("specific", "") or "(?!x)x"), re.I)
+        _SHEET = {"specific": spec, "intents": [(n, v["kind"], [re.compile(p, re.I) for p in v["patterns"]])
+                                               for n, v in (d.get("intents") or {}).items()]}
+    return _SHEET
+
+
+# "<adjective> room(s)": dining room, guest room, utility room ... = a typed room, not "all rooms"
+_TYPED_ROOM = re.compile(r"\b(?!(?:all|every|each|the|whole|entire|total|this|these|those|of|other|same|any|an?|in|many|my|our|"
+                         r"their|how|are|is|there|common|enclosed|individual|separate|different|drawn|shown|rooms?|sum|combined|"
+                         r"overall|floor|per|and|or|for|big|large|small)\b)[a-zäöåüõ]+\s+rooms?\b", re.I)
+
+
+def sheet_intent(question: str) -> Optional[tuple[str, str]]:
+    """(intent, kind) for sheet-level questions (total area of all rooms, largest room, scale ...), else None.
+    A question naming a room type ('total area of the bedrooms') is not sheet-level."""
+    t = _sheet_table()
+    q = unicodedata.normalize("NFKC", question)
+    for name, kind, rxs in t["intents"]:
+        if any(rx.search(q) for rx in rxs):
+            if name in ("largest_room", "smallest_room", "scale_info", "overall_size") or not (
+                    t["specific"].search(q) or _TYPED_ROOM.search(q)):
+                return name, kind
+    return None
+
+
 # ----------------------------------------------------------------------------- public
 def route(question: str, path: str, *, classifier: Optional[TemplateClassifier] = None) -> Route:
     from evalkit import intents as I
 
     r = I.classify(question, path)
+    if not _known_template(question):          # dataset templates keep their fixed intents; new wording is sheet-level
+        sh = sheet_intent(question)
+        if sh is not None:
+            return Route(sh[0], {}, sh[1], r.lang, "sheet")
     lex = _lexicon()
     cue = lex.explicit_kind(normalise(question)) if lex is not None else None
     kind_clash = (r.name != "unknown" and cue is not None and cue != kind_of(r.name)

@@ -25,6 +25,10 @@ SYSTEM = (
     "use an attr listed under numeric_attrs for that kind (e.g. volume_m3). If the question needs something the schema "
     "cannot express (direction, facing, orientation, adjacency to the entrance, cost, time), reply "
     "{\"unsupported\": \"<short reason>\"} instead of a spec. "
+    "Element kind 'zone' (subtype colour_module) is a colour-filled AREA read from a legend swatch, and kind 'region' is "
+    "just a closed outline on a structural sheet: neither is an individual room, dorm, unit or apartment, so never count "
+    "them as rooms/dorms/units (use sum_area over zone for an area question; if the question asks for a number of rooms "
+    "or units that only a printed schedule gives, reply {\"unsupported\": \"count not drawn individually\"}). "
     "NEVER include a numeric answer; only describe what to select. Use only the allowed keys, element kinds, room types and rules."
 )
 

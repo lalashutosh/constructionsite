@@ -133,9 +133,9 @@ def _in_box(wl: dict, box) -> bool:
     return box[0] <= cx <= box[2] and box[1] <= cy <= box[3]
 
 
-def _review_image(img, vs, wa, wb) -> bytes:
+def _review_image(img, vs, wa, wb, px: float = 1800.0) -> bytes:
     h, w = img.shape[:2]
-    s = min(1.0, 1800.0 / max(h, w))
+    s = min(1.0, float(px) / max(h, w))
     canvas = cv2.resize(img, (int(w * s), int(h * s))) if s < 1 else img.copy()
     over = canvas.copy()
     for walls, col in ((wa, (230, 120, 30)), (wb, (30, 140, 255))):        # A blue, B orange (BGR)
@@ -189,7 +189,7 @@ def apply_cuts(img: np.ndarray, vs: list[dict], cuts: Optional[list]) -> tuple[l
 
 
 def check(img: np.ndarray, walls_cnn: Optional[list], walls_trace: list, rooms_cnn: Optional[np.ndarray] = None,
-          llm=None, cuts: Optional[list] = None, plan_labels: Optional[list] = None) -> dict:
+          llm=None, cuts: Optional[list] = None, plan_labels: Optional[list] = None, budget: Optional[dict] = None) -> dict:
     """Returns {views:[{n, box, type, type_source, reader, agreement, flags}], walls:[...chosen...], warnings,
     reviewer: {used, cost_usd, notes}}."""
     vs, cut_notes = apply_cuts(img, views(img), cuts)
@@ -200,15 +200,18 @@ def check(img: np.ndarray, walls_cnn: Optional[list], walls_trace: list, rooms_c
     llms = [x for x in (llm if isinstance(llm, (list, tuple)) else [llm]) if x is not None and hasattr(x, "complete_vision")]
     reviews = []
     if llms:
-        png = _review_image(img, vs, wa, wb)
+        bud = budget or {}                       # chosen from the sheet profile (engine/profile.review_budget)
+        png = _review_image(img, vs, wa, wb, bud.get("image_px", 1800))
         from concurrent.futures import ThreadPoolExecutor
 
         def ask(L):
             import copy
             Q = copy.copy(L)
-            Q.no_think = True                # view types + wall choice: quick; the thinking goes to the audit
+            think = int(bud.get("think_tokens", 0))
+            Q.no_think = think == 0 or getattr(L, "kind", "") == "fast"   # simple plan: no thinking; dense sheet: strong thinks
             try:
-                return L, Q.complete_vision(REVIEW_SYSTEM, f"There are {len(vs)} numbered views.", png, max_tokens=700)
+                return L, Q.complete_vision(REVIEW_SYSTEM, f"There are {len(vs)} numbered views.", png,
+                                            max_tokens=700 + (min(think, 6000) if not Q.no_think else 0))
             except Exception:  # noqa: BLE001  (reviewers are optional; CV rules still decide)
                 return L, None
         with ThreadPoolExecutor(max_workers=len(llms)) as ex:      # independent reviewers, in parallel

@@ -27,6 +27,8 @@ from engine.router import Route, TemplateClassifier, route as route_question
 log = logging.getLogger("plumb.pipeline")
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 AREA_TOL = 0.02
+_DETECTOR_KINDS = {"doors": "door", "windows": "window", "toilets": "toilet", "sinks": "sink", "showers_baths": "bath",
+                   "washbasins": "washbasin", "bathtubs": "bathtub", "showers": "shower"}
 STAGES = ("triage", "resolve", "extract", "vote", "finalize")
 VECTOR_EXT = {".pdf", ".dxf", ".ifc", ".svg"}
 _DISCOVERED = False
@@ -166,21 +168,67 @@ class PipelineEngine:
         except ImportError:
             pass
         err = "no extractor available"
+        prof = self._profile(use_abs)
+        is_cad = bool(prof) and prof.get("sheet_type") == "cad_sheet" and ext in (".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff", ".bmp", ".pdf")
+        if is_cad and ext != ".pdf":
+            # a CAD / construction sheet is NOT a CubiCasa apartment scan: read line geometry of the main plan view
+            try:
+                from engine import bigsheet
+                f = bigsheet.extract_facts(path, use_abs, prof)
+                return f
+            except Exception as e:  # noqa: BLE001
+                err = f"bigsheet: {type(e).__name__}: {e}"
         for fn in fns:
             try:
+                if is_cad and fn.__module__.startswith("engine.raster"):
+                    continue                     # never run the CubiCasa CNN over a whole construction sheet
                 f = fn(use_path if fn.__module__.startswith("engine.vector") else use_abs, allow_siblings=allow)
                 f.provenance.file = path
+                if is_cad and not any(e.kind in ("room", "wall", "door", "window") for e in f.elements):
+                    try:                         # vector reader found nothing drawable: read the rendered page instead
+                        from engine import bigsheet
+                        g = bigsheet.extract_facts(path, use_abs, prof)
+                        g.extras.update({k: v for k, v in f.extras.items() if k not in g.extras and k != "vector"})
+                        return g
+                    except Exception as e:  # noqa: BLE001
+                        err = f"bigsheet: {type(e).__name__}: {e}"
+                if prof:
+                    f.extras.setdefault("profile", {k: v for k, v in prof.items() if k != "sha256"})
                 return f
             except Exception as e:  # noqa: BLE001
                 err = f"{fn.__module__}: {type(e).__name__}: {e}"
+        if is_cad and ext == ".pdf":
+            try:
+                from engine import bigsheet
+                return bigsheet.extract_facts(path, use_abs, prof)
+            except Exception as e:  # noqa: BLE001
+                err = f"bigsheet: {type(e).__name__}: {e}"
         return SheetFacts(provenance=Provenance(file=path), sheet_type="unknown", legible=False,
                           legibility_note=f"extraction failed ({err})")
+
+    @staticmethod
+    def _profile(abs_path: str) -> Optional[dict]:
+        """Cheap sheet profile (engine/profile.py), cached by sha256; None when the file is not an image/PDF."""
+        if not abs_path.lower().endswith((".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff", ".bmp", ".pdf")):
+            return None
+        try:
+            from engine import profile as P
+            return P.profile(abs_path)
+        except Exception as e:  # noqa: BLE001
+            log.warning("profile failed for %s: %s", abs_path, e)
+            return None
 
     # ------------------------------------------------------------------ ask
     def ask(self, path: str, question: str, *, allow_siblings: bool = True, benchmark: bool = True,
             progress: Optional[Callable[[str], None]] = None) -> ProofObject:
         t0 = time.perf_counter()
         stage = progress or (lambda s: None)
+        # --- derived quantities ('how many 3x3 m tiles ...'): engine/takeoff/derive.py runs the base area through ask() ---
+        from engine.takeoff import derive
+        _dspec = derive.parse(question)
+        if _dspec is not None:
+            return derive.answer(self, path, question, _dspec, allow_siblings=allow_siblings, benchmark=benchmark, progress=progress)
+        # --- end derived quantities ---
         rt = route_question(question, path, classifier=self.classifier)
         po = self._ask(path, question, rt, allow_siblings, benchmark, stage)
         try:                                  # "... on floor 2" on a sheet with several floor plans
@@ -291,7 +339,8 @@ class PipelineEngine:
 
         # scale (area/length/volume only; counts never need it)
         scale: Optional[ScaleInfo] = None
-        if kind in ("area", "length", "volume"):
+        sheet_text = rt.layer == "sheet" and kind == "text"
+        if kind in ("area", "length", "volume") or sheet_text:
             scale = self._scale(facts, sha)
             if scale.px_per_m:
                 ctx.params["_px_per_m"] = scale.px_per_m
@@ -299,6 +348,16 @@ class PipelineEngine:
         # vote
         stage("vote")
         results = self._vote(ctx, notes)
+        if sheet_text:                                   # largest room / overall size / scale: no registry voter
+            results = self._sheet_text(ctx, rt, facts, scale, po, notes)
+        if rt.layer == "sheet" and kind == "count" and not any(e.kind == "room" for e in facts.elements):
+            results = []                                 # "how many rooms" with no recognised room is not "0 rooms"
+        if (facts.extras.get("route") == "cad" and kind == "count" and rt.intent in _DETECTOR_KINDS
+                and not any(e.kind == _DETECTOR_KINDS[rt.intent] for e in facts.elements)):
+            return self._grey(po, f"{rt.intent.replace('_', ' ')} are not read on construction sheets yet: the symbol "
+                                  "detectors are trained on small residential scans, so a '0' would be a guess")
+        if not results and rt.layer == "sheet":          # a sheet-level question is never handed to a count or the prior
+            return self._sheet_grey(po, rt, facts, scale, notes)
         if kind == "count":
             self._label_vote(results, ctx, facts, notes)
             self._apply_overrides(results, sha, rt.intent, po, notes)
@@ -612,6 +671,54 @@ class PipelineEngine:
                                              tag=Tag.chosen, source="user"))
         notes.append(f"user verdicts applied: {sum(v['keep'] for v in verdicts)} confirmed, "
                      f"{sum(not v['keep'] for v in verdicts)} rejected")
+
+    def _sheet_text(self, ctx, rt: Route, facts: SheetFacts, scale: Optional[ScaleInfo], po: ProofObject, notes: list[str]) -> list:
+        """Sheet-level text answers computed by code: largest/smallest room, overall size (query engine), scale."""
+        from engine import query
+        from engine.registry import VoterResult
+        px = ctx.params.get("_px_per_m")
+        if rt.intent == "scale_info":
+            if scale is not None and scale.px_per_m and not scale.needs_user:
+                src = "; ".join(a.note or a.kind for a in scale.anchors if a.kind != "door_prior") or "solved scale"
+                v = f"1 m = {scale.px_per_m:.1f} px on this image ({src})"
+                po.assumptions.append(_scale_assumption(scale))
+                po.scale = scale
+                return [VoterResult(Voter(name="scale_solver", value=v, note=src), unit="label")]
+            return []
+        spec = query.spec_for(rt.intent, {}, None)
+        if rt.intent == "overall_size" and not any(e.kind == "footprint" for e in facts.elements):
+            spec = {**spec, "select": ["room"]}
+        if spec is None:
+            return []
+        res = query.run(spec, facts, px)
+        po.query_spec = spec
+        for n in res.notes:
+            notes.append(f"query: {n}")
+        if res.value is None:
+            return []
+        by = {e.id: e for e in facts.elements}
+        if scale is not None and px:
+            po.scale = scale
+        return [VoterResult(Voter(name="sheet_query", value=res.value, element_ids=res.evidence_ids, runs=[],
+                                  note="computed from the sheet's recognised outline / rooms"),
+                            evidence=[by[i] for i in res.evidence_ids if i in by], unit=res.unit)]
+
+    def _sheet_grey(self, po: ProofObject, rt: Route, facts: SheetFacts, scale: Optional[ScaleInfo], notes: list[str]) -> ProofObject:
+        prof = facts.extras.get("profile") or {}
+        kinds = {e.kind for e in facts.elements}
+        why = None
+        if rt.intent in ("rooms_count", "total_room_area", "largest_room", "smallest_room") and "room" not in kinds and (
+                rt.intent == "rooms_count" or "zone" not in kinds):
+            why = "no enclosed rooms or colour-filled zones were recognised on this sheet"
+            if prof.get("sheet_type") == "cad_sheet":
+                why += f" ({prof.get('sheet_type').replace('_', ' ')}: {len(prof.get('views') or [])} views, main plan view read from line geometry)"
+        elif rt.intent in ("total_room_area", "overall_size", "scale_info") or any("scale" in n for n in notes):
+            why = "the drawing's scale is not known yet: give one real length (a printed dimension or a known door width)"
+            if scale is not None:
+                po.decisions_open.append(self._scale_decision(facts, scale if scale.px_per_m else ScaleInfo(needs_user=True)))
+        elif rt.intent == "rooms_count":
+            why = "no individual rooms recognised (only colour-filled zones or none)"
+        return self._grey(po, why or "the sheet has nothing this question can be computed from")
 
     @staticmethod
     def _grey(po: ProofObject, reason: str) -> ProofObject:

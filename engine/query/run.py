@@ -5,6 +5,7 @@ Area units: attrs.area_m2 (vector sources in real units) wins; else polygon px a
 from __future__ import annotations
 
 import json
+import math
 import pathlib
 from dataclasses import dataclass, field
 from typing import Any, Optional
@@ -326,6 +327,23 @@ def run(spec: dict, facts: SheetFacts, px_per_m: Optional[float] = None) -> Resu
         what = w.get("room_type") or w.get("subtype") or w.get("label") or spec.get("select")
         res.notes.append(f"no matching elements: no {what} recognised on this drawing")
         res.value = None                          # a sum over nothing is 'not found', not a confident 0
+        return res
+    if spec["aggregate"] == "extent":                    # overall length x width of the selected outline(s)
+        from shapely.geometry import MultiPoint
+        pts = [pt for e in els for pt in e.polygon]
+        if len(pts) < 3:
+            return res
+        rect = MultiPoint(pts).minimum_rotated_rectangle
+        xs = list(rect.exterior.coords)
+        a, b = sorted([math.dist(xs[0], xs[1]), math.dist(xs[1], xs[2])], reverse=True)
+        res.unit = "label"
+        res.evidence_ids = [e.id for e in els]
+        if px_per_m:
+            res.value = f"{a / px_per_m:.2f} m x {b / px_per_m:.2f} m"
+            res.groups = {"length_m": round(a / px_per_m, 3), "width_m": round(b / px_per_m, 3)}
+        else:
+            res.needs_scale = True
+            res.notes.append(f"outline is {a:.0f} x {b:.0f} px (ratio {a / b:.2f}); a scale is needed for metres")
         return res
     if spec["aggregate"] == "each_area":                 # "size of both bedrooms respectively"
         scored = [(a, e) for e in els if (a := _area_m2(e, px_per_m)) is not None]
