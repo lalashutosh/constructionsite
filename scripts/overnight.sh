@@ -6,6 +6,7 @@
 #
 # Usage (from the repo folder):  bash scripts/overnight.sh
 # Options (env): STOP_AT="09:30"   wall-clock stop time, today or tomorrow (default 09:00)
+#                STOP_AT=never   no wall-clock stop: run until DONE/BLOCKED/idle, waiting out usage limits
 #                ORCH_MODEL=opus   orchestrator model; falls back to sonnet if opus is not available on the plan
 #                TURNS=400         max turns per session
 #                LIMIT_WAIT=900    seconds to wait after a usage-limit message before retrying (default 15 min)
@@ -32,8 +33,12 @@ if [ -n "${ANTHROPIC_API_KEY:-}" ] && [ -z "${ALLOW_API_BILLING:-}" ]; then
 fi
 command -v claude >/dev/null || { echo "claude CLI not found"; exit 1; }
 
-STOP_EPOCH="$(date -d "$STOP_AT" +%s 2>/dev/null || date -j -f %H:%M "$STOP_AT" +%s)"
-[ "$STOP_EPOCH" -le "$(date +%s)" ] && STOP_EPOCH=$((STOP_EPOCH + 86400))
+if [ "$STOP_AT" = "never" ]; then
+  STOP_EPOCH=$(( $(date +%s) + 30 * 86400 ))   # run until DONE/BLOCKED/idle; limits are waited out
+else
+  STOP_EPOCH="$(date -d "$STOP_AT" +%s 2>/dev/null || date -j -f %H:%M "$STOP_AT" +%s)"
+  [ "$STOP_EPOCH" -le "$(date +%s)" ] && STOP_EPOCH=$((STOP_EPOCH + 86400))
+fi
 
 if ! git rev-parse --git-dir >/dev/null 2>&1; then
   git init -q -b main && git add -A && git commit -qm "w0: add plumb pack (single-session)"

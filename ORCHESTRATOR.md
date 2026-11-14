@@ -31,14 +31,16 @@ Your spec: prompts/[file].md. Read AGENTS.md first.
 Single-session mode: ignore all instructions about branches, worktrees, merge scripts and committing. Do NOT commit. Edit only your owned paths.
 Context from earlier phases: [3-6 lines: measured numbers, decisions, what to skip].
 Stop rule: the spec's own stop rule, or when its gate commands pass.
-Finish with docs/handoff/[agent].md and reply with at most 15 lines: gate command results, measured numbers, open failures.
+Verda-first: draft bulk code/text with `.venv/bin/python scripts/verda.py --model fast|strong --prompt-file cache/verda/<task>.md --context <your files> --out cache/verda/<out>` (see ORCHESTRATOR "Verda"), then read, fix and test it yourself before it lands in your paths.
+Finish with docs/handoff/[agent].md and reply with at most 15 lines: gate command results, measured numbers, open failures, Verda calls used.
 ```
 You read handoffs and summaries, not code. If a subagent's reply is unclear, send scout to read the handoff or log, not yourself.
 
-## Verda (extra hands, separate budget)
-`.venv/bin/python scripts/verda.py --model fast|strong --prompt-file <task.md> [--context <files...>] --out <file>`
-(`fast` = DeepSeek Flash, cheap; `strong` = Kimi, for hard reasoning. `--spent` prints the running cost; the script refuses calls over `BUDGET_VERDA_USD`.)
-Use it for bulk text you then check: lexicons and localized question variants, draft test cases, triage of long failure lists, second-opinion review of a diff, README and submission drafts. Rules: never send secrets, `.env` or dataset images; never commit Verda output without reading it; write task files under `cache/verda/`. If `--ping` fails, note it in STATE and continue without Verda.
+## Verda (extra hands, separate budget — USE IT FIRST)
+`.venv/bin/python scripts/verda.py --model fast|strong --prompt-file <task.md> [--context <files...>] --out <file> [--max-tokens N]`
+(`fast` = DeepSeek Flash, nearly free; `strong` = Kimi, for hard reasoning, still far cheaper than Claude. `--spent` prints the running cost; the script refuses calls over `BUDGET_VERDA_USD`. Both endpoints verified working; first call after idle may take minutes (cold start).)
+Claude quota is the scarce resource; Verda is not. Default split: Verda WRITES drafts, Claude (you and the sonnet builders) SPECIFIES, CHECKS and RUNS. Push to Verda: first drafts of whole modules from a tight spec, unit tests and fixtures, lexicons and question-template regexes, localized variants, reading long logs/failure lists into short summaries (instead of scout when the input is text), second-opinion review of a diff (`strong`), handoff/README/submission drafts. A good task file states: goal, exact file to produce, interfaces to use (pass them via `--context`), constraints, and "output only the file content".
+Keep on Claude: architecture and contract decisions, debugging failing tests, anything needing tool use or many files at once, final verification. Rules: never send secrets, `.env` or dataset images; never commit Verda output without reading it; write task files under `cache/verda/`. If `--ping` fails, note it in STATE and continue without Verda.
 This is separate from the engine's own planner (`LLM_PROVIDER=verda` in evaluation runs), which the integrator builds.
 
 ## Quota discipline (Claude Pro limits are tight)
@@ -47,7 +49,7 @@ This is separate from the engine's own planner (`LLM_PROVIDER=verda` in evaluati
 - Heavy compute runs as scripts that write files; only summaries come back.
 
 ## Time
-The header gives the stop time. Plan against it:
+The header gives the stop time. If it is 30 days out, there is no deadline: run the full plan, including P3 extras and A2A; you will be cut off only by usage limits, which the supervisor waits out. Otherwise plan against it:
 - More than 6 h left: full plan.
 - 3 to 6 h: skip P3 extras and A2A.
 - Under 90 min: finish the current item, then go straight to P4.
