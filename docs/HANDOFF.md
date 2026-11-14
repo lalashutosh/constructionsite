@@ -101,6 +101,15 @@ render those pages with PyMuPDF at dpi=150. Truth: `cache/stress/truth.json`. Ha
 **Known:** `tests/test_count_rules_finetune.py::test_colorful_2002_has_two_bedrooms` fails (pre-existing, raster
 finetune). Verda spend this round ≈ $0.7. Push (human): `git push origin p2-finish wip/big-sheets wip/archival-walls`.
 
+**~23:00 follow-up (user tests in the UI):** valves = every valve-type tag series (sheet "(CV)" definitions >
+glossary > ISA-5.1 letters; printed "TYP. OF n" wins over legibility) -> 12-13 on M-101A; "length of the walls of the
+garage" = new query aggregate `perimeter` (`engine/query/measure.py`, LLM off too; planner schema documents it);
+sub-rooms inside big sheets (`engine/outline.subrooms`, named from space words / legend zone / slab note; dorm 58 rooms,
+pump house main hall, slab panels); legend zones masked to the plan and real-word text blocks rejected; doors on fine-line
+scans: weak CNN detections confirmed by the arc voter (4855: 4 -> 7, DEV doors unchanged 85.7%); construction sheets
+get the two-reviewer vision audit (~$0.04-0.08/sheet, once). Raster cache now versioned too. Stress 19/20.
+Still open: slab area BY TYPE (panels exist, most unlabelled), wing lengths, doors/windows on construction sheets.
+
 ## UPDATE 2026-11-14 ~19:30 — START HERE: open problems and how to fix each
 
 Live log: https://github.com/lalashutosh/constructionsite/issues/1 . Restart the API after engine edits
