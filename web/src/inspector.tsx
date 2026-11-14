@@ -114,7 +114,7 @@ export interface InspectorProps {
 }
 
 export function Inspector(p: InspectorProps) {
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(false);
   const sel = useMemo(() => p.els?.find((e) => e.id === p.selId) ?? null, [p.els, p.selId]);
   if (p.unavailable) return <section className="inspector" aria-label="Element inspector"><div className="chead"><span className="lbl">Elements</span></div><p className="muted sm elna">Inspector not available: this engine does not serve element data yet.</p></section>;
   if (!p.els || !p.els.length) return null;

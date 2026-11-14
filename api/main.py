@@ -950,6 +950,23 @@ async def checklist(path: str):
     return await asyncio.to_thread(run)
 
 
+class RenameBody(PathRef):
+    kind: str
+    name: str
+
+
+@app.post("/api/checklist/rename")
+async def checklist_rename(body: RenameBody):
+    """You name a symbol type once; every copy follows, counts merge, the chatbot uses the new name."""
+    from engine import symbols
+    from engine.pipeline import _abs
+    p = _resolve(body)
+    ck = symbols.rename(facts_cache.sha256_file(_abs(p)), body.kind, body.name)
+    if ck is None:
+        raise HTTPException(404, "no deep read for this drawing yet")
+    return ck
+
+
 @app.post("/api/decide")
 async def decide(body: DecideBody):
     """Apply a choice -> recompute. engine.decide.quote may not exist yet: 501 with a clear message."""

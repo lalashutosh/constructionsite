@@ -231,8 +231,8 @@ export class PlumbViewer {
     this.controls.zoomToCursor = true;          // wheel zooms towards the point under the cursor
     this.controls.zoomSpeed = 1.1;
     this.controls.screenSpacePanning = true;
-    this.controls.autoRotate = !this.reduce;
-    this.controls.autoRotateSpeed = 1.0; // one turn per 60 s
+    this.controls.autoRotate = false;          // idle drift only after a long pause (see IDLE_MS), and slowly
+    this.controls.autoRotateSpeed = 0.25;      // one turn per 4 min
     this.controls.maxPolarAngle = Math.PI * 0.49;
     this.controls.addEventListener("start", () => {
       this.controls.autoRotate = false;
@@ -242,7 +242,7 @@ export class PlumbViewer {
     this.controls.addEventListener("end", () => {
       this.lastInteract = performance.now();
       window.clearTimeout(this.resumeTimer);
-      this.resumeTimer = window.setTimeout(() => (this.controls.autoRotate = !this.reduce), 3000);
+      this.resumeTimer = window.setTimeout(() => (this.controls.autoRotate = !this.reduce), 45000);
     });
     this.scene.add(this.measureGroup);
     this.scene.add(this.dimGroup);
@@ -606,7 +606,7 @@ export class PlumbViewer {
     this.controls.target.lerpVectors(tw.t0, tw.t1, e);
     if (u >= 1) {
       this.tween = null;
-      if (!this.measureKey) this.controls.autoRotate = !this.reduce;
+      if (!this.measureKey) this.armIdle();
       tw.done?.();
     }
   }
@@ -809,6 +809,13 @@ export class PlumbViewer {
     const line = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(pts), mat);
     line.renderOrder = 11;
     this.elGroup.add(line);
+  }
+
+  /** slow idle drift, only after 45 s without any interaction */
+  private armIdle() {
+    window.clearTimeout(this.resumeTimer);
+    this.controls.autoRotate = false;
+    this.resumeTimer = window.setTimeout(() => (this.controls.autoRotate = !this.reduce && !this.measureKey), 45000);
   }
 
   // ---- view cube: preset views, orbit by drag, re-centre (eased, damped)
@@ -1064,7 +1071,7 @@ export class PlumbViewer {
       this.camera.position.copy(from);
       this.flyTo(homePos, homeTarget, 2600);
     }
-    this.controls.autoRotate = !this.reduce;
+    this.armIdle();
     if (this.topDown) {                       // floors rebuilt while measuring: stay looking straight down
       this.controls.autoRotate = false;
       this.beforeScale = { pos: homePos.clone(), target: homeTarget.clone() };

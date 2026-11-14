@@ -27,12 +27,13 @@ import numpy as np
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 CACHE = ROOT / "cache" / "symbols"
-VERSION = "v12"
-NAMES = ["bed", "side table", "desk", "chair", "sofa", "lounge chair", "table", "closet", "wardrobe", "toilet", "sink",
+VERSION = "v14"
+NAMES = ["bed", "side table", "desk", "chair", "sofa", "lounge chair", "seating group", "exercise bike", "treadmill", "table", "closet", "wardrobe", "toilet", "sink",
          "shower", "bathtub", "door", "window", "stair", "tv", "kitchen counter", "fridge", "gym equipment", "washer",
          "plant", "column", "other"]
 # physical size check (long side, short side, metres) - code verifies the vision model's name at the solved scale
-SIZE_M = {"bed": (1.7, 2.4, 0.8, 2.1), "side table": (0.3, 0.8, 0.25, 0.8), "desk": (0.8, 2.2, 0.4, 1.0),
+SIZE_M = {"seating group": (1.4, 4.0, 0.8, 2.6), "exercise bike": (1.0, 2.2, 0.4, 1.0), "treadmill": (1.6, 2.6, 0.6, 1.1),
+          "bed": (1.7, 2.4, 0.8, 2.1), "side table": (0.3, 0.8, 0.25, 0.8), "desk": (0.8, 2.2, 0.4, 1.0),
           "chair": (0.35, 0.9, 0.3, 0.9), "sofa": (1.2, 3.2, 0.6, 1.2), "lounge chair": (0.6, 1.2, 0.5, 1.1),
           "table": (0.5, 3.0, 0.4, 1.6), "closet": (0.5, 3.0, 0.3, 0.9), "wardrobe": (0.5, 3.0, 0.3, 0.9),
           "toilet": (0.4, 0.9, 0.3, 0.7), "sink": (0.3, 1.2, 0.25, 0.7), "shower": (0.7, 1.8, 0.7, 1.4),
@@ -49,12 +50,14 @@ def plausible(name: str, long_m: float, short_m: float) -> bool:
     return r[0] * 0.8 <= long_m <= r[1] * 1.25 and r[2] * 0.8 <= short_m <= r[3] * 1.25
 
 
-LABEL = {"side table": "Side tables", "closet": "Closets", "wardrobe": "Closets", "tv": "TVs", "gym equipment": "Gym equipment",
+LABEL = {"seating group": "Seating groups (chairs + table)", "exercise bike": "Exercise bikes", "treadmill": "Treadmills",
+         "side table": "Side tables", "closet": "Closets", "wardrobe": "Closets", "tv": "TVs", "gym equipment": "Gym equipment",
          "lounge chair": "Lounge chairs", "stair": "Stair flights", "kitchen counter": "Kitchen counters"}
 SYSTEM = ("You name furniture and fixture SYMBOLS from an architectural floor plan. The image is a grid of numbered "
           "cells; each cell shows ONE symbol type outlined in RED (with its surroundings for context) and its real size "
           "in metres in the caption - use the size: a bed is about 2 x 1 m, a side table about 0.5 x 0.5 m (a bed, desk, chair, sofa, lounge chair, side table, table, closet/wardrobe, "
-          "toilet, sink, shower, bathtub, door swing, window, stair, TV, kitchen counter, fridge, gym equipment, washer, "
+          "toilet, sink, shower, bathtub, door swing, window, stair, TV, kitchen counter, fridge, gym equipment (exercise bike, "
+          "treadmill, weight machine), seating group (2-3 lounge chairs around a small table), washer, "
           "plant, column) or a fragment of linework (other). Reply JSON only: {\"types\": [{\"n\": <cell number>, "
           "\"name\": \"<one of: " + ", ".join(NAMES) + ">\"}]}. Never count anything.")
 
@@ -270,9 +273,13 @@ def _contact_sheet(g: np.ndarray, st, reps: list[dict], ppm: float) -> bytes:
     return cv2.imencode(".png", grid)[1].tobytes()
 
 
-def _ask_names(png: bytes, n: int, llm) -> tuple[dict[int, str], float]:
+def _ask_names(png: bytes, n: int, llm, cands: Optional[list[list[str]]] = None) -> tuple[dict[int, str], float]:
+    user = f"{n} numbered cells."
+    if cands:                                     # only names that fit each symbol's measured size are allowed
+        user += " Allowed names per cell (pick one, or 'other'): " + "; ".join(
+            f"{i + 1}: {', '.join(c)}" for i, c in enumerate(cands))
     try:
-        rep = llm.complete_vision(SYSTEM, f"{n} numbered cells.", png,
+        rep = llm.complete_vision(SYSTEM, user, png,
                                   max_tokens=2500 if getattr(llm, "no_think", True) else 9000)
     except Exception:  # noqa: BLE001
         return {}, 0.0
@@ -288,14 +295,19 @@ def _ask_names(png: bytes, n: int, llm) -> tuple[dict[int, str], float]:
     return out, float(getattr(rep, "usd", 0.0) or 0.0)
 
 
-def _name_types(png: bytes, n: int, llm) -> tuple[dict[int, str], float, dict[int, str]]:
+def candidates(long_m: float, short_m: float) -> list[str]:
+    """Names physically possible at this size (code), offered to the reviewer as the only choices."""
+    return [nm for nm in NAMES if nm != "other" and nm in SIZE_M and plausible(nm, long_m, short_m)] + ["other"]
+
+
+def _name_types(png: bytes, n: int, llm, cands: Optional[list[list[str]]] = None) -> tuple[dict[int, str], float, dict[int, str]]:
     """Two reviewers name the types independently (parallel). Returns (names, usd, agreement per type)."""
     llms = [L for L in (llm if isinstance(llm, (list, tuple)) else [llm]) if L is not None and hasattr(L, "complete_vision")]
     if not llms:
         return {}, 0.0, {}
     from concurrent.futures import ThreadPoolExecutor
     with ThreadPoolExecutor(len(llms)) as ex:
-        got = list(ex.map(lambda L: _ask_names(png, n, L), llms))
+        got = list(ex.map(lambda L: _ask_names(png, n, L, cands), llms))
     usd = sum(u for _, u in got)
     names: dict[int, str] = {}
     agree: dict[int, str] = {}
@@ -373,6 +385,12 @@ def _checklist(abs_path: str, sha: str, facts, llm) -> dict:
     lab, st, keep, thin = _components(g, mask, words, ppm)
     reps = _cluster(lab, st, keep)
     reps += _whole_symbols(thin, lab, ppm)            # multi-stroke symbols: gym machines, lounge sets, sofas
+    cands = []
+    for r in reps:
+        x_, y_, w_, h_ = [int(v) for v in r["st"][r["members"][0]][:4]]
+        cands.append(candidates(max(w_, h_) / ppm, min(w_, h_) / ppm))
+    # (offering only size-plausible names per cell made the Verda reviewers answer 'bathtub' for everything: names are
+    #  asked freely and the size check filters them afterwards)
     names, usd, agree_n = (_name_types(_contact_sheet(g, st, reps, ppm), len(reps), llm) if reps else ({}, 0.0, {}))
     out["naming"] = {str(k): v for k, v in agree_n.items()}
     unnamed = [k for k in range(len(reps)) if not names.get(k + 1)][:8]
@@ -708,4 +726,43 @@ def enrich(abs_path: str, sha: str, facts, ck: dict) -> dict:
                                "area_m2": r.attrs.get("area_m2"), "polygon": [list(q) for q in r.polygon],
                                "counts": counts[r.id]} for r in rooms], key=lambda r: r["name"])
     ck["summary"] = _summary(abs_path, sha, facts, words, fp, ck)
+    return ck
+
+
+def rename(sha: str, kind: str, new: str) -> Optional[dict]:
+    """The user names a symbol type (every copy at once); same-named types merge; stored in the deep-read cache."""
+    fs = sorted(CACHE.glob(f"{sha}-{VERSION}*.json"), key=lambda f: -f.stat().st_mtime)
+    if not fs:
+        return None
+    ck = json.loads(fs[0].read_text())
+    new = new.strip().lower()
+    if not new:
+        return ck
+    tot = {t["kind"]: t for t in ck.get("totals", [])}
+    t = tot.get(kind)
+    if t is None:
+        return ck
+    for e in ck.get("elements", []):
+        if e["kind"] == kind:
+            e["kind"] = new
+            e["label"] = re.sub(r"^[^(]*", new + " ", e.get("label") or new)
+    label = LABEL.get(new, new.capitalize() + ("s" if not new.endswith("s") else ""))
+    if new in tot and new != kind:                      # merge into the existing type of that name
+        m = tot[new]
+        m["count"] += t["count"]
+        m["ids"] += t["ids"]
+        m["note"] = (m.get("note") or "") + f"; + {t['count']} you named {new}"
+        ck["totals"] = [x for x in ck["totals"] if x["kind"] != kind]
+    else:
+        t.update({"kind": new, "label": label, "tier": "green" if t.get("tier") == "green" else "amber",
+                  "note": (t.get("note") or "") + "; named by you"})
+    for z in ck.get("zones", []):
+        if kind in z["counts"]:
+            z["counts"][new] = z["counts"].get(new, 0) + z["counts"].pop(kind)
+    for r in ck.get("rooms", []):
+        if kind in r["counts"]:
+            r["counts"][new] = r["counts"].get(new, 0) + r["counts"].pop(kind)
+    ck["totals"].sort(key=lambda x: -x["count"])
+    ck.setdefault("renamed", []).append({"from": kind, "to": new})
+    fs[0].write_text(json.dumps(ck))
     return ck

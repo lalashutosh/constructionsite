@@ -113,6 +113,13 @@ export function ChecklistPanel(p: { path: string | null; deepHint?: { on: boolea
       p.onLoaded?.(c);
     } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
   };
+  const rename = async (kind: string) => {
+    const name = window.prompt("What is this symbol? (e.g. closet, TV, treadmill, sofa)", kind.startsWith("symbol type") ? "" : kind);
+    if (!name || !p.path) return;
+    const r = await fetch(`${BASE}/checklist/rename`, { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: p.path, kind, name }) });
+    if (r.ok) { const c = (await r.json()) as Checklist; setData(c); p.onLoaded?.(c); }
+  };
   if (!p.path) return null;
   const eta = data?.deep.eta_s ?? p.deepHint?.eta_s ?? 60;
   const byId = new Map((data?.elements ?? []).map((e) => [e.id, e]));
@@ -144,6 +151,8 @@ export function ChecklistPanel(p: { path: string | null; deepHint?: { on: boolea
                 <span className="ck-name">{t.label.replace(/^Symbol Type (\d+)s$/, "Unnamed symbol $1")}
                   <small><i className={`dot ${t.tier}`} /> {t.tier === "green" ? "two checks agree" : "one check"}</small></span>
                 <b>{t.count}</b>
+                <button className="ck-rename" title="Wrong name? Rename this symbol (every copy follows)"
+                  onClick={(ev) => { ev.stopPropagation(); void rename(t.kind); }}>✎</button>
               </li>
             ))}
           </ul>

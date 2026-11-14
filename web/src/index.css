@@ -585,3 +585,24 @@ body { font-size: 15px; }
 .scalebadge b { color: var(--accent-text); font-weight: 600; }
 .nothere details summary { cursor: pointer; }
 .nothere p { margin: 4px 0 0; }
+
+/* right column: the whole panel scrolls (checklist + checks + elements + findings), even spacing */
+.findings.panel { overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+.findings.panel .flist { overflow: visible; flex: none; min-height: auto; }
+.findings.panel > .cklist, .findings.panel .cklist { margin: 4px 16px 14px; }
+.findings.panel .phead { padding-bottom: 6px; }
+.cklist { padding: 14px 16px; }
+.cktotals { gap: 8px; }
+.cktotals li { padding: 8px 10px; }
+.cksummary { padding: 10px 12px; border-radius: 10px; background: var(--tint); }
+.cksummary p.lead { font-size: 14px; }
+.ckrooms { margin-top: 6px; }
+.ckrooms summary { padding: 6px 2px; }
+.deepnote { line-height: 1.45; }
+.vcube { top: 70px; right: 18px; }
+.scalecta { gap: 6px; }
+@media (max-width: 1100px) { .cktotals { grid-template-columns: 1fr; } }
+.ck-rename { border: 0; background: transparent; color: var(--muted); cursor: pointer; font-size: 13px; padding: 2px 4px; border-radius: 6px;
+  opacity: 0; transition: opacity 150ms ease-out, background 150ms ease-out; }
+.cktotals li:hover .ck-rename { opacity: 1; }
+.ck-rename:hover { background: var(--hover); color: var(--text); }
