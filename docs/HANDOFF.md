@@ -1,5 +1,45 @@
 # Handoff — where the build stands and how to continue
 
+## UPDATE 2026-11-14 ~20:30 (Ashutosh's session) — START HERE
+
+**Done + committed on `p2-finish`:**
+- `1faa0e4` **Fix-first #1 solved**: `.dxf` / `.ifc` uploaded WITHOUT a sibling image now render and build 3D.
+  `engine/vector/dxf_render.py` (DXF drawn with cv2; walls = closed WALL polylines merged, rooms/doors/windows/fixtures
+  from entities; counts equal the DXF reader, 0.4 s) and `engine/vector/ifc_render.py` (storey with most walls;
+  footprints = model meshes projected to XY, ~4 s, cached; plumbing-only models drawn as part outlines capped at 600;
+  empty model -> 422 with reason). API: `_render_cad()` in `api/main.py`; coords `dxf-render` / `ifc-render`
+  (proof evidence is NOT pinned on these). Tests: `tests/test_cad_render.py` (3 pass).
+  Not yet checked in the browser: does the UI handle coords `dxf-render`/`ifc-render` and `check: null`?
+- Test suite: 172 passed, 2 failed — both pre-existing, both from the raster-finetune WIP that was never committed
+  (`test_count_rules_finetune::colorful_2002`, `test_query::fixed_specs` saunas). They pass or skip once that WIP lands
+  or the test is aligned.
+
+**Open bugs reported by the user (screenshot of a finna scan, hka.139878174949000_146761804461500.jpg):**
+1. **Archival / hand-drawn scans: 3D walls are wrong.** Hand lettering, the title-block table (bottom right), street
+   name text, dimension ticks and the sheet border frame get extruded as walls; real thin double-line walls are missing.
+   WIP on branch **`wip/archival-walls`** (`7f3ee15`, +146 lines in `engine/geometry3d.py` + `scripts/_qa_*.py`):
+   an agent's text/frame filter, stopped mid-measurement, UNVERIFIED. To finish: regression set is listed in
+   `cache/qa/archival_set.txt` (local only; 12 archival scans + 4 clean cubicasa controls — rebuild if missing).
+   Accept only if overlays show no walls on text/title block and cubicasa controls keep >= 0.95 of their wall IoU.
+   Clear `cache/geometry` after engine edits.
+2. **Folder upload of a multi-floor building fails** ("goes out of context"). Reproduce with
+   `$DATASET_ROOT/data/opening_design/Sports_Complex` (subfolders `IFC Roundtrip`, `Models`, `Sheets - Current Set`,
+   `Transfer`; note some files may be symlinks — use `find -L`). Not reproduced yet. Suspects: one huge LLM classifier
+   prompt (classify in batches with compact per-file summaries, no-think, max_tokens), request timeout while every
+   file's geometry is built serially, big IFC uploads, one bad/unsupported file failing the whole folder. Goal: a folder
+   never fails as a whole; floors stacked, other files listed with a reason. Add `tests/test_building_folder.py`
+   (LLM off). `1faa0e4` means IFC/DXF files in the folder can now be shown instead of dropped.
+3. **UI: the boxed "Floor plan" label overlaps the scan-check warning line** ("Needs a look · View 1 (floor plan): some
+   walls missing") in the drawing header. Find the component that renders scan-check view types (grep web/src for
+   'Needs a look', `check.views`). "Before" screenshots: `docs/shots/ui-fix/` (1440 px and 400 px, light and dark).
+
+**How we worked this session (repeat it):** lead session + parallel subagents on disjoint files (sonnet builders,
+haiku scout for mechanical work), each told to draft tests with Verda Flash and get a Kimi review of its diff
+(`scripts/verda.py`); subagents never commit, the lead verifies and commits. Agents cannot `git push`
+(`.claude/settings.json` deny rule): the human pushes.
+
+**Push (human):** `git push origin p2-finish wip/archival-walls`
+
 ## UPDATE 2026-11-14 19:15 — START HERE (supersedes the 18:20 section below where they differ)
 
 **Live log: https://github.com/lalashutosh/constructionsite/issues/1** — read the latest comments, post after each step
