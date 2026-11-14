@@ -400,7 +400,7 @@ export default function App() {
     setScaleState("pick");
   };
   const cancelScale = () => setScaleState("off");
-  const applyLength = async (m: number, typed?: { v: number; unit: string }) => {
+  const applyLength = async (m: number, typed?: { v: number; unit: string }, force = false) => {
     if (!active || measuredPx === null) return;
     const q = selected?.proof.question ?? specs[0]?.q;
     if (!q) return;
@@ -409,7 +409,7 @@ export default function App() {
     setScaleIssue(null);
     try {
       const before = plans[planKey] ?? (await fetchPlan(path, vibe, planExtra));
-      const [pr] = await setScale(path, measuredPx, m, [q]);
+      const [pr] = await setScale(path, measuredPx, m, [q], force);
       if (pr) setSelected({ path, proof: pr });
       const after = await fetchPlan(path, vibe, planExtra);
       setPlans({ [planKey]: after });
@@ -646,7 +646,7 @@ export default function App() {
               setMeasuredPx(Math.hypot(px[1][0] - px[0][0], px[1][1] - px[0][1]));
               setScaleState("enter");
             }}
-            onApplyLength={(m, typed) => void applyLength(m, typed)}
+            onApplyLength={(m, typed, force) => void applyLength(m, typed, force)}
             progress={progress}
             measureTyped={measureTyped}
             flat={flat}

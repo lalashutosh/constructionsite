@@ -116,11 +116,11 @@ export async function fetchPlan(path: string, vibe: string, extra: Record<string
 }
 
 /** User-measured scale: two image-pixel points and the real length between them. Returns the recomputed answers. */
-export async function setScale(path: string, pxLength: number, lengthM: number, questions: string[]): Promise<ProofObject[]> {
+export async function setScale(path: string, pxLength: number, lengthM: number, questions: string[], force = false): Promise<ProofObject[]> {
   const res = await fetch(`${BASE}/scale`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ path, anchors: [{ kind: "user", px_length: pxLength, length_m: lengthM }], questions }),
+    body: JSON.stringify({ path, anchors: [{ kind: "user", px_length: pxLength, length_m: lengthM, force }], questions }),
   });
   if (res.status === 422) {
     const j = (await res.json().catch(() => ({}))) as { detail?: ScaleIssue };

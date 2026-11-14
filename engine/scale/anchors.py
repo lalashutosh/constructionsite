@@ -370,6 +370,11 @@ def label_area_candidates(facts: SheetFacts) -> list[dict]:
         if not _re.search(r"[A-Za-zÄÖÅäöå]", l["text"]):          # a bare number is a dimension, not a room area
             continue
         a = float(m.group(1).replace(",", "."))
+        raw = m.group(0)
+        unit = bool(_re.search(r"m2|m²|m\^2", raw))
+        decimal = bool(_re.search(r"\d[.,]\d", raw))
+        if not (unit or decimal or a >= 4):
+            continue                      # 'MH 1', 'MAKUUHUONE 2': a room NUMBER, not an area
         if not (0.8 <= a <= 400):
             continue
         pt = Point(l["x"] / 100 * facts.width_px, l["y"] / 100 * facts.height_px)
@@ -377,6 +382,10 @@ def label_area_candidates(facts: SheetFacts) -> list[dict]:
         if len(hit) != 1:
             continue
         e, P = hit[0]
+        typ = f"{e.subtype or ''} {l['text']}".lower()
+        floor_m2 = 5.0 if _re.search(r"bed|makuu|mh\b|sov|living|olohuone|oh\b|kitchen|keitti", typ) else 1.5
+        if a < floor_m2:
+            continue                      # a 1 m2 bedroom is a misread, not a scale anchor
         out.append({"px_per_m": _math.sqrt(P.area / a), "text": l["text"], "id": e.id, "m2": a})
     return out
 

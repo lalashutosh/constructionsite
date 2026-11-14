@@ -179,7 +179,7 @@ export function ViewerPane(p: {
   onScaleStart: () => void;
   onScaleCancel: () => void;
   onMeasured: (px: [number, number][]) => void;
-  onApplyLength: (m: number, typed?: { v: number; unit: string }) => void;
+  onApplyLength: (m: number, typed?: { v: number; unit: string }, force?: boolean) => void;
   onWhyRead: () => void;
   progress: ProgressInfo | null;
   measureTyped: string | null;
@@ -410,7 +410,8 @@ export function ViewerPane(p: {
               </form>
               {p.scaleIssue && (
                 <p className="issue" role="alert"><TierIcon tier="amber" /><span>Needs a look · {p.scaleIssue.message}{" "}
-                  {p.scaleIssue.label && p.scaleIssue.lengthM !== null && <button className="linkbtn" onClick={() => p.onApplyLength(p.scaleIssue!.lengthM!, { v: Number(len), unit: "cm" })}>{p.scaleIssue.label}</button>}</span></p>
+                  {p.scaleIssue.label && p.scaleIssue.lengthM !== null && <button className="linkbtn" onClick={() => p.onApplyLength(p.scaleIssue!.lengthM!, { v: Number(len), unit: "cm" })}>{p.scaleIssue.label}</button>}
+                  {" · "}<button className="linkbtn" onClick={() => { const n = Number(len); if (n > 0) p.onApplyLength(n / (unit === "cm" ? 100 : unit === "mm" ? 1000 : 1), { v: n, unit }, true); }}>Keep my measurement</button></span></p>
               )}
             </div>
           )}

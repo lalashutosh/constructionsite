@@ -192,6 +192,13 @@ def _printed_scale_check(ppm: float, a: dict, facts) -> Optional[dict]:
         return None
     if not got:
         return None
+    import re as _re
+    def _n(x):                            # how many printed sizes agree in this anchor ("... across N rooms")
+        m = _re.search(r"across (\d+) rooms", x.note or "")
+        return int(m.group(1)) if m else 2
+    got = [x for x in got if x.kind != "printed_area" or _n(x) >= 3]   # two labels are too thin to overrule you
+    if not got:
+        return None
     pv = sorted(x.px_per_m for x in got)[len(got) // 2]
     if abs(ppm / pv - 1) <= 0.30:
         return None
@@ -232,7 +239,7 @@ def _implausible_scale(a: dict, facts) -> Optional[dict]:
                 areas.append(Polygon(e.polygon).area)
             except Exception:  # noqa: BLE001
                 pass
-    printed = _printed_scale_check(ppm, a, facts)
+    printed = None if a.get("force") else _printed_scale_check(ppm, a, facts)   # 'keep my measurement' overrides it
     if printed:
         return printed
     if len(areas) < 2 or ppm <= 0:
