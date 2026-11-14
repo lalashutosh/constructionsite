@@ -336,8 +336,11 @@ async def build_plan(path: str, vibe: str = "standard", it_load_kw: Optional[flo
         for key, q in PLAN_COUNTS.get(src, PLAN_COUNTS["cubicasa5k"]).items():
             po = eng.ask(p, q, benchmark=True)
             if isinstance(po.value, (int, float)):
-                t = "drawn" if po.tier.value == "green" else "defaulted"
-                sh[key] = (int(po.value), t, f"engine answer to '{q}' ({po.tier.value})")
+                # counted on the drawing either way; how sure we are goes in the source line, not the tag
+                prior = any(a.tag.value == "defaulted" and a.key.startswith(("count:", "prior:")) for a in po.assumptions)
+                sure = ("verified by 2 checks" if po.tier.value == "green" else
+                        f"{po.reliability:.0%} reliable" if po.reliability else po.tier.value)
+                sh[key] = (int(po.value), "defaulted" if prior else "drawn", f"engine answer to '{q}' ({sure})")
         if "bathtubs" in sh:                        # showers + bathtubs = one plumbing line
             v1, t1, _ = sh.pop("bathtubs")
             v0, t0, _ = sh.get("showers", (0, "drawn", ""))
