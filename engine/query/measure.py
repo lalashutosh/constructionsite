@@ -32,6 +32,9 @@ def parse(question: str, facts) -> Optional[dict]:
     for lb in sorted(labels, key=len, reverse=True):
         if len(lb) >= 3 and lb in q:
             return {"select": ["room", "zone"], "where": {"label": lb}, "aggregate": "perimeter"}
-    if re.search(r"\b(all|every|each|whole|entire)\b.{0,15}\brooms?\b|\bthe\s+(building|apartment|flat|house)\b", q):
-        return {"select": ["room"], "aggregate": "perimeter"}
-    return None
+    if re.search(r"\b(all|every|each)\b.{0,15}\brooms?\b", q):
+        return {"select": ["room", "zone"], "aggregate": "perimeter"}
+    # no room named: the building's outer walls (its verified outline), else every room
+    if any(e.kind == "footprint" for e in facts.elements):
+        return {"select": ["footprint"], "aggregate": "perimeter", "_target": "outside of the building"}
+    return {"select": ["room"], "aggregate": "perimeter"}

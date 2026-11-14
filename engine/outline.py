@@ -200,3 +200,52 @@ def _outline(abs_path: str, sha: str, ppm: float, view_box, work: int) -> Option
             "area_m2": round(float(cv2.contourArea(cn) / p ** 2), 2), "bbox_m": [round(w / p, 2), round(h / p, 2)],
             "bbox_px": [x / s, y / s, (x + w) / s, (y + h) / s], "method": method, "screened": bool(screened),
             "zones": zones[:40]}
+
+
+def subrooms(abs_path: str, sha: str, ppm: float, footprint: list, work: int = 4000) -> list[dict]:
+    """Rooms INSIDE a building outline: free space enclosed by straight wall lines >= 1.2 m long (furniture, symbols and
+    text are shorter or erased), door gaps up to ~1 m bridged along each wall. Returns [{polygon, area_m2, centroid}]
+    in original px, each >= 2 m2 and smaller than 60% of the outline."""
+    g0, _pdf = S.load_gray(abs_path, 2000)
+    H0, W0 = g0.shape
+    s = min(1.0, work / max(H0, W0))
+    p = ppm * s
+    dark0 = (g0 < 110).astype(np.uint8)
+    grey0 = ((g0 >= 135) & (g0 <= 220) & (cv2.dilate(dark0, np.ones((5, 5), np.uint8)) == 0)).astype(np.uint8)
+    c0 = cv2.imread(abs_path, cv2.IMREAD_COLOR) if not abs_path.lower().endswith(".pdf") else None
+    if c0 is not None and c0.shape[:2] == g0.shape:
+        grey0[cv2.cvtColor(c0, cv2.COLOR_BGR2HSV)[:, :, 1] > 30] = 0
+    screened = grey0.sum() > 0.2 * dark0.sum() and grey0.sum() > 0.002 * grey0.size
+    src = grey0 if screened else (g0 < 150).astype(np.uint8)
+    ink = (cv2.resize(src * 255, None, fx=s, fy=s, interpolation=cv2.INTER_AREA) > 40).astype(np.uint8) if s < 1 else src
+    for w in T.words(abs_path, sha):
+        a, b, c, d = [int(v * s) for v in w["box"]]
+        ink[max(0, b - 1):d + 2, max(0, a - 1):c + 2] = 0
+    mask = np.zeros_like(ink)
+    cv2.fillPoly(mask, [(np.array(footprint, np.float32) * s).astype(np.int32)], 1)
+    lmin = max(8, int(1.2 * p))
+    walls = cv2.morphologyEx(ink, cv2.MORPH_OPEN, np.ones((1, lmin), np.uint8)) | \
+        cv2.morphologyEx(ink, cv2.MORPH_OPEN, np.ones((lmin, 1), np.uint8))
+    kg = max(3, int(1.0 * p)) | 1
+    walls = cv2.morphologyEx(walls, cv2.MORPH_CLOSE, np.ones((1, kg), np.uint8)) | \
+        cv2.morphologyEx(walls, cv2.MORPH_CLOSE, np.ones((kg, 1), np.uint8))
+    edge = mask - cv2.erode(mask, np.ones((3, 3), np.uint8))
+    free = (mask & (1 - cv2.dilate(walls | edge, np.ones((3, 3), np.uint8)))).astype(np.uint8)
+    n, lab, st, cen = cv2.connectedComponentsWithStats(free, 4)
+    total = float(mask.sum())
+    out = []
+    for i in range(1, n):
+        a_px = float(st[i][4])
+        a_m2 = a_px / p ** 2
+        if a_m2 < 2.0 or a_px > 0.97 * total:          # only a copy of the outline itself is not a room
+            continue
+        x, y, bw, bh = st[i][:4]
+        if min(bw, bh) < 0.8 * p:                      # a sliver between two parallel lines (wall core), not a room
+            continue
+        cs, _ = cv2.findContours((lab == i).astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        c = cv2.approxPolyDP(max(cs, key=cv2.contourArea), max(1.5, 0.08 * p), True)
+        if len(c) < 3:
+            continue
+        out.append({"polygon": [[float(px / s), float(py / s)] for px, py in c.reshape(-1, 2)],
+                    "area_m2": round(a_m2, 2), "centroid": [float(cen[i][0] / s), float(cen[i][1] / s)]})
+    return out

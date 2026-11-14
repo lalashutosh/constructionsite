@@ -731,9 +731,9 @@ export class PlumbViewer {
           const nm = r.label ?? (r.subtype && r.subtype !== "room" ? r.subtype : null);
           return { px: Math.abs(a2 / 2), cx: cx / r.polygon.length, cy: cy / r.polygon.length, bw: x1 - x0, nm, poly: r.polygon as Ring };
         })
-        .filter((r) => r.bw >= long * 0.07 && (scaled || r.nm))
+        .filter((r) => r.bw >= long * 0.03 && (scaled || r.nm))
         .sort((a, b) => b.px - a.px)
-        .slice(0, 10);
+        .slice(0, 24);
       for (const r of rooms) {
         const area = scaled && ppm ? r.px / (ppm * ppm) : null;
         if (area !== null && area < 2 && !r.nm) continue;

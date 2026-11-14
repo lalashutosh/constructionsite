@@ -24,6 +24,7 @@ import pathlib
 
 import cv2
 import numpy as np
+from typing import Optional
 
 from contracts.proof import Element, Provenance, SheetFacts
 from engine.raster import model as cc_model
@@ -32,6 +33,7 @@ from engine.raster import prep
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 CACHE_DIR = _REPO_ROOT / "cache" / "raster"
+RASTER_VERSION = "r2-weak-doors"
 
 CREDIT = "CubiCasa5k dataset (Kalervo, Ylioinas, Haikio, Karhu, Kannala, 2019), CC BY-NC-SA 4.0"
 LICENSE = "CC BY-NC-SA 4.0"
@@ -72,7 +74,7 @@ def extract(path: str, *, allow_siblings: bool = True) -> SheetFacts:
     protocol compatibility; cubicasa5k pngs have no vector siblings in this dataset, so it is a
     no-op here."""
     sha = sha256_file(path)
-    cache_file = CACHE_DIR / f"{sha}.json"
+    cache_file = CACHE_DIR / f"{sha}.{RASTER_VERSION}.json"   # bump RASTER_VERSION when the extracted facts change
     if cache_file.exists():
         try:
             cached = SheetFacts.model_validate_json(cache_file.read_text())
@@ -117,11 +119,13 @@ def extract(path: str, *, allow_siblings: bool = True) -> SheetFacts:
     if cnn_out is not None:
         rooms_p, icons_p = cnn_out
         el_rooms, room_runs, claimed_token_idx = _rooms_from_cnn(rooms_p, variant, tokens)
-        el_icons, icon_runs = _icons_from_cnn(icons_p, variant)
+        weak: list[dict] = []
+        el_icons, icon_runs = _icons_from_cnn(icons_p, variant, weak)
         elements.extend(el_rooms)
         elements.extend(el_icons)
         extras["cnn_runs"].update(room_runs)
         extras["cnn_runs"].update(icon_runs)
+        extras["weak_icons"] = weak
     else:
         el_cv, claimed_token_idx = _route_b(img, tokens)
         elements.extend(el_cv)
@@ -198,7 +202,8 @@ def _floor_blobs(img: np.ndarray) -> tuple[list[Element], list[int]]:
     return elements, runs
 
 
-def _icons_from_cnn(icons_p: np.ndarray, variant) -> tuple[list[Element], dict]:
+def _icons_from_cnn(icons_p: np.ndarray, variant, weak_out: Optional[list] = None) -> tuple[list[Element], dict]:
+    WEAK = weak_out if weak_out is not None else []
     elements: list[Element] = []
     runs: dict[str, list[int]] = {}
     for idx, name in enumerate(cc_model.ICON_CLASSES):
@@ -214,6 +219,14 @@ def _icons_from_cnn(icons_p: np.ndarray, variant) -> tuple[list[Element], dict]:
             if th == 0.5:
                 canonical = comps
         runs[kind] = counts
+        if kind == "door":            # weak door candidates (0.35 <= p < 0.5): kept for arc confirmation, not counted
+            weak, _, _ = _components(prob >= 0.35, _MIN_ICON_AREA)
+            for (x, y, bw, bh, area, _lbl) in weak:
+                if float(prob[y:y + bh, x:x + bw].max()) >= 0.5:
+                    continue                  # already a counted door
+                corners = [(x, y), (x + bw, y), (x + bw, y + bh), (x, y + bh)]
+                WEAK.append({"kind": kind, "polygon": [list(map(float, c)) for c in variant.to_original(corners)],
+                             "p": float(prob[y:y + bh, x:x + bw].max())})
         for j, (x, y, bw, bh, area, _lbl) in enumerate(canonical or []):
             corners = [(x, y), (x + bw, y), (x + bw, y + bh), (x, y + bh)]
             orig = variant.to_original(corners)

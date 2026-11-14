@@ -354,6 +354,7 @@ def extract_facts(path: str, abs_path: str, prof: dict):
         ol = None
         extras["outline_error"] = f"{type(e).__name__}: {e}"
     colour = [e for e in els if e.kind == "zone"]
+    post_subrooms = True
     if ol is not None:
         els_ol, info = ol
         els = colour + els_ol                                   # legend-matched colour modules stay (they are read
@@ -363,12 +364,66 @@ def extract_facts(path: str, abs_path: str, prof: dict):
         els = colour + ([fp] if fp is not None else [])
         if fp is not None:
             extras["outline"] = {k: fp.attrs.get(k) for k in ("area_m2", "bbox_m", "method", "px_per_m")}
+    try:                                   # every enclosed space inside the building, named when the sheet names it
+        fp = next((e for e in els if e.kind == "footprint" and e.attrs.get("source") == "outline"), None)
+        if fp is not None and post_subrooms:
+            els += _subroom_elements(abs_path, prof, words, fp, colour)
+    except Exception as e:  # noqa: BLE001
+        extras["subroom_error"] = f"{type(e).__name__}: {e}"
     notes = []
     if not any(e.kind == "room" for e in els):
         notes.append(f"no rooms recognised (plan kind: {extras['plan_kind']})")
     return SheetFacts(provenance=Provenance(file=path, sha256=prof["sha256"], fmt=abs_path.rsplit(".", 1)[-1].lower()),
                       sheet_type="floor_plan", legible=True, width_px=W, height_px=H, elements=els, extras=extras,
                       legibility_note="; ".join(notes) or None)
+
+
+_SPACE_EXTRA = {"ROOM", "PUMPHOUSE", "PUMP HOUSE", "OFFICE", "CORRIDOR", "LOBBY", "MECHANICAL", "ELECTRICAL", "STAIR",
+                "STAIRS", "STORAGE", "TOILET", "RESTROOM", "DORMITORY", "WAREHOUSE", "GARAGE", "SERVER", "DATA", "HALL",
+                "CLASSROOM", "LAB", "LABORATORY", "KITCHEN", "BREAKROOM", "MEETING", "CONFERENCE", "UTILITY", "JANITOR",
+                "SHOP", "VESTIBULE", "ENTRY", "CIRCULATION", "TELECOM", "IT", "UPS", "BATTERY", "GENERATOR", "GENSET"}
+
+
+def _space_word(t: str) -> bool:
+    """Is this printed word the NAME of a space (room glossary of the readers + common commercial space nouns)?"""
+    from engine import label_reader as LR
+    w = re.sub(r"[^A-Za-z ]", "", t).strip().upper()
+    if not w:
+        return False
+    try:
+        gl = {k.upper() for k in LR.glossary().get("room_labels", {})} if hasattr(LR, "glossary") else set()
+    except Exception:  # noqa: BLE001
+        gl = set()
+    return w in _SPACE_EXTRA or (len(w) >= 4 and w in gl)
+
+
+def _subroom_elements(abs_path: str, prof: dict, words: list[dict], fp, colour: list) -> list[Element]:
+    from shapely.geometry import Point, Polygon
+    from engine import outline as O
+    from engine.sheet_lookup import _english
+    ppm = float(fp.attrs["px_per_m"])
+    rs = O.subrooms(abs_path, prof["sha256"], ppm, fp.polygon)
+    zones = [(Polygon(z.polygon).buffer(0), z.label) for z in colour if len(z.polygon) >= 3 and z.label]
+    slab = re.compile(r"^\d{2,3}$")
+    out = []
+    for i, r in enumerate(rs):
+        poly = Polygon(r["polygon"]).buffer(0)
+        inside = [w for w in words if poly.contains(Point((w["box"][0] + w["box"][2]) / 2, (w["box"][1] + w["box"][3]) / 2))]
+        name = next((w["text"] for w in sorted(inside, key=lambda w: -(w["box"][3] - w["box"][1])) if _space_word(w["text"])), None)
+        if name is None:                         # the legend zone it lies in (DORMITORY, CIRCULATION ...)
+            c = Point(*r["centroid"])
+            name = next((lb for z, lb in zones if z.contains(c)), None)
+        if name is None:                         # a slab note printed in it: '300 SLAB-ON-GRADE W/ D16'
+            txt = " ".join(w["text"] for w in sorted(inside, key=lambda w: (w["box"][1], w["box"][0])))
+            m = re.search(r"\b(\d{2,3})\s*SLAB", txt.upper())
+            if m:
+                bar = re.search(r"D\d{1,2}", txt.upper())
+                name = f"{m.group(1)} slab" + (f" {bar.group(0)}" if bar else "")
+        out.append(Element(id=f"room_sub_{i}", kind="room", subtype=(name or "space").lower().replace(" ", "_")[:30],
+                           polygon=[tuple(p) for p in r["polygon"]], label=name, conf=0.6,
+                           attrs={"area_m2": r["area_m2"], "source": "enclosed by wall lines inside the outline",
+                                  "px_per_m": ppm}))
+    return out
 
 
 def _outline_elements(abs_path: str, prof: dict, words: list[dict]):
@@ -399,9 +454,12 @@ def _outline_elements(abs_path: str, prof: dict, words: list[dict]):
                    attrs={"area_m2": r["area_m2"], "bbox_m": r["bbox_m"], "method": r["method"], "px_per_m": ppm,
                           "from_walls": True, "source": "outline"})]
     labels = []
-    for w in words:
+    from engine.sheet_lookup import _english
+    for w in words:               # zone names from REAL printed words only (no hatch / pipe-symbol OCR noise)
         t = w["text"].strip()
-        if len(t) >= 3 and re.search(r"[A-Za-z]{3}", t) and not DIM_RX.match(t) and t.upper() not in STOP:
+        tt = re.sub(r"[^A-Za-z]", "", t)
+        if (len(tt) >= 3 and w.get("conf", 0) >= 70 and _english(tt) and not DIM_RX.match(t)
+                and t.upper() not in STOP):
             b = w["box"]
             labels.append(((b[0] + b[2]) / 2, (b[1] + b[3]) / 2, t, b[3] - b[1]))
     for i, z in enumerate(r["zones"]):
@@ -409,8 +467,9 @@ def _outline_elements(abs_path: str, prof: dict, words: list[dict]):
             continue
         poly = Polygon(z["polygon"])
         inside = [l for l in labels if poly.contains(Point(l[0], l[1]))]
-        inside.sort(key=lambda l: (round(l[1] / max(l[3], 1)), l[0]))      # reading order
-        lab = " ".join(l[2] for l in inside[:6]) or None
+        inside.sort(key=lambda l: (-l[3], l[1], l[0]))                     # biggest printed name first
+        named = [l for l in inside if _space_word(l[2])]                  # a SPACE name, not a callout inside it
+        lab = named[0][2] if named else None
         out.append(Element(id=f"zone_ol_{i}", kind="region", subtype="zone", polygon=[tuple(p) for p in z["polygon"]],
                            label=lab, conf=0.6, attrs={"area_m2": z["area_m2"], "source": "outline zones",
                                                         "px_per_m": ppm}))

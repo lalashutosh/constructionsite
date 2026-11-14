@@ -5,6 +5,7 @@ voting make no network calls; the LLM (LLM_PROVIDER != none) only classifies tem
 from __future__ import annotations
 
 import hashlib
+import math
 import importlib
 import json
 import logging
@@ -375,6 +376,11 @@ class PipelineEngine:
                 if scale is None:
                     scale = self._scale(facts, sha)
                 px = scale.px_per_m if scale is not None and scale.px_per_m else None
+                target = mspec.pop("_target", None)
+                if mspec.get("select") == ["footprint"]:          # main outline only (verified one first)
+                    fps = [e for e in facts.elements if e.kind == "footprint"]
+                    best = next((e for e in fps if e.attrs.get("source") == "outline"), fps[0])
+                    mspec["where"] = {"id": best.id}
                 res = query.run(mspec, facts, px)
                 po.query_spec = mspec
                 notes.extend(f"query: {n}" for n in res.notes)
@@ -382,7 +388,7 @@ class PipelineEngine:
                     by = {e.id: e for e in facts.elements}
                     kind = po.kind = "length"
                     po.scale = scale
-                    tgt = (mspec.get("where") or {}).get("subtype") or (mspec.get("where") or {}).get("label") or "rooms"
+                    tgt = target or (mspec.get("where") or {}).get("subtype") or (mspec.get("where") or {}).get("label") or "rooms"
                     n_r = len(res.evidence_ids)
                     src = ("the sheet's printed scale" if scale is not None and any(
                         a.kind in ("dimension", "scale_bar", "printed_ratio", "printed_area", "user") for a in scale.anchors)
@@ -417,6 +423,8 @@ class PipelineEngine:
                                   "detectors are trained on small residential scans, so a '0' would be a guess")
         if not results and rt.layer == "sheet":          # a sheet-level question is never handed to a count or the prior
             return self._sheet_grey(po, rt, facts, scale, notes)
+        if kind == "count" and rt.intent == "doors":
+            self._door_fusion(results, facts, notes)
         if kind == "count":
             self._label_vote(results, ctx, facts, notes)
             self._apply_overrides(results, sha, rt.intent, po, notes)
@@ -532,6 +540,49 @@ class PipelineEngine:
     # intents where the vision label reader beat the current reader on DEV (40 scans, 350 questions, cache/proto/
     # labeleval.py): bedrooms 88% vs 71%, wc_rooms 91% vs 74%. Elsewhere it is a second opinion (tier only).
     LABEL_PRIMARY = {"bedrooms", "wc_rooms"}
+
+    @staticmethod
+    def _door_fusion(results: list, facts: SheetFacts, notes: list[str]) -> None:
+        """Doors the network saw only weakly (0.35 <= p < 0.5) count when the independent arc-geometry voter found a
+        door swing at the same place (two weak, independent signals on ONE element). Fine-line scans draw thin swings
+        the network is unsure about; the arc voter alone over-counts (no wall-gap test). Neither signal alone adds."""
+        weak = [w for w in (facts.extras.get("weak_icons") or []) if w.get("kind") == "door"]
+        det = next((r for r in results if r.voter.name == "detector"), None)
+        arc = next((r for r in results if r.voter.name == "doors_arc"), None)
+        if not weak or det is None or arc is None or not arc.evidence:
+            return
+
+        def centre(poly):
+            xs = [p[0] for p in poly]; ys = [p[1] for p in poly]
+            return (sum(xs) / len(xs), sum(ys) / len(ys)), max(max(xs) - min(xs), max(ys) - min(ys))
+        strong = [centre([(pt[0], pt[1]) for pt in e.polygon]) for e in facts.elements if e.kind == "door" and e.polygon]
+        arcs = []
+        for e in arc.evidence:
+            c, size = centre([(pt[0], pt[1]) for pt in e.polygon])
+            r = float(e.attrs.get("radius_px") or size)
+            if not any(math.hypot(c[0] - s[0][0], c[1] - s[0][1]) < max(r, s[1]) for s in strong):
+                arcs.append((c, r))              # an arc no counted door explains
+        used, added = set(), []
+        for i, w in enumerate(weak):
+            c, size = centre(w["polygon"])
+            j = next((k for k, (ac, r) in enumerate(arcs) if k not in used
+                      and math.hypot(c[0] - ac[0], c[1] - ac[1]) < 1.2 * max(r, size)), None)
+            if j is None:
+                continue
+            used.add(j)
+            added.append(Element(id=f"door_weak_{i}", kind="door", polygon=[tuple(p) for p in w["polygon"]],
+                                 conf=round(w["p"], 2), attrs={"confirmed_by": "doors_arc", "cnn_p": w["p"]}))
+        if not added:
+            return
+        old = det.voter.value
+        det.voter.value = int(old) + len(added)
+        det.voter.element_ids = list(det.voter.element_ids) + [e.id for e in added]
+        det.voter.runs = [int(v) + len(added) for v in det.voter.runs] if det.voter.runs else [det.voter.value]
+        det.evidence = list(det.evidence) + added
+        det.voter.note = ((det.voter.note or "") + f" +{len(added)} doors the network saw weakly (p 0.35-0.5) and the arc "
+                          "voter confirmed at the same spot").strip()
+        notes.append(f"door fusion: {old} confident detections + {len(added)} weak detections confirmed by a door "
+                     "swing arc at the same place")
 
     def _label_vote(self, results: list, ctx, facts: SheetFacts, notes: list[str]) -> None:
         """Vision LLM transcribes the room labels; code maps them through engine/glossary.yaml and counts."""
@@ -871,6 +922,9 @@ class PipelineEngine:
                 notes.append(f"printed answer: {lk['printed']} = {lk['value']:.1f} m² (the sheet prints '{lk['text']}').")
                 return [vr("printed_area", float(lk["value"]), lk["boxes"], lk["text"], f"the sheet prints '{lk['text']}'",
                            unit="m2")], "area"
+            gross = bool(_re.search(r"\b(slab|footprint|building|gross|pad|foundation|plot|whole\s+floor)\b", q, _re.I))
+            if rt.intent == "total_room_area" and gross and fp is not None and not L.printed_total_area(ap, sha):
+                return outline_area()             # 'total SLAB area' = the outline, not the sum of the panels in it
             if rt.intent == "total_room_area":
                 pt = L.printed_total_area(ap, sha)
                 if pt:

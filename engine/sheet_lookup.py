@@ -437,6 +437,15 @@ def class_count(abs_path: str, sha: str, noun: str) -> Optional[dict]:
         meaning, why = expand(name, defs, numbered=name in series)
         if not meaning or not any(_tok_match(cls, x) for x in meaning.split()):
             continue
+        if series.get(name):                 # small / underlined tags: re-read the rows of this series once
+            try:
+                extra = _merge_confusable(_tags(_reread_bands(abs_path, [numbered[t] for t in series[name]]), name))
+                for k, v in extra.items():
+                    if k.split("-")[0] == name and k not in numbered:
+                        numbered[k] = v
+                        series[name].append(k)
+            except Exception:  # noqa: BLE001
+                pass
         tags = sorted(series.get(name, []), key=lambda t: int(re.sub(r"\D", "", t.split("-")[1]) or 0))
         if tags:
             boxes = [numbered[t]["box"] for t in tags]
@@ -446,6 +455,11 @@ def class_count(abs_path: str, sha: str, noun: str) -> Optional[dict]:
             n = len(boxes)
         else:
             continue
+        typ = next((_printed_count(r["text"], []) for r in rs if f"({name})" in r["text"]
+                    and re.search(r"\bTYP", r["text"], re.I)), None)
+        if typ and typ > n:                   # 'CHECK VALVE (CV) ... (TYP. OF 5)': the sheet states the quantity
+            why += f"; the sheet says TYP. OF {typ} ({n} tags legible)"
+            n = typ
         groups.append({"series": name, "meaning": meaning, "why": why, "n": n, "tags": tags, "boxes": boxes})
     if not groups:
         return None

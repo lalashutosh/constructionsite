@@ -262,6 +262,19 @@ def _checked(img, facts, coords, use_cnn, llm) -> dict:
     """Both wall readers + engine.scancheck (views, agreement, optional vision reviewer) decide the walls."""
     cad = _cad_model(img, facts, coords)
     if cad is not None:
+        if llm and cad["rooms"]:          # construction sheets get the same two-reviewer audit of every zone/room
+            try:
+                from engine import room_audit
+                aud = room_audit.audit(img, cad["rooms"], llm if isinstance(llm, (list, tuple)) else [llm])
+                if aud["drop"]:
+                    cad["rooms"] = [r for r in cad["rooms"] if r["id"] not in set(aud["drop"])]
+                cad["check"]["audit"] = {k: aud[k] for k in ("used", "answered", "cost_usd", "drop", "actions", "issues")}
+                cad["check"]["audit"]["added"] = []
+                cad["check"]["warnings"] += [f"AI audit: {a}" for a in aud["actions"]]
+                cad["check"]["reviewer"]["notes"] = ("the sheet profile decided the views; two vision reviewers audited "
+                                                     "every zone (a zone is removed only when BOTH reject it)")
+            except Exception:  # noqa: BLE001  (the audit is optional)
+                pass
         return cad
     from engine import scancheck
     global _LAST_ROOMS

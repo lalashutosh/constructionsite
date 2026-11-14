@@ -54,7 +54,7 @@ def score(qd: dict, a: dict) -> dict:
         vals = [float(x) for x in re.findall(r"\d+(?:\.\d+)?", (a.get("text") or "").replace(",", ""))]
     tol = qd.get("tol", 0.0 if kind == "count" else 0.02)
     trs = tr if isinstance(tr, list) else [tr]
-    ok = all(any(abs(v - t) <= tol * max(abs(t), 1e-9) + (1e-9 if kind != "count" else 0) for v in vals) for t in trs)
+    ok = all(any(abs(v - t) <= tol * max(abs(t), 1e-9) + 1e-9 for v in vals) for t in trs)
     return {"ok": ok}
 
 
