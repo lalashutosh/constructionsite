@@ -249,6 +249,16 @@ def _area_m2(e: Element, px_per_m: Optional[float]) -> Optional[float]:
     return p.area / (px_per_m ** 2)
 
 
+def _perimeter_m(e: Element, px_per_m: Optional[float]) -> Optional[float]:
+    """Length of a room's outline = the summed lengths of the walls around it (skirting / baseboard length)."""
+    if "perimeter_m" in e.attrs:
+        return float(e.attrs["perimeter_m"])
+    p = _poly(e)
+    if p is None or not px_per_m:
+        return None
+    return p.exterior.length / px_per_m
+
+
 def _length_m(e: Element, px_per_m: Optional[float]) -> Optional[float]:
     if "length_m" in e.attrs:
         return float(e.attrs["length_m"])
@@ -285,6 +295,8 @@ def _agg(els: list[Element], spec: dict, facts: SheetFacts, px_per_m, res: Resul
             v = _area_m2(e, px_per_m)
         elif agg == "sum_length":
             v = _length_m(e, px_per_m)
+        elif agg == "perimeter":
+            v = _perimeter_m(e, px_per_m)
         else:
             raw = e.attrs.get(spec["attr"])
             v = float(raw) if isinstance(raw, (int, float)) else None
@@ -307,7 +319,7 @@ def run(spec: dict, facts: SheetFacts, px_per_m: Optional[float] = None) -> Resu
     validate(spec)
     rules = list(spec.get("rules") or [])
     els = select(spec, facts)
-    unit = {"sum_area": "m2", "max_area": "m2", "avg_area": "m2", "sum_length": "m",
+    unit = {"sum_area": "m2", "max_area": "m2", "avg_area": "m2", "sum_length": "m", "perimeter": "m",
             "argmax_area": "label", "argmin_area": "label", "argmax_group": "label", "each_area": "label",
             "argmin_group": "label"}.get(spec["aggregate"], "count")
     if spec["aggregate"] == "sum_attr":
@@ -421,6 +433,6 @@ def run(spec: dict, facts: SheetFacts, px_per_m: Optional[float] = None) -> Resu
             res.value = 1
         res.value = int(res.value)
         res.runs = [res.value]
-    if res.needs_scale and spec["aggregate"] in ("sum_area", "max_area", "avg_area", "sum_length") and not px_per_m:
+    if res.needs_scale and spec["aggregate"] in ("sum_area", "max_area", "avg_area", "sum_length", "perimeter") and not px_per_m:
         res.value = None
     return res

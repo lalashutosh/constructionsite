@@ -187,6 +187,18 @@ def _swatches(img: np.ndarray, prof: dict, words: list[dict]) -> list[dict]:
         line = sorted([w for w in words if abs((w["box"][1] + w["box"][3]) / 2 - cy) < max(bh / s, 8)
                        and w["box"][0] >= x_first - 2 and w["box"][0] - x_first < 400 * max(1, 1 / s)], key=lambda w: w["box"][0])
         text = " ".join(w["text"] for w in line)[:60]
+        try:                                              # legend words are short and small: re-read them at 2x
+            from engine import sheet_lookup as SL
+            bx = [min(w["box"][0] for w in line), min(w["box"][1] for w in line),
+                  max(w["box"][2] for w in line), max(w["box"][3] for w in line)]
+            hh = float(np.median([w["box"][3] - w["box"][1] for w in line]))
+            rr = SL.reread_box(prof.get("_abs_path", ""), [bx[0] + 2.6 * hh, bx[1] + 1.2 * hh, bx[2], bx[3] - 1.2 * hh], hh) \
+                if prof.get("_abs_path") else None
+            rr = re.sub(r"^[^A-Za-z0-9(]+|[^A-Za-z0-9)]+$", "", rr or "") or None   # swatch edge / stray marks
+            if rr and 0.5 <= len(rr) / max(1, len(text)) <= 1.6 and sum(c.isalpha() for c in rr) >= 0.7 * len(rr.replace(" ", "")):
+                text = rr[:60]
+        except Exception:  # noqa: BLE001
+            pass
         colour = np.median(lab[lb == i], axis=0)
         out.append({"lab": colour.tolist(), "label": text, "box": [x / s, y / s, (x + bw) / s, (y + bh) / s]})
     return out
@@ -210,6 +222,22 @@ def _colour_modules(img: np.ndarray, prof: dict, words: list[dict]) -> list[Elem
     small = cv2.resize(crop, None, fx=s, fy=s, interpolation=cv2.INTER_AREA) if s < 1 else crop
     lab = cv2.cvtColor(small, cv2.COLOR_BGR2LAB).astype(np.float32)
     h, w = small.shape[:2]
+    blank = np.zeros((h, w), bool)                       # notes / legends / schedules / key plans are not the plan
+    for v in prof.get("views", []):
+        if v.get("kind") in ("notes", "schedule", "legend", "key_plan") and v["box"] != box:
+            a, b = int((v["box"][0] - x0) * s), int((v["box"][1] - y0) * s)
+            c, d = int((v["box"][2] - x0) * s), int((v["box"][3] - y0) * s)
+            blank[max(0, b):max(0, d), max(0, a):max(0, c)] = True
+    wordm = np.zeros((h, w), np.uint8)
+    from engine.sheet_lookup import _english
+    for wd in words:              # REAL words only (dictionary, confident): furniture / hatch OCR noise is not text
+        t = re.sub(r"[^A-Za-z]", "", wd["text"])
+        if len(t) < 3 or wd.get("conf", 0) < 60 or not _english(t):
+            continue
+        a, b = int((wd["box"][0] - x0) * s), int((wd["box"][1] - y0) * s)
+        c, d = int((wd["box"][2] - x0) * s), int((wd["box"][3] - y0) * s)
+        if c > 0 and d > 0 and a < w and b < h:
+            wordm[max(0, b):d, max(0, a):c] = 1
     out: list[Element] = []
     seen = []
     for k, sv in enumerate(sw):
@@ -217,6 +245,7 @@ def _colour_modules(img: np.ndarray, prof: dict, words: list[dict]) -> list[Elem
             continue
         seen.append(sv["lab"])
         m = (np.linalg.norm(lab - np.array(sv["lab"], np.float32), axis=2) < 16).astype(np.uint8)
+        m[blank] = 0
         k = max(3, int(0.006 * max(h, w)))              # white cell walls inside a coloured wing do not split it
         m = cv2.morphologyEx(m, cv2.MORPH_CLOSE, np.ones((k, k), np.uint8))
         n, lb, st, _ = cv2.connectedComponentsWithStats(m, connectivity=4)
@@ -224,7 +253,10 @@ def _colour_modules(img: np.ndarray, prof: dict, words: list[dict]) -> list[Elem
             a = st[i][4]
             if a < 0.0015 * h * w:
                 continue
-            cs, _ = cv2.findContours((lb == i).astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            comp = (lb == i)
+            if wordm[comp].mean() > 0.12:
+                continue                       # a block of text (notes, tables), not a coloured room / wing
+            cs, _ = cv2.findContours(comp.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             c = max(cs, key=cv2.contourArea)
             ap = cv2.approxPolyDP(c, 2.0, True)
             if len(ap) < 3:
@@ -312,6 +344,7 @@ def extract_facts(path: str, abs_path: str, prof: dict):
     from engine import profile as P
     img, info = P._load(abs_path)
     words = P.words_for(abs_path, prof["sha256"], img, info)
+    prof = {**prof, "_abs_path": abs_path}
     els = elements(img, prof, words)
     H, W = img.shape[:2]
     extras = {"route": "cad", "profile": light(prof), "n_words": len(words), "plan_kind": plan_kind(prof, words)}
@@ -320,11 +353,16 @@ def extract_facts(path: str, abs_path: str, prof: dict):
     except Exception as e:  # noqa: BLE001
         ol = None
         extras["outline_error"] = f"{type(e).__name__}: {e}"
+    colour = [e for e in els if e.kind == "zone"]
     if ol is not None:
         els_ol, info = ol
-        colour = [e for e in els if e.kind == "zone"]           # legend-matched colour modules stay (they are read
-        els = colour + els_ol                                   # from the legend); slivers / hatch 'rooms' go
-        extras["outline"] = info
+        els = colour + els_ol                                   # legend-matched colour modules stay (they are read
+        extras["outline"] = info                                # from the legend); slivers / hatch 'rooms' go
+    elif colour:                                                # colour-coded plan: the building = its legend zones
+        fp = _zones_union(colour, abs_path, prof)
+        els = colour + ([fp] if fp is not None else [])
+        if fp is not None:
+            extras["outline"] = {k: fp.attrs.get(k) for k in ("area_m2", "bbox_m", "method", "px_per_m")}
     notes = []
     if not any(e.kind == "room" for e in els):
         notes.append(f"no rooms recognised (plan kind: {extras['plan_kind']})")
@@ -378,6 +416,31 @@ def _outline_elements(abs_path: str, prof: dict, words: list[dict]):
                                                         "px_per_m": ppm}))
     return out, {"area_m2": r["area_m2"], "bbox_m": r["bbox_m"], "method": r["method"], "px_per_m": ppm,
                  "zones": len(out) - 1}
+
+
+def _zones_union(colour: list, abs_path: str, prof: dict):
+    """Footprint of a colour-coded plan = union of its legend zones (white cell walls between them bridged)."""
+    from shapely.geometry import Polygon
+    from shapely.ops import unary_union
+    from engine.scale import sheet_scale as S
+    st = S.sheet_state(abs_path, prof["sha256"])
+    win = st["cons"]["winner"]
+    if not win or st["conf"] < 0.4:
+        return None
+    ppm = float(win["ppm"])
+    polys = [Polygon(e.polygon).buffer(0) for e in colour if len(e.polygon) >= 3]
+    u = unary_union([p.buffer(0.6 * ppm, join_style=2) for p in polys if p.area > 0]).buffer(-0.6 * ppm, join_style=2)
+    if u.is_empty:
+        return None
+    if u.geom_type == "MultiPolygon":
+        u = max(u.geoms, key=lambda g: g.area) if max(g.area for g in u.geoms) > 0.8 * u.area else u.convex_hull
+    u = u.simplify(0.1 * ppm)
+    x0, y0, x1, y1 = u.bounds
+    return Element(id="footprint_zones", kind="footprint", polygon=[tuple(map(float, c)) for c in u.exterior.coords][:-1],
+                   conf=0.65, attrs={"area_m2": round(u.area / ppm ** 2, 1),
+                                     "bbox_m": [round((x1 - x0) / ppm, 2), round((y1 - y0) / ppm, 2)],
+                                     "method": "union of the legend colour zones", "px_per_m": ppm,
+                                     "from_walls": True, "source": "outline"})
 
 
 def light(prof: dict) -> dict:

@@ -361,6 +361,97 @@ def _merge_confusable(found: dict[str, dict]) -> dict[str, dict]:
     return out
 
 
+# ISA-5.1 instrument tags: succeeding letters say what the device IS (FCV flow control valve, PIT pressure indicating
+# transmitter, PG pressure gauge). Used only when neither the sheet nor the glossary defines the series.
+ISA_FUNC = [("CV", "control valve"), ("V", "valve"), ("IT", "indicating transmitter"), ("T", "transmitter"),
+            ("G", "gauge"), ("I", "indicator"), ("S", "switch"), ("E", "element"), ("C", "controller"), ("R", "recorder")]
+
+
+def _sheet_defs(rs: list[dict]) -> dict[str, str]:
+    """'NON-SURGE CHECK VALVE (CV) W/ ...' -> {'CV': 'non-surge check valve'} (the words before the brackets)."""
+    out: dict[str, str] = {}
+    for r in rs:
+        for m in re.finditer(r"\(([A-Z]{1,5})\)", r["text"]):
+            pre = re.sub(r"[^A-Za-z /-]", " ", r["text"][: m.start()]).split()
+            if pre:
+                out.setdefault(m.group(1), " ".join(pre[-4:]).lower())
+    return out
+
+
+_DICT: Optional[set] = None
+
+
+def _english(w: str) -> bool:
+    """Is this an ordinary word (SWING, MUST) rather than a device tag (BPCV)? System word list when present."""
+    global _DICT
+    if _DICT is None:
+        try:
+            _DICT = {x.strip().lower() for x in open("/usr/share/dict/words", encoding="utf-8", errors="ignore") if len(x) <= 8}
+        except OSError:
+            _DICT = set()
+    w = w.lower()
+    return any(x in _DICT for x in (w, w[:-3], w[:-3] + "e", w[:-1], w[:-2], w[:-2] + "e")
+               if len(x) >= 3 and x != w[:-1] or x == w)       # using -> use, swings -> swing
+
+
+def expand(series: str, defs: dict[str, str], numbered: bool = True) -> tuple[str, str]:
+    """What a tag series means and where that meaning comes from: the sheet, the glossary, or ISA-5.1 letters."""
+    if series in defs:
+        return defs[series], f"the sheet defines ({series}) as '{defs[series]}'"
+    for k, v in GLOSSARY.items():
+        if v == series:
+            return k, f"standard abbreviation {series} = {k}"
+    if len(series) < 3 or (not numbered and _english(series)):
+        return "", ""                                      # 'AV', 'SWING': not an instrument tag
+    for suf, name in ISA_FUNC:
+        if series.endswith(suf) and len(series) > len(suf):
+            return name, f"ISA-5.1 tag letters: {series} ends in '{suf}' = {name}"
+    return "", ""
+
+
+def class_count(abs_path: str, sha: str, noun: str) -> Optional[dict]:
+    """'how many valves': every tag series on the sheet whose MEANING is a valve (check valves CV-n, control valves
+    FSCV-n, a single BPCV ...). Distinct numbered tags + unnumbered tag words. Returns a breakdown per series."""
+    words = [_stem(w) for w in re.findall(r"[a-z]+", noun.lower()) if w not in STOP]
+    if len(words) != 1:
+        return None
+    cls = words[0]
+    ws = _words(abs_path, sha)
+    rs = rows(ws)
+    defs = _sheet_defs(rs)
+    numbered: dict[str, dict] = {}
+    plain: dict[str, list] = {}
+    for w in ws:
+        t = S.norm(w["text"]).strip(".,:;()_|")
+        m = TAG_RX.match(t)
+        if m and len(m.group(1)) >= 2:
+            numbered.setdefault(f"{m.group(1)}-{int(m.group(2))}{m.group(3)}", w)
+        elif re.fullmatch(r"[A-Z]{2,5}", t):
+            plain.setdefault(t, []).append(w)
+    numbered = _merge_confusable(numbered)
+    series: dict[str, list[str]] = {}
+    for tg in numbered:
+        series.setdefault(tg.split("-")[0], []).append(tg)
+    groups = []
+    for name in sorted(set(series) | set(plain)):
+        meaning, why = expand(name, defs, numbered=name in series)
+        if not meaning or not any(_tok_match(cls, x) for x in meaning.split()):
+            continue
+        tags = sorted(series.get(name, []), key=lambda t: int(re.sub(r"\D", "", t.split("-")[1]) or 0))
+        if tags:
+            boxes = [numbered[t]["box"] for t in tags]
+            n = len(tags)
+        elif name in defs or name in GLOSSARY.values() or len(plain.get(name, [])) <= 3:
+            boxes = [w["box"] for w in plain.get(name, [])]   # an unnumbered device drawn once or twice (BPCV)
+            n = len(boxes)
+        else:
+            continue
+        groups.append({"series": name, "meaning": meaning, "why": why, "n": n, "tags": tags, "boxes": boxes})
+    if not groups:
+        return None
+    return {"noun": noun, "total": sum(g["n"] for g in groups), "groups": sorted(groups, key=lambda g: -g["n"])}
+
+
 def tag_count(abs_path: str, sha: str, question: str) -> Optional[dict]:
     noun = _noun(question)
     if not noun:

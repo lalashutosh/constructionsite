@@ -237,6 +237,9 @@ class PipelineEngine:
             return derive.answer(self, path, question, _dspec, allow_siblings=allow_siblings, benchmark=benchmark, progress=progress)
         # --- end derived quantities ---
         rt = route_question(question, path, classifier=self.classifier)
+        from engine.query import measure as _measure
+        if _measure.PERIM.search(question) and rt.kind == "count":
+            rt = Route("unknown", {}, "length", rt.lang, "measure")   # 'perimeter of the kitchen' is not the kitchen COUNT
         po = self._ask(path, question, rt, allow_siblings, benchmark, stage)
         try:                                  # "... on floor 2" on a sheet with several floor plans
             from engine import sheetfloor
@@ -362,6 +365,36 @@ class PipelineEngine:
         # vote
         stage("vote")
         results = self._vote(ctx, notes)
+        # --- perimeter / wall length of a named room (engine/query/measure.py; works with the LLM off) ---
+        if rt.intent == "unknown" and not results:
+            from engine.query import measure
+            mspec = measure.parse(ctx.question, facts)
+            if mspec is not None:
+                from engine import query
+                from engine.registry import VoterResult
+                if scale is None:
+                    scale = self._scale(facts, sha)
+                px = scale.px_per_m if scale is not None and scale.px_per_m else None
+                res = query.run(mspec, facts, px)
+                po.query_spec = mspec
+                notes.extend(f"query: {n}" for n in res.notes)
+                if res.value is not None:
+                    by = {e.id: e for e in facts.elements}
+                    kind = po.kind = "length"
+                    po.scale = scale
+                    tgt = (mspec.get("where") or {}).get("subtype") or (mspec.get("where") or {}).get("label") or "rooms"
+                    n_r = len(res.evidence_ids)
+                    src = ("the sheet's printed scale" if scale is not None and any(
+                        a.kind in ("dimension", "scale_bar", "printed_ratio", "printed_area", "user") for a in scale.anchors)
+                        else "a scale guessed from standard door widths (give one real length to confirm)")
+                    notes.append(f"printed answer: the walls around the {tgt.replace('_', ' ')}"
+                                 f"{'' if n_r == 1 else f' ({n_r} rooms)'} add up to {float(res.value):.1f} m "
+                                 f"(length of its outline, measured with {src}).")
+                    results = [VoterResult(Voter(name="room_perimeter", value=float(res.value), element_ids=res.evidence_ids,
+                                                 note=f"outline length of {len(res.evidence_ids)} room(s) at the solved scale "
+                                                      "(= the summed lengths of the walls around them)"),
+                                           evidence=[by[i] for i in res.evidence_ids if i in by], unit="m")]
+        # --- end perimeter ---
         if sheet_text:                                   # largest room / overall size / scale: no registry voter
             results = self._sheet_text(ctx, rt, facts, scale, po, notes)
         if rt.layer == "sheet" and kind == "count" and not any(e.kind == "room" for e in facts.elements):
@@ -775,9 +808,19 @@ class PipelineEngine:
 
         want_count = bool(_re.search(r"\bhow\s+many\b|\bnumber\s+of\b", q, _re.I))
         if want_count and (rt.intent == "unknown" or (rt.intent in _DETECTOR_KINDS and not results)):
-            tc = L.tag_count(ap, sha, q)
+            noun = L._noun(q) or ""
+            cc = L.class_count(ap, sha, noun) if noun else None     # 'how many valves': every valve-type series
+            tc = None if cc else L.tag_count(ap, sha, q)
             lk = L.lookup(ap, sha, q)
             res = []
+            if cc:
+                parts = "; ".join(f"{g['n']} {g['series']} ({g['meaning']}; {g['why']}"
+                                  + (f": {', '.join(g['tags'][:8])}" if g["tags"] else "") + ")" for g in cc["groups"])
+                boxes = [b for g in cc["groups"] for b in g["boxes"]]
+                res.append(vr("tag_classes", cc["total"], boxes, None, f"{cc['total']} {noun} tagged on the sheet: {parts}",
+                              exact=False, prefix="tag"))
+                notes.append(f"printed answer: {cc['total']} {noun} tagged on the sheet — {parts}.")
+                return res, "count"
             if lk and lk["kind"] == "count":
                 res.append(vr("printed_count", lk["value"], lk["boxes"], lk["text"], f"the sheet prints '{lk['text']}'"))
             if tc:
