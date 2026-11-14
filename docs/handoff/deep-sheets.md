@@ -56,6 +56,9 @@ print), outer walls (legend-zone union), wings, printed tables. What they want n
 - [x] first-time tour (`Tour`, localStorage "plumb-tour"; "Tour" button re-opens): scale pins -> tags -> checklist -> view.
 - [x] scans (CubiCasa hand-drawn): stairs via faint-ink + evenly-spaced-tread test; doors without arcs = interior wall
   openings (10000: 1 -> 6). DEV unchanged.
+- [x] per wing / zone totals (`checklist.zones`, legend zones = wings, position words): dorm 3 dormitory wings x
+  16 sinks / 16 toilets / 16 beds; common area tables. Stair flights row (tread detector inside the outline at 3000 px)
+  finds none on the dorm yet (stairs there are small at that resolution) -> run it per wing at full resolution.
 - [ ] NOT DONE: mixed 2D/3D "raise only the selected room" (currently the selected room is outlined + flown to, not
   extruded alone); per-wing totals (bottom-left / bottom-right / middle / top) in the checklist; electrical layer has no
   sheet in the stress set; browser QA of the new UI (built + type-checked only, not clicked through).

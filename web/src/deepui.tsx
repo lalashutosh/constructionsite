@@ -78,6 +78,7 @@ export type Checklist = {
   rooms: { id: string; name: string; kind: string; area_m2: number | null; polygon: [number, number][]; counts: Record<string, number> }[];
   totals: { kind: string; label: string; count: number; ids: string[]; tier: "green" | "amber" | "grey"; note?: string }[];
   elements: { id: string; kind: string; label: string; polygon: [number, number][]; room_id?: string | null }[];
+  zones?: { name: string; polygon: [number, number][]; counts: Record<string, number> }[];
   cost?: { usd: number; ms: number };
 };
 export function ChecklistPanel(p: { path: string | null; deepHint?: { on: boolean; eta_s: number; reason: string } | null;
@@ -127,6 +128,19 @@ export function ChecklistPanel(p: { path: string | null; deepHint?: { on: boolea
               </li>
             ))}
           </ul>
+          {!!data.zones?.length && (
+            <details className="ckrooms" open>
+              <summary>By wing / zone</summary>
+              <ul>
+                {data.zones.map((z) => (
+                  <li key={z.name} onClick={() => p.onShow([z.polygon])}>
+                    <span>{z.name}</span>
+                    <div className="sm muted">{Object.entries(z.counts).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${n} ${k}`).join(" · ")}</div>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
           <details className="ckrooms">
             <summary>{data.rooms.length} rooms</summary>
             <ul>

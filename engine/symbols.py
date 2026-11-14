@@ -27,7 +27,7 @@ import numpy as np
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 CACHE = ROOT / "cache" / "symbols"
-VERSION = "v6"
+VERSION = "v7"
 NAMES = ["bed", "side table", "desk", "chair", "sofa", "lounge chair", "table", "closet", "wardrobe", "toilet", "sink",
          "shower", "bathtub", "door", "window", "stair", "tv", "kitchen counter", "fridge", "gym equipment", "washer",
          "plant", "column", "other"]
@@ -354,7 +354,50 @@ def _checklist(abs_path: str, sha: str, facts, llm) -> dict:
             ids.append(eid)
         out["totals"].append({"kind": nm, "label": LABEL.get(nm, nm.title() + ("s" if not nm.endswith("s") else "")),
                               "count": len(ids), "ids": ids, "tier": "green" if agree else "amber", "note": note})
+    # stair flights: the tread detector inside the outline (downscaled so a 10k px sheet stays fast)
+    try:
+        from engine.raster import stairs as ST
+        k = min(1.0, 3000 / max(g.shape))
+        col = cv2.imread(abs_path, cv2.IMREAD_COLOR)
+        small = cv2.resize(col, None, fx=k, fy=k, interpolation=cv2.INTER_AREA) if k < 1 else col
+        msk = cv2.resize(mask, (small.shape[1], small.shape[0]), interpolation=cv2.INTER_NEAREST)
+        flights = [f for f in ST.detect(small)
+                   if msk[int(np.clip(np.mean([q[1] for q in f["polygon"]]), 0, msk.shape[0] - 1)),
+                          int(np.clip(np.mean([q[0] for q in f["polygon"]]), 0, msk.shape[1] - 1))]]
+        ids = []
+        for j, f in enumerate(flights):
+            poly = [[q[0] / k, q[1] / k] for q in f["polygon"]]
+            eid = f"stairs_{j}"
+            out["elements"].append({"id": eid, "kind": "stair", "label": f"stair flight ({f['attrs']['treads']} treads)",
+                                    "polygon": poly, "room_id": None})
+            ids.append(eid)
+        if ids:
+            out["totals"].append({"kind": "stair", "label": "Stair flights", "count": len(ids), "ids": ids, "tier": "amber",
+                                  "note": "tread-line detector (evenly spaced treads) inside the building outline"})
+    except Exception as e:  # noqa: BLE001
+        out["stairs_error"] = f"{type(e).__name__}: {e}"
     out["totals"].sort(key=lambda t: -t["count"])
+    # per wing / zone (legend colour zones are the wings of a colour-coded plan): where each element is
+    zl = []
+    if colour:
+        W2, H2 = g.shape[1], g.shape[0]
+        for z in colour:
+            if len(z.polygon) < 3 or not z.label:
+                continue
+            zp = Polygon(z.polygon).buffer(0)
+            if zp.area < 0.03 * Polygon(fp.polygon).buffer(0).area:
+                continue
+            c = zp.centroid
+            where = ("top" if c.y < H2 * 0.4 else "bottom" if c.y > H2 * 0.6 else "middle")
+            where += "" if where == "middle" else (" left" if c.x < W2 * 0.42 else " right" if c.x > W2 * 0.58 else "")
+            cnt: dict[str, int] = {}
+            for e in out["elements"]:
+                xs = [q[0] for q in e["polygon"]]; ys = [q[1] for q in e["polygon"]]
+                if zp.contains(Point(sum(xs) / len(xs), sum(ys) / len(ys))):
+                    cnt[e["kind"]] = cnt.get(e["kind"], 0) + 1
+            nice = " ".join(w if w[:1].isdigit() else w.capitalize() for w in z.label.strip().split())
+            zl.append({"name": f"{nice} ({where})", "polygon": [list(q) for q in z.polygon], "counts": cnt})
+    out["zones"] = zl
     for r in rooms:
         out["rooms"].append({"id": r.id, "name": rnames.get(r.id, r.id), "kind": r.subtype or "room",
                              "area_m2": r.attrs.get("area_m2"), "polygon": [list(p) for p in r.polygon],
