@@ -77,6 +77,8 @@ def pick_value(results: list, kind: str):
     exact = [r for r in scored if r.exact]
     if exact:
         return float(exact[0].voter.value) if kind != "count" else int(exact[0].voter.value)
+    primary = [r for r in scored if not getattr(r, "second_opinion", False)]
+    scored = primary or scored            # weak cross-checks move the tier, not the number
     vals = [float(r.voter.value) for r in scored]
     med = statistics.median(vals)
     best = min(scored, key=lambda r: (abs(float(r.voter.value) - med), _spread(r.voter)))

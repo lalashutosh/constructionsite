@@ -29,6 +29,15 @@ def test_green_requires_agreeing_voters():
     assert any("agree" in m for m in invariants.check(po))
 
 
+def test_green_area_agrees_within_tolerance():
+    ok = ProofObject(id="a", question="q", kind="area", value=530.0258, tier=Tier.green, provenance=PROV,
+                     voters=[Voter(name="a", value=530.0258), Voter(name="b", value=529.8743)])
+    assert not any("agree" in m for m in invariants.check(ok))
+    far = ProofObject(id="b", question="q", kind="area", value=10.0, tier=Tier.green, provenance=PROV,
+                      voters=[Voter(name="a", value=10.0), Voter(name="b", value=10.5)])
+    assert any("agree" in m for m in invariants.check(far))
+
+
 def test_grey_needs_refusal():
     po = ProofObject(id="a", question="q", tier=Tier.grey, provenance=PROV)
     assert any("refusal" in m for m in invariants.check(po))

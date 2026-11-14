@@ -61,6 +61,8 @@ class VoterResult:
     evidence: list[Element] = field(default_factory=list)
     unit: Optional[str] = None
     exact: bool = False            # True for exact-format sources (dxf/ifc/schedule text)
+    second_opinion: bool = False   # cross-check voter: counts for the tier (agreement), never sets the value
+                                   # while a primary voter has one (docs/decisions/second-opinion-voters.md)
 
 
 @dataclass
