@@ -2,6 +2,10 @@
 
 ## UPDATE 2026-11-14 18:20 (interactive lead session, branch `p2-finish`) — read this first
 
+> **Live progress log: GitHub issue https://github.com/lalashutosh/constructionsite/issues/1 ("Build log").**
+> Every agent / Claude Code session: read the latest comments there before starting, and post a short comment
+> (what changed, numbers, commit hash, what is left) after each finished step: `gh issue comment 1 -R lalashutosh/constructionsite -b "..."`.
+
 **Plain-language status:** `docs/PROGRESS.md` (newest on top). Branch `p2-finish` on GitHub; `main` untouched.
 
 ### Run it (Mac)
