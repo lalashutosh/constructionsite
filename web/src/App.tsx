@@ -5,6 +5,8 @@ import { Inspector, kindName } from "./inspector";
 import { chipsFor, findingSpecs } from "./logic";
 import type { ProofObject } from "./types";
 import { HowPage } from "./how";
+import { ChecklistPanel, Tour, LAYER_COLOURS } from "./deepui";
+import type { PlumbViewer } from "./viewer3d";
 import { ProjectDrawer, flattenProject, noFloorsNote, typeWord, type FileStatus, type ProjFile } from "./project";
 import { Ask, BuildPanel, Findings, Know, Rail, Drawer, Seg, ViewerPane, type BannerItem, type ProgressInfo, type ScaleState, type ThemeName, type Floor, type FindingState, type Upload } from "./panels";
 
@@ -76,6 +78,7 @@ export default function App() {
   // element inspector
   const [elems, setElems] = useState<Record<string, PlanElement[] | "na">>({});
   const [elSel, setElSel] = useState<string | null>(null);
+  const vref = useRef<PlumbViewer | null>(null);
   const [elHover, setElHover] = useState<string | null>(null);
   const [elLocal, setElLocal] = useState<Record<string, Set<string>>>({});
   const [elUndo, setElUndo] = useState<Record<string, number>>({});
@@ -178,7 +181,7 @@ export default function App() {
     setAsking(true);
     setAskErr(null);
     try {
-      const p = await ask(askPath, q.trim());
+      const p = await ask(askPath, q.trim(), elSel);
       setSelected({ path: askPath, proof: p });
     } catch (e) {
       setAskErr((e as Error).message);
@@ -593,7 +596,24 @@ export default function App() {
       ) : (
       <main className="grid">
         <section className="col left">
+          {active?.geo && (
+            <Tour k={active.path} steps={[
+              { title: "We read the scale from the sheet itself",
+                body: scaleLine ? `${scaleLine.text} The pins on the drawing show exactly where: the printed scale note, the graphic bar and the dimension strings we measured.` : "No printed scale was found; one real length you measure unlocks every size.",
+                act: () => { const sc = activeChecks?.find((c) => c.kind === "scale"); setHoverCheck(sc ?? null); vref.current?.setView("top"); } },
+              { title: "Every number says where it came from",
+                body: "Drawn = measured on the drawing, specified = printed on it, chosen = you decided, defaulted = an assumption we had to make. Open 'See proof' on any answer for the receipt.",
+                act: () => setHoverCheck(null) },
+              { title: "What's on this sheet",
+                body: active.geo.deep?.on ? `This sheet is very detailed: the deep read counts every bed, door, chair and fixture and names every room. It takes about ${Math.max(1, Math.round((active.geo.deep.eta_s || 60) / 60))} min and we tell you before it starts.` : "The checklist on the right counts every element and names every room. Click a row to light up all of them.",
+                act: () => document.querySelector(".cklist")?.scrollIntoView({ behavior: "smooth", block: "center" }) },
+              { title: "Look around, click anything, ask",
+                body: "The octagon top-right switches 2D / 3D (tap) and rotates (drag); the wheel zooms where your cursor is. Click a room, then ask 'what is the size of this room?'.",
+                act: () => vref.current?.setView("3d") },
+            ]} />
+          )}
           <ViewerPane
+            vref={vref}
             floors={floors}
             active={active}
             selected={selected}
@@ -646,6 +666,8 @@ export default function App() {
             asking={asking}
             err={askErr}
             onAsk={(q) => void submit(q)}
+            selName={elSel ? (() => { const e = elList?.find((x) => x.id === elSel); return e ? (e.label || kindName(e.kind)) : elSel; })() : null}
+            onClearSel={() => { setElSel(null); vref.current?.setMulti(null, []); }}
             onWhy={() => setWhy(true)}
             scaleLine={scaleLine}
           />
@@ -693,7 +715,11 @@ export default function App() {
               onHover={setHoverIdx}
               imgUrl={active ? imageUrl(active.path) : ""}
               scaleLine={scaleLine}
-              checks={<><ChecksBlock items={activeChecks} busyId={checkBusy} note={checkNote} err={checkErr} onAnswer={(c, ans) => void onCheckAnswer(c, ans)} onType={startScale} onHover={setHoverCheck} />{inspector}</>}
+              checks={<>{active && <ChecklistPanel path={active.path} deepHint={active.geo?.deep ?? null}
+                onShow={(polys) => vref.current?.setMulti(active.key, polys)}
+                onRoom={(id, poly) => { setElSel(id); vref.current?.setMulti(active.key, [poly]); }}
+                onLoaded={(c) => vref.current?.setLayers(active.key, { ...(active.geo?.layers ?? {}), furniture: c.elements } as never, LAYER_COLOURS)} />}
+                <ChecksBlock items={activeChecks} busyId={checkBusy} note={checkNote} err={checkErr} onAnswer={(c, ans) => void onCheckAnswer(c, ans)} onType={startScale} onHover={setHoverCheck} />{inspector}</>}
               onSelect={(p) => active && setSelected({ path: active.path, proof: p })}
               onWhy={(p) => {
                 if (active) setSelected({ path: active.path, proof: p });

@@ -227,7 +227,10 @@ export class PlumbViewer {
     this.scene.add(this.pinGroup);
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true;
-    this.controls.dampingFactor = 0.08;
+    this.controls.dampingFactor = 0.07;
+    this.controls.zoomToCursor = true;          // wheel zooms towards the point under the cursor
+    this.controls.zoomSpeed = 1.1;
+    this.controls.screenSpacePanning = true;
     this.controls.autoRotate = !this.reduce;
     this.controls.autoRotateSpeed = 1.0; // one turn per 60 s
     this.controls.maxPolarAngle = Math.PI * 0.49;
@@ -598,7 +601,7 @@ export class PlumbViewer {
     const tw = this.tween;
     if (!tw) return;
     const u = Math.min(1, (performance.now() - tw.start) / tw.dur);
-    const e = 1 - Math.pow(1 - u, 3);
+    const e = u < 0.5 ? 4 * u * u * u : 1 - Math.pow(-2 * u + 2, 3) / 2;   // easeInOutCubic: soft start and landing
     this.camera.position.lerpVectors(tw.p0, tw.p1, e);
     this.controls.target.lerpVectors(tw.t0, tw.t1, e);
     if (u >= 1) {
@@ -806,6 +809,121 @@ export class PlumbViewer {
     const line = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(pts), mat);
     line.renderOrder = 11;
     this.elGroup.add(line);
+  }
+
+  // ---- view cube: preset views, orbit by drag, re-centre (eased, damped)
+  private viewMode: "3d" | "top" | "front" | "side" = "3d";
+  get view() { return this.viewMode; }
+  private bounds(): { c: THREE.Vector3; r: number } {
+    const box = new THREE.Box3();
+    for (const fl of this.floorGroups.values()) box.expandByObject(fl.plane);
+    if (box.isEmpty()) return { c: new THREE.Vector3(), r: 100 };
+    const sph = box.getBoundingSphere(new THREE.Sphere());
+    return { c: sph.center, r: Math.max(10, sph.radius) };
+  }
+  setView(mode: "3d" | "top" | "front" | "side", dur = 650) {
+    this.viewMode = mode;
+    const { c, r } = this.bounds();
+    const d = r * 2.1;
+    const dir = mode === "top" ? new THREE.Vector3(0, 1, 0.0001)
+      : mode === "front" ? new THREE.Vector3(0, 0.18, 1)
+      : mode === "side" ? new THREE.Vector3(1, 0.18, 0)
+      : new THREE.Vector3(0.62, 0.72, 0.85);
+    this.controls.maxPolarAngle = mode === "top" ? 0.0001 : Math.PI * 0.49;
+    this.controls.enableRotate = mode !== "top";
+    this.controls.autoRotate = false;
+    this.flyTo(c.clone().add(dir.normalize().multiplyScalar(d)), c.clone(), dur);
+  }
+  recenter(dur = 600) { this.setView(this.viewMode, dur); }
+  /** drag on the view cube: orbit around the target */
+  orbitBy(dxPx: number, dyPx: number) {
+    if (this.viewMode === "top") { this.setView("3d", 450); return; }
+    const off = this.camera.position.clone().sub(this.controls.target);
+    const sph = new THREE.Spherical().setFromVector3(off);
+    sph.theta -= dxPx * 0.008;
+    sph.phi = Math.min(Math.PI * 0.49, Math.max(0.05, sph.phi - dyPx * 0.008));
+    off.setFromSpherical(sph);
+    this.camera.position.copy(this.controls.target.clone().add(off));
+    this.controls.autoRotate = false;
+    this.controls.update();
+  }
+  /** camera azimuth in radians (the view cube rotates with it) */
+  azimuth(): number {
+    const off = this.camera.position.clone().sub(this.controls.target);
+    return Math.atan2(off.x, off.z);
+  }
+
+  // ---- layers (envelope / walls / furniture / piping / electrical) and multi-highlight
+  private layerGroup = new THREE.Group();
+  private layerObjs: Record<string, THREE.Object3D> = {};
+  setLayers(floorKey: string | null, layers: { envelope?: [number, number][][]; furniture?: { polygon: [number, number][] }[];
+    piping?: [number, number][][]; electrical?: [number, number][][] } | null, colours: Record<string, number>) {
+    this.clear(this.layerGroup);
+    this.layerObjs = {};
+    if (!this.layerGroup.parent) this.scene.add(this.layerGroup);
+    const fl = floorKey ? this.floorGroups.get(floorKey) : undefined;
+    if (!fl || !layers) return;
+    const toW = (x: number, z: number, y: number) => fl.group.localToWorld(new THREE.Vector3(x - fl.w / 2, y, z - fl.h / 2));
+    const mk = (name: string, rings: [number, number][][], y: number, closed: boolean, width = 1) => {
+      const g = new THREE.Group();
+      const mat = new THREE.LineBasicMaterial({ color: colours[name] ?? 0xffffff, transparent: true, opacity: 0.95, depthTest: false, linewidth: width });
+      for (const r of rings) {
+        if (r.length < 2) continue;
+        const geo = new THREE.BufferGeometry().setFromPoints(r.map(([x, z]) => toW(x, z, y)));
+        const ln = closed ? new THREE.LineLoop(geo, mat) : new THREE.Line(geo, mat);
+        ln.renderOrder = 9;
+        g.add(ln);
+      }
+      g.name = name;
+      this.layerObjs[name] = g;
+      this.layerGroup.add(g);
+    };
+    if (layers.envelope?.length) mk("envelope", layers.envelope, fl.H * 0.02, true, 2);
+    if (layers.furniture?.length) {          // furniture: low translucent blocks
+      const g = new THREE.Group();
+      const mat = new THREE.MeshBasicMaterial({ color: colours.furniture ?? 0x2dd4bf, transparent: true, opacity: 0.55, depthWrite: false });
+      for (const f of layers.furniture) {
+        const xs = f.polygon.map((q) => q[0]), zs = f.polygon.map((q) => q[1]);
+        const x0 = Math.min(...xs), x1 = Math.max(...xs), z0 = Math.min(...zs), z1 = Math.max(...zs);
+        const hgt = fl.H * 0.12;
+        const m = new THREE.Mesh(new THREE.BoxGeometry(Math.max(0.2, x1 - x0) * fl.s, hgt, Math.max(0.2, z1 - z0) * fl.s), mat);
+        m.position.copy(toW((x0 + x1) / 2, (z0 + z1) / 2, hgt / 2 / Math.max(fl.s, 1e-6) * fl.s));
+        g.add(m);
+      }
+      g.name = "furniture";
+      this.layerObjs.furniture = g;
+      this.layerGroup.add(g);
+    }
+    if (layers.piping?.length) mk("piping", layers.piping, fl.H * 0.3, false);
+    if (layers.electrical?.length) mk("electrical", layers.electrical, fl.H * 0.45, false);
+  }
+  setLayerVisible(name: string, on: boolean) {
+    const o = this.layerObjs[name];
+    if (o) o.visible = on;
+    if (name === "walls") for (const fl of this.floorGroups.values()) for (const pt of fl.parts) if ((pt as { kind?: string }).kind === "wall") pt.obj.visible = on;
+  }
+  private multiGroup = new THREE.Group();
+  /** highlight many polygons at once (a checklist row: every bed) and fly to them */
+  setMulti(floorKey: string | null, polys: [number, number][][], fly = true) {
+    this.clear(this.multiGroup);
+    if (!this.multiGroup.parent) this.scene.add(this.multiGroup);
+    const fl = floorKey ? this.floorGroups.get(floorKey) : undefined;
+    if (!fl || !polys.length) return;
+    const y = fl.H * 0.6;
+    const mat = new THREE.LineBasicMaterial({ color: this.T.pin, depthTest: false, transparent: true, opacity: 0.95 });
+    const box = new THREE.Box3();
+    for (const poly of polys) {
+      const pts = poly.map(([x, z]) => fl.group.localToWorld(new THREE.Vector3(x - fl.w / 2, y, z - fl.h / 2)));
+      pts.forEach((q) => box.expandByPoint(q));
+      const ln = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(pts), mat);
+      ln.renderOrder = 12;
+      this.multiGroup.add(ln);
+    }
+    if (fly && !box.isEmpty()) {
+      const sph = box.getBoundingSphere(new THREE.Sphere());
+      const off = this.camera.position.clone().sub(this.controls.target).normalize();
+      this.flyTo(sph.center.clone().add(off.multiplyScalar(Math.max(18, sph.radius * 2.4))), sph.center.clone(), 650);
+    }
   }
 
   private measureClick() {

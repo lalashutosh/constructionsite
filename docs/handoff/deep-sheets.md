@@ -31,13 +31,34 @@ print), outer walls (legend-zone union), wings, printed tables. What they want n
   MEP sheet clipped to the screened building; electrical when an E-sheet is present (or none: say so).
 - **Viewer**: web/src/viewer3d.ts + panels.tsx: view cube (2D/3D/top/side), layer toggles, pan/orbit/re-centre.
 
-## Status (update as you go)
+## Status (2026-11-15 ~00:40)
 - [x] handoff written (this file)
-- [ ] deep-mode detection + ETA banner
-- [ ] symbol discovery + naming + checklist (`engine/symbols.py`, `/api/checklist`)
-- [ ] rooms named individually (Hallway n / Room n / Green room n / Gym)
-- [ ] layers in geometry + viewer toggles
-- [ ] 2D/3D toggle, mixed mode, pan/orbit/centre
+- [x] deep-mode detection + ETA: `engine/symbols.deep_info` (>= 20 MP and complexity >= 0.55 or >= 20 rooms);
+  `/api/geometry` carries `deep {on, reason, eta_s}`; checklist panel says "Deep read ... about N min" before starting
+  and shows a progress bar (dorm: on, ~4 min estimate, real ~2 min).
+- [x] symbol discovery + naming + checklist: `engine/symbols.py`, `GET /api/checklist?path=` (cached
+  cache/symbols/<sha>-v6*.json). Dorm (upload a9211588...): Sinks 48 (green: 2 exemplars agree), Toilets 48, Beds 46
+  (green), plus noisier types (Columns 32, Fridges 29, Bathtubs 23 = probably showers, Side tables 16, TVs 8, Chairs 4,
+  Tables 5, 2 unnamed). ~$0.10 and ~2 min per sheet, paid once. Names come from 2 Verda vision reviewers on a context
+  contact sheet with real sizes; code rejects names whose size is implausible (`SIZE_M`). Counting is code: shape
+  clusters + template matching (NCC, 8 orientations, half resolution, every hit shape-verified, plausible <= 3.5x the
+  cluster). WEAK SPOT: naming (fast reviewer often returns nothing; strong one varies run to run) -> next: let the user
+  rename a type in the checklist (reuse the element override pattern), and add per-module structure as a 3rd voter.
+- [x] rooms named individually: `symbols._room_names` -> "Dormitory n" (legend zone), "Hallway n" (aspect >= 4 or
+  sprawling), printed space word, else "Room n" (from `engine/outline.subrooms`).
+- [x] layers: `engine/layers.py` (envelope = verified outline, walls, furniture = checklist nodes, piping/electrical =
+  black linework of an M-/P-/E- sheet over the screened building; discipline from the title-block sheet id). Viewer:
+  `PlumbViewer.setLayers/setLayerVisible`, toggles `LayerToggles` (web/src/deepui.tsx). M-101A: 324 pipe runs.
+- [x] viewer: octagon view cube top-right (`ViewCube`: tap = 2D top <-> 3D, drag = orbit, Top/Front/Side/3D, re-centre),
+  zoom to cursor (OrbitControls.zoomToCursor), easeInOutCubic camera tweens, damping 0.07.
+- [x] selection: chip above the question box; `/api/ask` takes `selected_id` (`engine/selected.py`: size / walls /
+  what is this / how many X in here); checklist rows light up every instance (`setMulti`), rooms select + raise outline.
+- [x] first-time tour (`Tour`, localStorage "plumb-tour"; "Tour" button re-opens): scale pins -> tags -> checklist -> view.
+- [x] scans (CubiCasa hand-drawn): stairs via faint-ink + evenly-spaced-tread test; doors without arcs = interior wall
+  openings (10000: 1 -> 6). DEV unchanged.
+- [ ] NOT DONE: mixed 2D/3D "raise only the selected room" (currently the selected room is outlined + flown to, not
+  extruded alone); per-wing totals (bottom-left / bottom-right / middle / top) in the checklist; electrical layer has no
+  sheet in the stress set; browser QA of the new UI (built + type-checked only, not clicked through).
 
 ## How to run / test
 API: `LLM_PROVIDER=verda .venv/bin/python -m uvicorn api.main:app --port 8001`; web: `cd web && VITE_ENGINE=http://localhost:8001/api npx vite`.

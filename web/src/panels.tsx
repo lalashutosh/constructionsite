@@ -1,3 +1,4 @@
+import { ViewCube, LayerToggles, LAYER_COLOURS } from "./deepui";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ChevronDown, ChevronRight, CircleCheck, CircleMinus, FolderUp, BookOpen, FolderTree, LayoutGrid, Moon, Play, Ruler, Square, Sun, TriangleAlert, Upload, X } from "lucide-react";
 import { imageUrl, type BuildPlan, type Geometry, type Sample, type ScanCheck } from "./api";
@@ -193,6 +194,8 @@ export function ViewerPane(p: {
   elSelId?: string | null;
   elHoverId?: string | null;
   onElPick?: (id: string | null, how: "hover" | "click") => void;
+  /** the App reaches the 3D viewer through this (checklist highlights, selected room) */
+  vref?: { current: PlumbViewer | null };
 }) {
   const [tip, setTip] = useState<{ text: string; x: number; y: number } | null>(null);
   const [len, setLen] = useState("");
@@ -209,6 +212,7 @@ export function ViewerPane(p: {
   useEffect(() => {
     const v = new PlumbViewer(host.current!, { onHoverPin: (i) => hoverCb.current(i), onDimInfo: (t) => setTip(t), onElementPoint: (how, hit) => elPointCb.current(how, hit) }, THEMES[p.theme]);
     viewer.current = v;
+    if (p.vref) p.vref.current = v;
     if (import.meta.env.DEV) (window as unknown as { __plumb?: PlumbViewer }).__plumb = v;   // debugging only
     return () => {
       v.dispose();
@@ -227,6 +231,14 @@ export function ViewerPane(p: {
       : [{ key: f.key, label: f.name, geo: f.geo!, imgUrl: imageUrl(f.path), crop: undefined, parent: f.key, src: "" }];
   }), [ready.map((f) => f.key + (f.geo ? "+" : "")).join("|")]); // eslint-disable-line react-hooks/exhaustive-deps
   const [view, setView] = useState<string>("all");
+  const layerSig = parts.map((x) => x.key + (x.geo.layers ? "L" : "")).join("|");
+  useEffect(() => {                        // body-system layers of the first shown floor (after the floors are built)
+    const t = window.setTimeout(() => {
+      const f = parts.find((x) => x.geo.layers);
+      viewer.current?.setLayers(f ? f.key : null, f ? (f.geo.layers as never) : null, LAYER_COLOURS);
+    }, 900);
+    return () => window.clearTimeout(t);
+  }, [layerSig]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (view !== "all" && !parts.some((x) => x.key === view)) setView("all"); }, [parts, view]);
   const shown = view === "all" ? parts : parts.filter((x) => x.key === view);
   const sig = shown.map((f) => f.key).join("|");
@@ -338,6 +350,8 @@ export function ViewerPane(p: {
   return (
     <div className="viewer panel">
       <div ref={host} className="canvas" />
+      <ViewCube viewer={() => viewer.current} />
+      <LayerToggles viewer={() => viewer.current} layers={shown[0]?.geo?.layers} />
       <div className="vtitle">
         <span className="vname">{a ? a.name : "No drawing open"}</span>
         {parts.length > 1 && <span className="pill">{parts.length} floors</span>}
@@ -445,7 +459,7 @@ export function ViewerPane(p: {
 }
 
 /* ---------- ask bar ---------- */
-export function Ask(p: { active: unknown; chips: string[]; selected: ProofObject | null; asking: boolean; err: string | null; onAsk: (q: string) => void; onWhy: () => void; scaleLine?: { text: string; conf: number } | null }) {
+export function Ask(p: { active: unknown; chips: string[]; selected: ProofObject | null; asking: boolean; err: string | null; onAsk: (q: string) => void; onWhy: () => void; scaleLine?: { text: string; conf: number } | null; selName?: string | null; onClearSel?: () => void }) {
   const [q, setQ] = useState("");
   const send = (t: string) => {
     setQ(t);
@@ -455,8 +469,13 @@ export function Ask(p: { active: unknown; chips: string[]; selected: ProofObject
   const v = pr ? verdict(pr) : null;
   return (
     <div className="ask">
+      {p.selName && (
+        <div className="selchip" title="Questions like 'what is the size of this room?' are about this element">
+          Selected: <b>{p.selName}</b> <button aria-label="Clear selection" onClick={p.onClearSel}>×</button>
+        </div>
+      )}
       <form className="askform" onSubmit={(e) => { e.preventDefault(); p.onAsk(q); }}>
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Ask anything about this drawing" aria-label="Question" disabled={!p.active} />
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={p.selName ? `Ask about ${p.selName}, e.g. what is the size of this room?` : "Ask anything about this drawing"} aria-label="Question" disabled={!p.active} />
         <button type="submit" className="primary" disabled={!p.active || p.asking || !q.trim()}>{p.asking ? "Asking…" : "Ask"}</button>
       </form>
       <div className="chips">

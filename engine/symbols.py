@@ -27,7 +27,7 @@ import numpy as np
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 CACHE = ROOT / "cache" / "symbols"
-VERSION = "v5"
+VERSION = "v6"
 NAMES = ["bed", "side table", "desk", "chair", "sofa", "lounge chair", "table", "closet", "wardrobe", "toilet", "sink",
          "shower", "bathtub", "door", "window", "stair", "tv", "kitchen counter", "fridge", "gym equipment", "washer",
          "plant", "column", "other"]
@@ -321,7 +321,7 @@ def _checklist(abs_path: str, sha: str, facts, llm) -> dict:
             hits = [hc for hc in hits if _same_shape(g, mask, r["d"], hc, w, h)]
         n = len(r["members"])
         ncc = len(hits) if hits is not None else None
-        ncc_ok = ncc is not None and n <= ncc <= 3 * n
+        ncc_ok = ncc is not None and n <= ncc <= 3.5 * n
         out["types"].append({"n": k + 1, "name": nm, "count": n, "ncc": ncc, "size_m": [round(w / ppm, 2), round(h / ppm, 2)]})
         by_name.setdefault(nm, []).append({"k": k, "rep": r, "w": w, "h": h, "n": n, "hits": hits if ncc_ok else None})
     for nm, cands in by_name.items():

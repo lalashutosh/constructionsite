@@ -6,11 +6,11 @@ const q1 = (path: string) => encodeURIComponent(path);
 
 export const imageUrl = (path: string) => `${BASE}/image?path=${q1(path)}`;
 
-export async function ask(path: string, question: string): Promise<ProofObject> {
+export async function ask(path: string, question: string, selectedId?: string | null): Promise<ProofObject> {
   const res = await fetch(`${BASE}/ask`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ path, question, benchmark: false }),
+    body: JSON.stringify({ path, question, benchmark: false, selected_id: selectedId ?? null }),
   });
   if (!res.ok) throw new Error(`engine answered ${res.status}`);
   return (await res.json()) as ProofObject;
@@ -39,6 +39,8 @@ export interface Geometry {
   wall_note?: string | null;
   check?: ScanCheck | null;
   px_per_m?: number | null;        // the sheet's own scale when printed evidence solved it (sizes shown without asking)
+  layers?: import("./deepui").Layers | null;
+  deep?: { on: boolean; reason: string; eta_s: number } | null;
   scale_note?: string | null;
   cost?: { ms: number; cpu_s?: number; llm_calls: number; usd: number; note?: string | null } | null;
 }
