@@ -3,6 +3,13 @@
 Running log of what the lead session is doing, newest on top. Updated after every milestone.
 Branch: `p2-finish` (off `main` at `a1b7642`). Nothing pushed. Detailed checklist: `docs/STATE.md`.
 
+## 14:20 update
+
+- **Tesseract solved:** native arm64 tesseract 5.5.4 (eng+fin) via micromamba/conda-forge in `cache/tools/tess-env` (you approved). `make check`: RESULT OK. Homebrew build stopped.
+- **Pushed** branch `p2-finish` to GitHub (6 commits). `main` untouched. `web/` changes stay uncommitted until the UI subagent finishes and the build passes.
+- **Running now:** triage eval with OCR (false-refusal gate), full DEV pipeline run (all sources, with siblings), UI subagent (P3 core beats).
+- **Estimate:** G2 gate in ~1.5–2 h if cubicasa holds up (+ up to 2 fix rounds if NO-GO); through P4 (ready for the holdout run) ~3–4 h of work. Hard-set verification, the holdout run and shipping are human steps.
+
 ## 14:08 update
 
 - **Vector sources end to end:** pipeline DEV **97.9%** (n=2,646). Green covers 70.5% at **100%** accuracy, amber 91.3%, **0 invariant violations** (was 302). Without siblings: 79.3%.
