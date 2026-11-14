@@ -1,6 +1,6 @@
 STATUS: IN_PROGRESS
 
-Next action: P2 — vector(22), skeptic(21), integrator(20) in parallel (foreground). Human TODO: verify evalkit/hard_questions.jsonl rows (0/10 verified).
+Next action: PAUSED 13:28 for handoff (see docs/HANDOFF.md). P2 vector/skeptic/integrator WIP committed (68ee2c1), unverified; resume P2: verify each, write missing handoffs (vector, skeptic), then integration pass (25) and G2. Human TODO: verify evalkit/hard_questions.jsonl (0/10).
 
 ## Checklist
 ### P0 Bootstrap
