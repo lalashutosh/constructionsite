@@ -1,6 +1,20 @@
 # Handoff — where the build stands and how to continue
 
-## UPDATE 2026-11-14 ~21:00 (Abhinav's session, after pulling c73cd72) — START HERE
+## UPDATE 2026-11-14 ~19:00 (`a24226f`) — START HERE
+
+Live log: https://github.com/lalashutosh/constructionsite/issues/1
+- **Several floor plans on one sheet** -> floors. `engine/scancheck.py` already returns `check.floors` (box + level read
+  by the AI reviewers). UI: `web/src/sheetfloors.ts` splits geometry per box, the viewer crops the texture
+  (`FloorInput.crop`), tabs "All floors / <floor>", per-floor counts on findings. Engine: `engine/sheetfloor.py`
+  restricts a count to the asked floor ("on floor 2", "ground floor", "upstairs", "2. kerroksessa").
+- **Label reader voter** (`Pipeline._label_vote`): decides bedrooms + wc_rooms, second opinion for the rest.
+- **Why sheet proof view** (`web/src/proofview.tsx`): drawing crop + numbered circles + who said what.
+- **Measuring fix**: `.measure` had no z-index and sat under the header band -> invisible -> stuck in top-down.
+- Deep link for demos/tests: `http://localhost:5173/?open=<path>&name=<shown name>`.
+- Not done: planner still says "The smallest bedroom is the bedroom." (room naming); push needed (`git push origin p2-finish`).
+- Note: some CubiCasa scans are mirrored in the dataset itself (colorful-13685: "1. KERROS" printed backwards). Not a viewer bug.
+
+## UPDATE 2026-11-14 ~21:00 (Abhinav's session, after pulling c73cd72)
 
 Live log: https://github.com/lalashutosh/constructionsite/issues/1 (read the latest comments first; post after each step).
 
