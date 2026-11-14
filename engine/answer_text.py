@@ -74,6 +74,8 @@ def sentence(po) -> Optional[str]:
         sing, _ = _what(spec)
         which = "largest" if spec["aggregate"] == "argmax_area" else "smallest"
         name = str(v)
+        if name.startswith("the "):
+            return f"The {which} {sing} is {name}."
         if "#" in name or "(" in name:
             return f"The {which} {sing} is {name}."
         return f"The {which} {sing} is the {name.lower() if name.islower() or ' ' not in name else name}."

@@ -136,6 +136,46 @@ def _subtype_ok(e: Element, want: str, rules: list[str], wet: Optional[set] = No
     return st == w or e.kind.casefold() == w
 
 
+TYPE_WORD = {"living": "living room", "living_room": "living room", "wc": "WC", "bath": "bathroom", "other_rooms": "room",
+             "room": "room", "hallway": "hallway", "storage": "storage room", "utility": "utility room"}
+
+
+def _where_on_plan(e: Element, among: list[Element]) -> str:
+    """'bottom left' / 'top centre' ... of the element among the rooms on its floor (drawing coordinates, y down)."""
+    pts = [p for x in among if x.attrs.get("storey", "") == e.attrs.get("storey", "") for p in x.polygon]
+    if not pts or not e.polygon:
+        return ""
+    x0, x1 = min(p[0] for p in pts), max(p[0] for p in pts)
+    y0, y1 = min(p[1] for p in pts), max(p[1] for p in pts)
+    cx = sum(p[0] for p in e.polygon) / len(e.polygon)
+    cy = sum(p[1] for p in e.polygon) / len(e.polygon)
+    fx = (cx - x0) / max(x1 - x0, 1e-9)
+    fy = (cy - y0) / max(y1 - y0, 1e-9)
+    row = "top" if fy < 1 / 3 else "bottom" if fy > 2 / 3 else "middle"
+    col = "left" if fx < 1 / 3 else "right" if fx > 2 / 3 else "centre"
+    return "in the centre" if (row, col) == ("middle", "centre") else f"at the {row} {col}" if row != "middle" else f"on the {col}"
+
+
+def describe_room(e: Element, among: list[Element], facts: SheetFacts) -> str:
+    """How a person would point at one room: 'the bedroom marked MH 2 at the bottom left of 2. KERROS'."""
+    rooms = [x for x in facts.elements if x.kind == e.kind] or among
+    word = TYPE_WORD.get((e.subtype or e.kind or "").casefold(), (e.subtype or e.kind).replace("_", " "))
+    out = f"the {word}"
+    num = e.attrs.get("number")
+    if e.label and e.label.casefold() != word.casefold():
+        out += f" marked {e.label}"
+    if num and num != e.label:
+        out += f" (no. {num})"
+    twins = [x for x in among if (x.subtype or "") == (e.subtype or "") and (x.label or "") == (e.label or "")]
+    if len(twins) > 1 or not e.label:
+        where = _where_on_plan(e, rooms)
+        if where:
+            out += f" {where}"
+    if e.attrs.get("storey"):
+        out += f" {'of' if ' at the ' in out or ' on the ' in out else 'on'} {e.attrs['storey']}"
+    return out
+
+
 def select(spec: dict, facts: SheetFacts) -> list[Element]:
     sel = spec["select"]
     kinds = [sel] if isinstance(sel, str) else list(sel)
@@ -297,14 +337,12 @@ def run(spec: dict, facts: SheetFacts, px_per_m: Optional[float] = None) -> Resu
             res.needs_scale = bool(els)
             return res
         a, e = (max if spec["aggregate"] == "argmax_area" else min)(scored, key=lambda t: t[0])
-        num = e.attrs.get("number")
-        name = e.label or (e.subtype or e.kind).replace("_", " ")
-        same = [x for _, x in scored if (x.label or x.subtype) == (e.label or e.subtype)]
-        if len(same) > 1 and not num:           # several rooms share the name: say which one (rank by area)
-            order = sorted(same, key=lambda x: _area_m2(x, px_per_m) or (_poly(x).area if _poly(x) else 0))
-            name = f"{name} #{order.index(e) + 1} of {len(same)} (by size)"
-        size = f", {a:.1f} m²" if unit_word == "m2" else ""
-        res.value = f"{name}" + (f" ({num})" if num and num != e.label else "") + size
+        total = sum(t[0] for t in scored)
+        rt_w = ((spec.get("where") or {}).get("room_type") or "room").casefold()
+        plural = TYPE_WORD.get(rt_w, rt_w.replace("_", " ")) + "s"
+        size = (f"{a:.1f} m²" if unit_word == "m2" else
+                f"{a / total:.0%} of the area of all {len(scored)} {plural}; set a real size for m²" if total and len(scored) > 1 else "")
+        res.value = describe_room(e, [x for _, x in scored], facts) + (f" ({size})" if size else "")
         res.notes.append(f"{len(scored)} candidates compared by area; chosen {a:.2f} {unit_word}")
         res.groups = {"area": round(a, 2)}
         res.evidence_ids = [e.id]

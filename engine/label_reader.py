@@ -81,3 +81,42 @@ def count(labels: list[dict], intent: str) -> Optional[tuple[int, list[str]]]:
         return None
     hits = [l["text"] for l in labels if l.get("room_type") in types]
     return len(hits), hits
+
+
+# glossary room type -> the engine's room subtype words (engine/query/run.py matches these + ROOM_SYNONYMS)
+_SUBTYPE = {"living_room": "living", "bathroom": "bathroom", "wc": "wc", "bedroom": "bedroom", "kitchen": "kitchen",
+            "sauna": "sauna", "hallway": "hallway", "storage": "storage", "utility": "utility", "wardrobe": "wardrobe",
+            "balcony": "balcony", "terrace": "terrace", "dining": "dining", "office": "office", "garage": "garage"}
+
+
+def name_rooms(facts, labels: list[dict], w: int, h: int, floors: list[dict] | None = None):
+    """Copy of facts where each room takes the printed label the vision reader found inside it (and that label's room
+    type), plus the floor it is on when the sheet holds several floor plans. Code decides membership (label point inside
+    the room polygon); the model only read the text."""
+    from shapely.geometry import Point, Polygon
+    pts = [(Point(l["x"] / 100 * w, l["y"] / 100 * h), l) for l in labels
+           if isinstance(l.get("x"), (int, float)) and isinstance(l.get("y"), (int, float))]
+    out = facts.model_copy(deep=True)
+    for e in out.elements:
+        if e.kind != "room" or len(e.polygon) < 3:
+            continue
+        try:
+            poly = Polygon(e.polygon)
+        except Exception:  # noqa: BLE001
+            continue
+        inside = [l for p, l in pts if poly.contains(p)]
+        typed = [l for l in inside if l.get("room_type")]
+        if typed:
+            l = typed[0]
+            e.attrs["label_before"] = e.label
+            e.attrs["subtype_before"] = e.subtype
+            e.label, e.subtype = l["text"], _SUBTYPE.get(l["room_type"], l["room_type"])
+            e.attrs["named_by"] = "vision label reader"
+        if floors:
+            c = poly.centroid
+            for f in floors:
+                b = f["box"]
+                if b[0] <= c.x <= b[2] and b[1] <= c.y <= b[3]:
+                    e.attrs["storey"] = f.get("label") or ""
+                    break
+    return out

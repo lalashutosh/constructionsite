@@ -445,6 +445,28 @@ class PipelineEngine:
         except Exception as e:  # noqa: BLE001  (the label reader is optional)
             notes.append(f"label reader unavailable: {type(e).__name__}")
 
+    def _named_rooms(self, facts: SheetFacts, ctx, notes: list[str]) -> SheetFacts:
+        """Rooms named from the printed labels (vision label reader + glossary) and tagged with their floor, so planner
+        queries like 'which bedroom is the smallest' or 'bedrooms on 2. KERROS' select the right rooms."""
+        if self.llm is None or not hasattr(self.llm, "complete_vision") or not ctx.abs_path.lower().endswith(
+                (".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff", ".bmp")) or not any(e.kind == "room" for e in facts.elements):
+            return facts
+        try:
+            import cv2
+            from engine import label_reader as LR, sheetfloor
+            img = cv2.imread(ctx.abs_path, cv2.IMREAD_COLOR)
+            sha = facts_cache.sha256_file(ctx.abs_path)
+            labels = LR.read_labels(img, self.llm, sha)
+            h, w = img.shape[:2]
+            out = LR.name_rooms(facts, labels, w, h, sheetfloor.sheet_floors(sha))
+            n = sum(1 for e in out.elements if e.attrs.get("named_by"))
+            if n:
+                notes.append(f"{n} rooms named from their printed labels (AI read the text, code matched label to room)")
+            return out
+        except Exception as e:  # noqa: BLE001
+            notes.append(f"room naming skipped: {type(e).__name__}")
+            return facts
+
     READER_Q = {"window": "How many windows are shown on this floor plan?",
                 "door": "How many doors are shown on this floor plan? Count doorways fitted with a door; open doorways without a door leaf do not count.",
                 "toilet": "How many toilet bowls (WC seats) are drawn on this floor plan?",
@@ -640,6 +662,7 @@ class PipelineEngine:
         if re.search(r"\bwall|partition|seinä|wand|mur\b|parete", question, re.I) and \
                 not any(e.kind == "wall" for e in facts.elements) and "vector" not in facts.extras:
             facts = self._with_walls(facts, ctx, po, notes)
+        facts = self._named_rooms(facts, ctx, notes)
         try:
             try:
                 plan = planner.plan(question, facts, self.planner_llm or self.llm)
