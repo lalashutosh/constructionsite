@@ -1,0 +1,64 @@
+# Building types, how we recognise them from a drawing, and what each needs.
+# Recognition uses only what the readers found (room types/labels, apartments, counts). Hand-written, not fitted.
+# Quantities: `per` = a basis key (see engine/plan/build.py BASIS), `rate` per vibe (budget/standard/premium/nordic)
+# or a fixed number. Unknown inputs stay tagged "open" (the UI asks), never invented.
+
+types:
+  apartment_building:
+    label: Apartment building
+    signals: {min_apartments: 2}
+    steps: [site, foundation, floor_slab, structure, roof, envelope, rough_in, insulation_boards, finishes, fixtures, commissioning]
+  dwelling:
+    label: Home / single apartment
+    signals: {kitchens: 1, any_of: [bedroom, bathroom, sauna, living_room, room]}
+    steps: [site, foundation, floor_slab, structure, roof, envelope, rough_in, insulation_boards, finishes, fixtures, commissioning]
+  office:
+    label: Office
+    signals: {labels: [office, toimisto, büro, bureau, ufficio, meeting, neuvottelu, open plan, reception]}
+    steps: [site, foundation, floor_slab, structure, roof, envelope, rough_in, insulation_boards, finishes, fixtures, commissioning]
+  data_centre:
+    label: Data centre
+    signals: {labels: [server, data hall, white space, ups, battery, crac, cooling, it room, palvelin, rechenzentrum]}
+    steps: [site, foundation, floor_slab, structure, roof, envelope, raised_floor, power_cooling, rough_in, finishes, commissioning]
+
+steps:
+  site:            {title: "Prepare the site", phase: site, why: "Clear, level and set out the footprint so the foundation lands where the drawing says."}
+  foundation:      {title: "Foundation", phase: foundation, needs: [site], why: "Everything else stands on it; it must cure before loads go on."}
+  floor_slab:      {title: "Ground floor slab", phase: floor, needs: [foundation], why: "Walls are set out and fixed on the slab, so it comes before any wall."}
+  structure:       {title: "Walls and frame", phase: walls, needs: [floor_slab], why: "Walls carry the roof; no roof without them."}
+  roof:            {title: "Roof", phase: roof, needs: [structure], why: "Closes the building against weather before any interior work starts."}
+  envelope:        {title: "Windows and doors", phase: openings, needs: [roof], why: "Makes the inside dry and secure for services and finishes."}
+  raised_floor:    {title: "Raised access floor", phase: floor, needs: [envelope], why: "Cables and cold air run under it; it must exist before racks and power."}
+  power_cooling:   {title: "Power and cooling plant", phase: services, needs: [raised_floor], why: "UPS, switchgear and cooling sized to the IT load before racks go live."}
+  rough_in:        {title: "Wiring, pipes and ducts (rough-in)", phase: services, needs: [envelope], why: "Runs inside walls and floors, so it goes in before boards close them."}
+  insulation_boards: {title: "Insulation and wallboards", phase: walls, needs: [rough_in], why: "Closes the walls over the inspected services."}
+  finishes:        {title: "Floors, tiles and paint", phase: finishes, needs: [insulation_boards], why: "Last wet and dusty trades before clean fixtures go in."}
+  fixtures:        {title: "Kitchens, bathrooms and fittings", phase: finishes, needs: [finishes], why: "Fitted on finished surfaces so they are not damaged."}
+  commissioning:   {title: "Test and hand over", phase: finishes, needs: [fixtures], why: "Electrical, water and ventilation tested before anyone moves in."}
+
+# checklist: group, item, unit, step, quantity rule
+checklist:
+  common:
+    - {id: concrete_found, group: Structure, item: "Foundation concrete", unit: m3, step: foundation, per: footprint_m2, rate: 0.3, basis: "footprint x 0.3 m3/m2 (strip + pad allowance)"}
+    - {id: slab_concrete, group: Structure, item: "Floor slab concrete", unit: m3, step: floor_slab, per: footprint_m2, rate: 0.12, basis: "footprint x 0.12 m slab"}
+    - {id: wall_blocks, group: Structure, item: "Wall area to build", unit: m2, step: structure, per: wall_area_m2, rate: 1.0, basis: "wall length x ceiling height"}
+    - {id: roof_area, group: Structure, item: "Roof covering", unit: m2, step: roof, per: footprint_m2, rate: {budget: 1.05, standard: 1.1, premium: 1.15, nordic: 1.15}, basis: "footprint x overhang/pitch factor"}
+    - {id: doors, group: Openings, item: "Door sets (frame, leaf, hinges, handle)", unit: pcs, step: envelope, per: doors, rate: 1, basis: "one per door drawn"}
+    - {id: hinges, group: Openings, item: "Hinges", unit: pcs, step: envelope, per: doors, rate: {budget: 2, standard: 3, premium: 3, nordic: 3}, basis: "per door leaf"}
+    - {id: windows, group: Openings, item: "Windows", unit: pcs, step: envelope, per: windows, rate: 1, basis: "one per window drawn"}
+    - {id: lights, group: Electrical, item: "Light fittings", unit: pcs, step: rough_in, per: lights, rate: 1, basis: "ceil(lux x area / (lumens x utilisation)), from the style"}
+    - {id: paint, group: Finishes, item: "Wall paint", unit: l, step: finishes, per: paint_l, rate: 1, basis: "coats x net wall area / coverage, from the style"}
+    - {id: boards, group: Finishes, item: "Wallboard (both sides of walls)", unit: m2, step: insulation_boards, per: room_wall_area_m2, rate: {budget: 1.05, standard: 1.08, premium: 1.1, nordic: 1.1}, basis: "room perimeters x ceiling height + waste"}
+  residential:
+    - {id: sockets, group: Electrical, item: "Power sockets", unit: pcs, step: rough_in, per: rooms, rate: {budget: 3, standard: 4, premium: 6, nordic: 5}, basis: "per room, from the style"}
+    - {id: toilets, group: Plumbing, item: "Toilets", unit: pcs, step: fixtures, per: toilets, rate: 1, basis: "one per toilet drawn"}
+    - {id: basins, group: Plumbing, item: "Washbasins / sinks", unit: pcs, step: fixtures, per: sinks, rate: 1, basis: "one per basin drawn"}
+    - {id: showers, group: Plumbing, item: "Showers / baths", unit: pcs, step: fixtures, per: showers, rate: 1, basis: "one per shower/bath drawn"}
+    - {id: kitchens, group: Fit-out, item: "Kitchen units", unit: sets, step: fixtures, per: kitchens, rate: 1, basis: "one per kitchen"}
+    - {id: wet_tiles, group: Finishes, item: "Wet-room floor tiles", unit: pcs, step: finishes, per: wet_tiles, rate: 1, basis: "ceil(bathroom area x (1+waste) / tile area), from the style"}
+    - {id: flooring, group: Finishes, item: "Flooring (dry rooms)", unit: m2, step: finishes, per: dry_area_m2, rate: {budget: 1.05, standard: 1.07, premium: 1.1, nordic: 1.1}, basis: "dry-room area + waste; laminate (budget) / oak (premium, nordic)"}
+  data_centre:
+    - {id: raised_floor, group: Data hall, item: "Raised floor panels", unit: m2, step: raised_floor, per: floor_area_m2, rate: 1.05, basis: "data-hall area + 5% cuts"}
+    - {id: it_load, group: Data hall, item: "IT load to design for", unit: kW, step: power_cooling, per: it_load_kw, rate: 1, basis: "needs your input (kW per rack x racks)"}
+    - {id: ups, group: Power, item: "UPS capacity", unit: kW, step: power_cooling, per: it_load_kw, rate: {budget: 1.2, standard: 1.5, premium: 2.0, nordic: 2.0}, basis: "IT load x redundancy (N+1 .. 2N)"}
+    - {id: cooling, group: Cooling, item: "Cooling capacity", unit: kW, step: power_cooling, per: it_load_kw, rate: {budget: 1.2, standard: 1.3, premium: 1.5, nordic: 1.3}, basis: "IT load x cooling margin"}

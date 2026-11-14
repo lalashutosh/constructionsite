@@ -3,6 +3,7 @@
 GET /health | POST /api/analyze | POST /api/ask | POST /api/scale | POST /api/decide | GET /api/cost
 POST|DELETE /api/override (user verdict on one element) | GET /api/image?path= (the drawing) |
 GET /api/geometry?path= (walls + elements for the 3D view, same pixel space as /api/image)
+GET /api/plan?path=&vibe=&it_load_kw= (building type, checklist with quantities, build steps)
 GET /api/facts | GET /api/stream/{job} (SSE stage events) | POST /api/ask_async -> {job}
 """
 from __future__ import annotations
@@ -273,6 +274,60 @@ async def geometry(path: str):
         out.write_text(json.dumps(g))
         return g
     return await asyncio.to_thread(build)
+
+
+# standard questions whose answers feed the build plan's counts (same numbers the Findings panel shows)
+PLAN_COUNTS = {
+    "swiss_dwellings": {"doors": "How many doors are drawn on this floor plan?",
+                        "windows": "How many windows are drawn on this floor plan?",
+                        "toilets": "How many toilets are drawn on this floor plan?",
+                        "sinks": "How many washbasins are drawn on this floor plan?",
+                        "showers": "How many showers are drawn on this floor plan?",
+                        "bathtubs": "How many bathtubs are drawn on this floor plan?"},
+    "cubicasa5k": {"doors": "How many doors are shown on this floor plan?",
+                   "windows": "How many windows are shown on this floor plan?",
+                   "toilets": "How many toilets are shown on this floor plan?",
+                   "sinks": "How many sinks are shown on this floor plan?",
+                   "showers": "How many showers or bathtubs are shown on this floor plan?",
+                   "kitchens": "How many kitchens are shown on this floor plan?"},
+}
+
+
+@app.get("/api/plan")
+async def build_plan(path: str, vibe: str = "standard", it_load_kw: Optional[float] = None):
+    """What building is this, what to get, in which order to build it. Shape: engine/plan/build.py `plan()`.
+    Counts come from the engine's own answers (with their tier); areas from the exact file or the scale."""
+    p = _resolve(PathRef(path=path))
+
+    def run():
+        from engine import siblings
+        from engine.plan.build import plan
+        eng = engine()
+        r = siblings.resolve(p, True)
+        use = r.path if (r is not None and r.fmt in ("dxf", "ifc")) else p
+        facts = eng.analyze(use)
+        px, tag = None, "open"
+        if "vector" not in facts.extras and hasattr(eng, "_scale"):
+            sc = eng._scale(facts, _sha(p))
+            if sc.px_per_m:
+                px = sc.px_per_m
+                tag = "defaulted" if sc.widths_relative else "drawn"
+        src = p.split("/")[1] if p.startswith("data/") else "cubicasa5k"   # uploads: treat as a scanned plan
+        counts, sh = {}, {}
+        for key, q in PLAN_COUNTS.get(src, PLAN_COUNTS["cubicasa5k"]).items():
+            po = eng.ask(p, q, benchmark=True)
+            if isinstance(po.value, (int, float)):
+                t = "drawn" if po.tier.value == "green" else "defaulted"
+                sh[key] = (int(po.value), t, f"engine answer to '{q}' ({po.tier.value})")
+        if "bathtubs" in sh:                        # showers + bathtubs = one plumbing line
+            v1, t1, _ = sh.pop("bathtubs")
+            v0, t0, _ = sh.get("showers", (0, "drawn", ""))
+            sh["showers"] = (v0 + v1, "drawn" if t0 == t1 == "drawn" else "defaulted", "showers + bathtubs answers")
+        counts.update(sh)
+        out = plan(facts, vibe, px, tag, needs={"it_load_kw": it_load_kw} if it_load_kw else None, counts=counts)
+        out["read_from"] = use
+        return out
+    return await asyncio.to_thread(run)
 
 
 @app.post("/api/decide")

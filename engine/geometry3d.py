@@ -15,6 +15,7 @@ import cv2
 import numpy as np
 
 MAX_SIDE = 1400
+CNN_MAX_SIDE = 1600
 
 
 def _trace(mask: np.ndarray, min_area: float, eps: float, to_orig=None) -> list[dict]:
@@ -72,7 +73,9 @@ def cnn_walls(img_bgr: np.ndarray) -> Optional[tuple[list, str]]:
         if not cc_model.available():
             return None
         h, w = img_bgr.shape[:2]
-        v = prep.make_variants(w, h, cap=1)[0]
+        # big scans: give the CNN more pixels (interior walls vanish at 800 px), capped for CPU time
+        target = 800.0                     # 1400 px was tried: worse walls on both clean and archival scans
+        v = prep.make_variants(w, h, cap=1, target_long_side=target)[0]
         rooms_p, _ = cc_model.infer(v.render(cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)))
         mask = (np.argmax(rooms_p, axis=0) == cc_model.ROOM_CLASSES.index("wall")).astype(np.uint8) * 255
         mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((2, 2), np.uint8))
@@ -89,7 +92,9 @@ def _el(e) -> dict:
 
 def model(img: np.ndarray, facts: Optional[Any] = None, coords: str = "pixels", use_cnn: bool = False) -> dict:
     h, w = img.shape[:2]
-    got = cnn_walls(img) if use_cnn else None
+    # the wall CNN was trained on clean CubiCasa plans (240-1700 px); big archival scans get stroke tracing,
+    # which finds fewer walls there but never invents them in site plans or title blocks
+    got = cnn_walls(img) if (use_cnn and max(h, w) <= CNN_MAX_SIDE) else None
     if got is not None and got[0]:
         walls, note = got
     else:
@@ -98,7 +103,7 @@ def model(img: np.ndarray, facts: Optional[Any] = None, coords: str = "pixels", 
         walls, note = _walls(work)
         if s < 1:
             sc = lambda P: [[x / s, y / s] for x, y in P]
-        walls = [{"outer": sc(wl["outer"]), "holes": [sc(hh) for hh in wl["holes"]]} for wl in walls]
+            walls = [{"outer": sc(wl["outer"]), "holes": [sc(hh) for hh in wl["holes"]]} for wl in walls]
     out = {"width": w, "height": h, "walls": walls, "wall_note": note,
            "rooms": [], "doors": [], "windows": [], "fixtures": [], "elements_aligned": False}
     if facts is not None and coords == "pixels" and facts.elements:
