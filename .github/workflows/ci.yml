@@ -77,9 +77,66 @@ jobs:
           path: web/dist
           if-no-files-found: error
 
+  egress-proof:
+    # Proves the supply-chain lock is real: inside the locked runner, a host that is not a package source must be
+    # unreachable. If it IS reachable the build fails, because a compromised dependency could exfiltrate from here.
+    name: egress lock proof
+    runs-on: craci
+    steps:
+      - uses: cracicorp/setup@v1
+        with:
+          size: "1"
+          image: ubuntu-24.04
+          network: |
+            {}
+      - name: Allowed package source is reachable
+        run: curl -sS --max-time 20 -o /dev/null -w "pypi.org %{http_code}\n" https://pypi.org/simple/pip/
+      - name: Arbitrary host is blocked
+        run: |
+          if curl -sS --max-time 15 -o /dev/null https://example.com; then
+            echo "::error::egress to example.com succeeded: the network lock is NOT in force"; exit 1
+          fi
+          echo "example.com blocked as expected"
+
+  api-smoke:
+    # Boots the real API on a CRACI runner and replays the stress-test attacks (path traversal, absolute paths).
+    name: api smoke + security
+    runs-on: craci
+    steps:
+      - uses: cracicorp/setup@v1
+        with:
+          size: "2"
+          image: ubuntu-24.04
+          network: |
+            {}
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Start API (stub engine, LLM off)
+        env:
+          PLUMB_ENGINE: stub
+          LLM_PROVIDER: none
+        run: |
+          nohup python -m uvicorn api.main:app --port 8000 > api.log 2>&1 &
+          for i in $(seq 1 30); do curl -sf localhost:8000/health && break; sleep 1; done
+      - name: Health and refused paths
+        run: |
+          curl -sf localhost:8000/health
+          for p in /etc/passwd ../../etc/passwd /proc/self/environ; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" -X POST localhost:8000/api/ask \
+                   -H 'content-type: application/json' -d "{\"path\": \"$p\", \"question\": \"How many doors?\"}")
+            echo "$p -> $code"; test "$code" = "400"
+          done
+      - if: failure()
+        run: tail -50 api.log
+
   summary:
     name: summary
-    needs: [python, web]
+    needs: [python, web, egress-proof, api-smoke]
     runs-on: craci
     steps:
       - uses: cracicorp/setup@v1
@@ -93,5 +150,7 @@ jobs:
           {
             echo "## CI on CRACI"
             echo "Python tests ran on CRACI (amd64 + arm64), web typecheck and build ran on CRACI."
-            echo "Egress was locked to the built-in package presets, so the generated SBOM is complete."
+            echo "Egress was locked to the built-in package presets, so the generated SBOM is complete,"
+            echo "and the egress-proof job checked that an arbitrary host is really unreachable."
+            echo "The API booted on a CRACI runner and refused path-traversal / absolute-path reads."
           } >> "$GITHUB_STEP_SUMMARY"
