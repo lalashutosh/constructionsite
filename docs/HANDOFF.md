@@ -1,6 +1,31 @@
 # Handoff — where the build stands and how to continue
 
-## UPDATE 2026-11-14 ~20:30 (Ashutosh's session) — START HERE
+## UPDATE 2026-11-14 ~21:00 (Abhinav's session, after pulling c73cd72) — START HERE
+
+Live log: https://github.com/lalashutosh/constructionsite/issues/1 (read the latest comments first; post after each step).
+
+**Done + committed (`3a8ebdd`), on top of Ashutosh's 20:30 work below:**
+- Bug #2 below (folder upload "goes out of context") **fixed**. Two causes: (a) `/api/building` built 3D geometry + 2 AI
+  reviews for EVERY file before classifying -> minutes -> timeout; now classification uses only cheap signals and the
+  3D is built when a floor is opened; (b) PyMuPDF / IfcOpenShell are native and not thread-safe and crashed the API
+  process; per-file readers now run in worker processes with a 60 s timeout, a bad file is listed with a reason.
+  Full `Sports_Complex` (27 files, `find -L`): HTTP 200 in 29 s, 27/27 classified ($0.14), server stays up.
+  `tests/test_building_folder.py` added.
+- Bug #3 below (label overlapping the scan-check warning) **fixed**: header band in `web/src/index.css`
+  (`.viewer::before`) so canvas labels pass behind the title/status/warning; the progress block covers the drawing toggle.
+- Test suite fully green: 172 passed, 3 skipped. The 2 failures listed below were stale gitignored `cache/raster` facts;
+  clear `cache/raster` + `cache/pipeline` after any raster change.
+
+**Still open:**
+1. Bug #1 below (archival walls): the fix is on branch `wip/archival-walls`, which was NOT pushed (not on GitHub);
+   push it from Ashutosh's machine (`git push origin wip/archival-walls`) before anyone can verify/merge it.
+2. One sheet with two floor plans (e.g. "Faint two-floor scan"): engine returns `check.floors` (82a1abe) but the UI tabs
+   "All · Floor 1 · Floor 2" + stacked view are NOT built (the UI agent hit the usage limit). Next UI task.
+3. Raster finetune agent stopped at the usage limit; its uncommitted changes are gone from this checkout.
+   Restart from `docs/handoff/raster-finetune.md` if present, else from the brief in issue #1 / the 19:15 section.
+4. UI check of DXF/IFC uploads (coords `dxf-render`/`ifc-render`, `check: null`) — not verified in the browser yet.
+
+## UPDATE 2026-11-14 ~20:30 (Ashutosh's session)
 
 **Done + committed on `p2-finish`:**
 - `1faa0e4` **Fix-first #1 solved**: `.dxf` / `.ifc` uploaded WITHOUT a sibling image now render and build 3D.
