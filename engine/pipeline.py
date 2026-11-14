@@ -395,10 +395,7 @@ class PipelineEngine:
                     attrs.update(area_m2=round(a_m2, 3), length_m=round(length_m, 2), volume_m3=round(a_m2 * h, 3))
                 els.append(Element(id=f"wall_{i}", kind="wall", polygon=[tuple(p) for p in wl["outer"]], attrs=attrs))
             if px:
-                user = any(getattr(a, "kind", "") == "user" for a in sc.anchors)
-                po.assumptions.append(Assumption(key="scale_px_per_m", value=round(px, 3), unit="px/m",
-                                                 tag=Tag.chosen if user else Tag.defaulted,
-                                                 source="your measurement" if user else "typical door width (0.9 m) on this drawing"))
+                po.assumptions.append(_scale_assumption(sc))
                 po.assumptions.append(Assumption(key="wall_height_m", value=h, unit="m", tag=Tag.defaulted,
                                                  source="standard style ceiling height"))
             notes.append(f"walls: {len(got[0])} wall pieces from the 3D wall reader added for this question")
@@ -534,13 +531,12 @@ class PipelineEngine:
                 if sc.px_per_m:
                     res = query.execute_plan(plan.specs, plan.combine, facts, sc.px_per_m)
                     po.scale = sc
-                    user = any(getattr(a, "kind", "") == "user" for a in sc.anchors)
-                    po.assumptions.append(Assumption(
-                        key="scale_px_per_m", value=round(sc.px_per_m, 3), unit="px/m",
-                        tag=Tag.chosen if user else Tag.defaulted,
-                        source="your measurement" if user else "typical door width (0.9 m) on this drawing"))
-                    if not user:
+                    po.assumptions.append(_scale_assumption(sc))
+                    if not any(a.kind in ("user", "dimension", "scale_bar", "printed_ratio", "printed_area")
+                               for a in sc.anchors):
                         notes.append("no printed scale: sizes assume typical 0.9 m doors; enter a real dimension to fix")
+                    else:
+                        notes.append("scale: " + "; ".join(a.note or a.kind for a in sc.anchors if a.kind != "door_prior"))
         except Exception as e:  # noqa: BLE001
             notes.append(f"planner failed: {type(e).__name__}: {e}")
             m = re.search(r"unsupported: (.+)", str(e))
@@ -599,6 +595,19 @@ class PipelineEngine:
             return (0 if kind == "count" else None), "no prior available"
         v = int(round(v)) if kind == "count" else float(v)
         return v, f"benchmark best guess: per-{'intent' if intent in p['intent'] else 'source/type'} dev-median prior"
+
+
+def _scale_assumption(sc: ScaleInfo) -> Assumption:
+    """Where the drawing's scale came from, as an assumption with an honest tag."""
+    kinds = {a.kind for a in sc.anchors}
+    if "user" in kinds:
+        tag, src = Tag.chosen, "your measurement"
+    elif kinds & {"dimension", "scale_bar", "printed_ratio", "printed_area"}:
+        a = next(a for a in sc.anchors if a.kind in ("dimension", "scale_bar", "printed_ratio", "printed_area"))
+        tag, src = Tag.specified, f"measurements printed on the drawing: {a.note or a.kind}"
+    else:
+        tag, src = Tag.defaulted, "typical door width (0.9 m) on this drawing"
+    return Assumption(key="scale_px_per_m", value=round(sc.px_per_m, 3), unit="px/m", tag=tag, source=src)
 
 
 def _native(x):

@@ -330,7 +330,10 @@ async def build_plan(path: str, vibe: str = "standard", it_load_kw: Optional[flo
             sc = eng._scale(facts, _sha(p))
             if sc.px_per_m:
                 px = sc.px_per_m
-                tag = "defaulted" if sc.widths_relative else "drawn"
+                kinds = {a.kind for a in sc.anchors}
+                tag = ("chosen" if "user" in kinds else
+                       "specified" if kinds & {"dimension", "scale_bar", "printed_ratio", "printed_area"} else
+                       "defaulted" if sc.widths_relative else "drawn")
         src = p.split("/")[1] if p.startswith("data/") else "cubicasa5k"   # uploads: treat as a scanned plan
         counts, sh = {}, {}
         for key, q in PLAN_COUNTS.get(src, PLAN_COUNTS["cubicasa5k"]).items():

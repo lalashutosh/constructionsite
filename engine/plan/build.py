@@ -93,7 +93,9 @@ def basis(facts: SheetFacts, vibe: dict, px_per_m: Optional[float], scale_tag: s
     areas = [area_m2(e) for e in rooms]
     tag_area = "drawn" if areas and all(t == "drawn" for _, t in areas) else (scale_tag if px_per_m else "open")
     floor = sum(a for a, _ in areas if a is not None) if areas and all(a is not None for a, _ in areas) else None
-    src_area = "sum of room areas" + ("" if tag_area == "drawn" else " (scale: " + scale_tag + ")")
+    src_area = "sum of room areas" + ("" if tag_area == "drawn" else {
+        "specified": " (scale from measurements printed on the drawing)", "chosen": " (scale from your measurement)",
+        "defaulted": " (scale estimated from a typical 0.9 m door)"}.get(scale_tag, " (scale: " + scale_tag + ")"))
     put("floor_area_m2", round(floor, 2) if floor is not None else None, "m2", tag_area,
         src_area if floor is not None else "needs a scale: tap a door or type a dimension")
     wet = sum(a for (a, _), e in zip(areas, rooms) if a is not None and (sub(e) in WET or any(w in lab(e) for w in WET)))

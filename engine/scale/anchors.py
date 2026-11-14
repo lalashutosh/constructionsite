@@ -297,6 +297,23 @@ def _combine(anchors: list[ScaleAnchor]) -> _Combined:
 # ---------------------------------------------------------------------------
 
 
+def _printed_dims_anchor(facts: SheetFacts) -> Optional[ScaleAnchor]:
+    """Opening sizes printed on raster plans (engine/scale/printed_dims.py); None for vector files / no labels."""
+    try:
+        import pathlib
+        from engine import cache as facts_cache
+        from engine.pipeline import _abs
+        from engine.scale import printed_dims
+        if "vector" in facts.extras or not facts.provenance.file:
+            return None
+        ap = _abs(facts.provenance.file)
+        if pathlib.Path(ap).suffix.lower() not in (".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff", ".bmp"):
+            return None
+        return printed_dims.anchor(facts, ap, facts.provenance.sha256 or facts_cache.sha256_file(ap))
+    except Exception:  # noqa: BLE001  (an unreadable label never breaks scale solving)
+        return None
+
+
 def solve(facts: SheetFacts, user_anchors: tuple[dict[str, Any], ...] = ()) -> ScaleInfo:
     """Combine every scale anchor derivable from `facts` (+ optional user taps) into one ScaleInfo."""
     anchors: list[ScaleAnchor] = []
@@ -305,8 +322,12 @@ def solve(facts: SheetFacts, user_anchors: tuple[dict[str, Any], ...] = ()) -> S
     if pr is not None:
         anchors.append(pr)
     anchors += _printed_area_anchors(facts)
+    pd = _printed_dims_anchor(facts)
+    if pd is not None:
+        anchors.append(pd)
     dp = _door_prior_anchor(facts)
-    if dp is not None:
+    # a measurement printed on the drawing beats the 0.9 m door guess; the guess is kept only as a fallback
+    if dp is not None and pd is None:
         anchors.append(dp)
     for ua in user_anchors:
         anchors.append(_user_anchor(ua))
