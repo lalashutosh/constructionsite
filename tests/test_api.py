@@ -46,3 +46,14 @@ def test_cors_header(client):
     r = client.options("/health", headers={"Origin": "http://localhost:5173",
                                            "Access-Control-Request-Method": "GET"})
     assert r.headers.get("access-control-allow-origin") == "http://localhost:5173"
+
+
+def test_image_traversal_and_missing(client):
+    assert client.get("/api/image", params={"path": "../etc/passwd"}).status_code == 400
+    assert client.get("/api/image", params={"path": "data/cubicasa5k/does-not-exist.png"}).status_code == 404
+
+
+def test_override_needs_engine_support(client):
+    r = client.post("/api/override", json={"path": "data/cubicasa5k/x.png", "question": "How many doors?",
+                                           "element_id": "d1", "polygon": [[0, 0], [1, 0], [1, 1]], "keep": True})
+    assert r.status_code in (501, 404)       # stub engine has no overrides; missing file is 404

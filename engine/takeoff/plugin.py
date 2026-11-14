@@ -12,8 +12,9 @@ def _run(ctx, name: str):
     from engine import query
 
     facts = ctx.facts
-    if facts is None:
-        return None
+    if facts is None or not facts.elements:
+        return None   # a count over zero extracted elements is not evidence (vector facts carry no elements;
+                      # the exact vector voters answer those files)
     source = ctx.path.split("/")[1] if "/" in ctx.path else None
     if ctx.intent == "apartments":
         from engine.query.graph import apartment_of

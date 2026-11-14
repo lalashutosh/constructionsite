@@ -1,6 +1,7 @@
 """FastAPI service. Bodies and returns are contract types (ProofObject, SheetFacts, Decision, Cost totals).
 
 GET /health | POST /api/analyze | POST /api/ask | POST /api/scale | POST /api/decide | GET /api/cost
+POST|DELETE /api/override (user verdict on one element) | GET /api/image?path= (the drawing, for the Scan layer)
 GET /api/facts | GET /api/stream/{job} (SSE stage events) | POST /api/ask_async -> {job}
 """
 from __future__ import annotations
@@ -63,6 +64,14 @@ class AskBody(PathRef):
 class ScaleBody(PathRef):
     anchors: list[dict[str, Any]] = Field(default_factory=list)  # {kind:"user", px_per_m | px_length+length_m, ...}
     questions: list[str] = Field(default_factory=list)
+    benchmark: bool = False
+
+
+class OverrideBody(PathRef):
+    question: str
+    element_id: str
+    polygon: list[list[float]]            # the element's polygon in ORIGINAL drawing coordinates
+    keep: bool                            # True = "yes, this is one", False = "no, it is not"
     benchmark: bool = False
 
 
@@ -161,6 +170,76 @@ async def scale(body: ScaleBody):
     qs = body.questions or ["What is the total net floor area in m2?"]
     return [await asyncio.to_thread(eng.ask, path, q, allow_siblings=body.allow_siblings, benchmark=body.benchmark)
             for q in qs]
+
+
+@app.post("/api/override", response_model=ProofObject)
+async def override(body: OverrideBody):
+    """User verdict on one element (Skeptic Duel: "Is this a door? Yes / No") -> recompute the answer.
+    The verdict corrects every voter's element set; the tier is recomputed from agreement (engine.pipeline)."""
+    path = _resolve(body)
+    eng = engine()
+    if not hasattr(eng, "overrides"):
+        raise HTTPException(501, "this engine does not support overrides")
+    from engine.router import route
+    sha = _sha(path)
+    intent = route(body.question, path).intent
+    lst = [v for v in eng.overrides.get((sha, intent), []) if v.get("id") != body.element_id]
+    lst.append({"id": body.element_id, "polygon": body.polygon, "keep": body.keep})
+    eng.overrides[(sha, intent)] = lst
+    return await asyncio.to_thread(eng.ask, path, body.question, allow_siblings=body.allow_siblings,
+                                   benchmark=body.benchmark)
+
+
+@app.delete("/api/override")
+async def clear_overrides(body: PathRef):
+    eng = engine()
+    sha = _sha(_resolve(body))
+    for k in [k for k in getattr(eng, "overrides", {}) if k[0] == sha]:
+        del eng.overrides[k]
+    return {"cleared": True}
+
+
+IMAGES = ROOT / "cache" / "images"
+RASTER_MIME = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}
+
+
+@app.get("/api/image")
+async def image(path: str, max_px: int = 2000):
+    """The drawing itself, for the Scan layer: raster as is, svg as is, pdf page 1 rendered to png (cached by
+    sha256), dxf/ifc via their same-stem pdf/png sibling (same drawing, README rule). Coordinates match the
+    drawing's own pixel/point space only for raster files; the response says which in X-Plumb-Coords."""
+    from fastapi.responses import FileResponse
+    from engine.pipeline import _abs
+    if ".." in pathlib.Path(path).parts:
+        raise HTTPException(400, "bad path")
+    src = pathlib.Path(_abs(path))
+    if src.suffix.lower() in (".dxf", ".ifc"):
+        sib = next((src.with_suffix(e) for e in (".png", ".pdf", ".svg") if src.with_suffix(e).exists()), None)
+        if sib is None:
+            raise HTTPException(404, f"no renderable sibling for {path}")
+        src = sib
+    if not src.exists():
+        raise HTTPException(404, f"file not found: {path}")
+    ext = src.suffix.lower()
+    if ext in RASTER_MIME:
+        return FileResponse(src, media_type=RASTER_MIME[ext], headers={"X-Plumb-Coords": "pixels"})
+    if ext == ".svg":
+        return FileResponse(src, media_type="image/svg+xml", headers={"X-Plumb-Coords": "svg"})
+    if ext == ".pdf":
+        sha = facts_cache.sha256_file(str(src))
+        out = IMAGES / f"{sha}-{max_px}.png"
+        if not out.exists():
+            def render():
+                import fitz
+                with fitz.open(str(src)) as doc:
+                    page = doc[0]
+                    zoom = min(4.0, max_px / max(page.rect.width, page.rect.height))
+                    pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
+                    IMAGES.mkdir(parents=True, exist_ok=True)
+                    pix.save(str(out))
+            await asyncio.to_thread(render)
+        return FileResponse(out, media_type="image/png", headers={"X-Plumb-Coords": "pdf-render"})
+    raise HTTPException(415, f"cannot render {ext}")
 
 
 @app.post("/api/decide")

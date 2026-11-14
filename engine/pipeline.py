@@ -105,6 +105,8 @@ class PipelineEngine:
         self.classifier = TemplateClassifier(self.llm) if self.llm else None
         self.user_anchors: dict[str, list[dict]] = {}
         self.choices: dict[str, dict] = {}
+        # user verdicts on single elements, per (sha256, intent): [{"polygon": [[x,y],...], "keep": bool, "id": str}]
+        self.overrides: dict[tuple[str, str], list[dict]] = {}
         self._prior: Optional[dict] = None
         _discover()
 
@@ -258,6 +260,8 @@ class PipelineEngine:
         # vote
         stage("vote")
         results = self._vote(ctx, notes)
+        if kind == "count":
+            self._apply_overrides(results, sha, rt.intent, po, notes)
         planner_cost = Cost()
         if not results and self.llm is not None and rt.intent == "unknown":
             results, planner_cost = self._plan_vote(ctx, question, facts, po, notes)
@@ -341,6 +345,50 @@ class PipelineEngine:
         return po
 
     # ------------------------------------------------------------------ helpers
+    def _apply_overrides(self, results: list, sha: str, intent: str, po: ProofObject, notes: list[str]) -> None:
+        """A user verdict ("this IS / is NOT a door") corrects every voter's element set: a voter that lacks a
+        confirmed element gains it, a voter that has a rejected one loses it (match: IoU >= 0.3). Values change by
+        those corrections only, and the tier is then recomputed from agreement as usual, so resolving every
+        disputed element is what turns an answer green. Each verdict is recorded as a `chosen` assumption."""
+        verdicts = self.overrides.get((sha, intent)) or []
+        if not verdicts:
+            return
+        from shapely.geometry import Polygon
+
+        def poly(pts):
+            try:
+                g = Polygon([(float(p[0]), float(p[1])) for p in pts])
+                return g if g.is_valid and g.area > 0 else g.buffer(0)
+            except Exception:  # noqa: BLE001
+                return None
+
+        def iou(a, b):
+            if a is None or b is None or a.is_empty or b.is_empty:
+                return 0.0
+            u = a.union(b).area
+            return a.intersection(b).area / u if u else 0.0
+
+        for r in results:
+            if not isinstance(r.voter.value, (int, float)) or r.exact:
+                continue
+            own = [poly([(pt.x, pt.y) if hasattr(pt, "x") else pt for pt in e.polygon]) for e in r.evidence]
+            delta = 0
+            for v in verdicts:
+                g = poly(v["polygon"])
+                has = any(iou(g, o) >= 0.3 for o in own)
+                if v["keep"] and not has:
+                    delta += 1
+                elif not v["keep"] and has:
+                    delta -= 1
+            if delta:
+                r.voter.value = max(0, int(r.voter.value) + delta)
+                r.voter.note = (r.voter.note + "; " if r.voter.note else "") + f"user corrections {delta:+d}"
+        for v in verdicts:
+            po.assumptions.append(Assumption(key=f"user:{intent}:{v.get('id', '?')}", value=bool(v["keep"]),
+                                             tag=Tag.chosen, source="user"))
+        notes.append(f"user verdicts applied: {sum(v['keep'] for v in verdicts)} confirmed, "
+                     f"{sum(not v['keep'] for v in verdicts)} rejected")
+
     @staticmethod
     def _grey(po: ProofObject, reason: str) -> ProofObject:
         po.tier, po.value, po.refusal = Tier.grey, None, reason
