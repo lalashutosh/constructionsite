@@ -1,6 +1,6 @@
 STATUS: IN_PROGRESS
 
-Next action: P1 — trust fixed by human. Finish raster-extractor (per-intent table, handoff) + ui-builder (build, screenshots) from what is on disk, then G1 gate.
+Next action: P1 — raster-extractor + ui-builder running (C1 12:50, trust fixed). On return: verify, tick, then G1 gate.
 
 ## Checklist
 ### P0 Bootstrap
@@ -46,3 +46,4 @@ Next action: P1 — trust fixed by human. Finish raster-extractor (per-intent ta
 - 05:35 C1 P0 done: make check OK (7990 rows, tesseract eng+fin), 15 tests pass, contract OK, verda ping ok ($0.0034). Scaffolding + STATUS.md created.
 - 06:06 C3 P1: verified evaluator (stub 6.9%, prior floor 37.3% DEV, 29 tests) + takeoff (44 tests) done from C2. Spawned raster-extractor (finish measurement+claims) + ui-builder (web from scratch) in parallel.
 - 12:40 C1 BLOCKED: workspace trust gate denies all exec (python/pytest/make/npm/git) for lead AND subagents. raster-extractor+ui-builder did no real work; both stopped. Human must accept trust dialog. STATE/MORNING written to disk (uncommitted, git blocked). See docs/decisions/workspace-trust-block.md.
+- 12:50 C1 restart: exec works again (trust fixed). Respawned raster-extractor (re-measure) + ui-builder (build+shots) in parallel.
