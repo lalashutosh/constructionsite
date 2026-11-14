@@ -289,7 +289,8 @@ def profile(abs_path: str, sha: Optional[str] = None, *, use_cache: bool = True)
     cues = {m.upper() for w in words for m in CAD_CUES.findall(w["text"])}
     p["cad_cues"] = sorted(cues)
     # ---- sheet type
-    if (border is not None and title is not None and len(words) >= 40) or len(cues) >= 3 or (
+    tiny_sheet = long_side <= 1200             # CubiCasa-size: framed apartment plans carry 40-110 words
+    if (border is not None and title is not None and len(words) >= (150 if tiny_sheet else 40)) or len(cues) >= 3 or (
             title is not None and len(words) >= 150) or (
             border is not None and long_side >= 2000 and len(words) >= 200):
         stype = "cad_sheet"

@@ -184,7 +184,7 @@ class PipelineEngine:
                     continue                     # never run the CubiCasa CNN over a whole construction sheet
                 f = fn(use_path if fn.__module__.startswith("engine.vector") else use_abs, allow_siblings=allow)
                 f.provenance.file = path
-                if is_cad and not any(e.kind in ("room", "wall", "door", "window") for e in f.elements):
+                if is_cad and not f.elements:     # exact vector readers (Swiss PDF, ...) win whenever they read anything
                     try:                         # vector reader found nothing drawable: read the rendered page instead
                         from engine import bigsheet
                         g = bigsheet.extract_facts(path, use_abs, prof)
@@ -360,7 +360,8 @@ class PipelineEngine:
         if rt.layer == "sheet" and kind == "count" and not any(e.kind == "room" for e in facts.elements):
             results = []                                 # "how many rooms" with no recognised room is not "0 rooms"
         if (facts.extras.get("route") == "cad" and kind == "count" and rt.intent in _DETECTOR_KINDS
-                and not any(e.kind == _DETECTOR_KINDS[rt.intent] for e in facts.elements)):
+                and not any(e.kind == _DETECTOR_KINDS[rt.intent] for e in facts.elements)
+                and not any(getattr(r, "exact", False) for r in results)):   # exact vector voters (Swiss PDF) still count
             return self._grey(po, f"{rt.intent.replace('_', ' ')} are not read on construction sheets yet: the symbol "
                                   "detectors are trained on small residential scans, so a '0' would be a guess")
         if not results and rt.layer == "sheet":          # a sheet-level question is never handed to a count or the prior
