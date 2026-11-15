@@ -27,16 +27,16 @@ should have to.
 it. Plumb says a hundred and thirty-nine, and it boxes every single door on the drawing.
 
 [V4, V5, V6 · REASONING] That's Plumb: ask in plain language, in any language, and it answers with its working shown.
-More doors, or toilets and sinks? A hundred and thirty-nine against ninety-six, with every one it counted on
-screen, and a tag saying measured, printed or estimated. Checkable in seconds.
+More doors, or toilets and sinks? A hundred and thirty-nine against ninety-six. Every one it counted is on
+screen, tagged measured, printed or estimated.
 
 [V7, V8 · CREATIVITY] Every size starts with the scale, and Plumb reads it off the sheet itself: the note, the
 scale bar, the dimension lines. No scale on the drawing? Measure any one thing you know, a door or a wall, and
 every dimension in the building follows.
 
 [V9, V10, V11] Then it builds the floor in 3D, layer by layer like a body: walls, furniture, pipes and wiring. It
-counts every bed, chair and staircase. And it turns the drawing into a build plan: concrete, doors and hinges,
-finishes room by room, and pipe and cable estimated with European engineering rules.
+counts every bed, chair and staircase. And it turns the drawing into a build plan: concrete, doors,
+finishes, and pipe and cable estimated by European engineering rules.
 
 [V12 · ACCURACY] On hard sheets it stays honest: this piping plan says five check valves, only four labels are
 legible, and Plumb says so. On Stoa's full-size sheets: twenty-four of twenty-five hard questions right.

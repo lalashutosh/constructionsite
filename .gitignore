@@ -21,3 +21,7 @@ fakebin/
 /created/
 /nenv/
 /not/
+
+# pitch video build intermediates (regenerate with capture.mjs / build_video.py)
+docs/pitch/video/cap/
+docs/pitch/video/work/

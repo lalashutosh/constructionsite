@@ -1,5 +1,7 @@
 # Plumb: blueprints that show their work
 
+> Reviewing or judging this project? Start with [`docs/JUDGES.md`](docs/JUDGES.md) (criteria mapped to evidence), [`llms.txt`](llms.txt) and [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). This file is the build instructions the coding agents followed.
+
 Junction 2026, Stoa challenge "Make Blueprints Talk". Judging (working assumption until Stoa publishes the criteria): **accuracy · visualised reasoning a human can verify · creativity · low inference cost.**
 Stoa has said the judges will use questions HARDER than the dataset. Fixed intents alone are not enough.
 Solutions must not be obsoleted by next year's frontier models: we are a geometry + verification layer, not a chatbot.

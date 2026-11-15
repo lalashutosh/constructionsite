@@ -127,7 +127,9 @@ else:
 dk.T(ax, 150, 920, "one number, nothing to check", 26, INK, bold=True)
 dk.panel(ax, 990, 230, 820, 720, TINT)
 dk.T(ax, 1030, 290, "PLUMB", 22, BLUE, bold=True)
-im, w2, h2 = fit(crop(DORM_PNG, (1750, 4700, 4300, 5650), boxes_of(("door",)), BLUE, 7), 740, 380)
+# the app's own count tiles (a whole-sheet view, no close-up of individual door boxes)
+tiles = full(str(ROOT / "docs/pitch/video/cap/doors/f000.png"))[958:1395, 2340:3134]
+im, w2, h2 = fit(tiles, 740, 300)
 img(ax, im, 1030, 340, w2, h2)
 dk.T(ax, 1030, 760, f"{tot['door']['count']} doors", 60, BLUE, bold=True)
 dk.T(ax, 1030, 830, "each one listed per wing", 26, GREY)
@@ -154,14 +156,14 @@ fig, ax = slide("Ask anything. See why.", "reasoning a human can verify")
 dk.panel(ax, 110, 230, 1700, 120, PANEL)
 dk.T(ax, 150, 290, "Are there more doors or toilets and sinks?", 34, INK, bold=True)
 dk.T(ax, 1770, 290, "Doors 139 vs 96 (48 + 48)", 34, BLUE, bold=True, ha="right")
-both = crop(DORM_PNG, (2100, 4750, 3300, 5600), boxes_of(("door",)), BLUE, 6)
+both = crop(DORM_PNG, (2100, 4750, 3300, 5480), [], BLUE, 6)
 tsk = [ (np.array(b, np.float32) - [2100, 4750]).astype(np.int32) for b in boxes_of(("toilet", "sink"))]
 bgr = cv2.cvtColor(both, cv2.COLOR_RGB2BGR)
 for p_ in tsk:
     cv2.polylines(bgr, [p_], True, (26, 122, 255), 6)
 im, w2, h2 = fit(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB), 1000, 560)
 img(ax, im, 110, 390, w2, h2)
-dk.T(ax, 110, 390 + h2 + 40, "blue: doors · orange: toilets and sinks · each one a box you can click", 24, GREY)
+dk.T(ax, 110, 390 + h2 + 40, "orange: toilets and sinks · each one a box you can click", 24, GREY)
 dk.T(ax, 1180, 420, "SAME QUESTION, ANY LANGUAGE", 20, GREY, bold=True)
 for k, (q, a) in enumerate([("How many bedrooms?", "2"), ("Montako makuuhuonetta?", "2"), ("Wie viele Schlafzimmer?", "2"),
                             ("¿Cuántos dormitorios hay?", "2"), ("Mitu magamistuba on?", "2")]):

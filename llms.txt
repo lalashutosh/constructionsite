@@ -1,0 +1,49 @@
+# Plumb
+
+> Plumb answers natural-language questions about construction drawings (scans, PDF, DXF, IFC, whole project folders)
+> and shows where every answer came from: each counted element is boxed on the drawing and each value is tagged as
+> measured, printed on the sheet, chosen by the user, or an assumption. Computer vision, OCR and fixed engineering
+> formulas produce the numbers; a language model only names symbol types and drafts queries for new questions, and
+> never outputs a count or measurement. Built for Junction 2026, Stoa challenge "Make Blueprints Talk".
+
+Key facts, each with its source file in this repository:
+
+- 24 of 25 harder questions correct on Stoa's three full-size construction sheets (piping, foundation, dormitory), with the drawing scale read from the sheet within 2% on all three: docs/stress-report-r9.md
+- 81.5% exact counts on CubiCasa5k scanned plans (DEV sample, n = 400, 95% CI 77.4-85.0), mean 214 ms, 0 tokens: docs/evidence/20261115-024003-gate_r9/report.md
+- 91.3% exact counts on Swiss Dwellings plans, given file only (n = 206): docs/evidence/20261115-022504-gate_sw8/report.md
+- 75.0% on the full DEV split of 6,192 dataset questions using sibling files, 70.4% given file only; IFC areas 99.8% (n = 816): docs/evidence/20261114-154539-w2-dev/report.md
+- Most answers cost 0 tokens; a deep read of a 67-megapixel sheet costs about $0.08 once and is cached by file hash
+- 255 automated tests pass (18 skip without the dataset); CI on amd64 and arm64: .github/workflows/ci.yml
+- Questions work in English, Finnish, Swedish, German, French, Spanish, Dutch and Estonian
+
+## Start here
+
+- [README](README.md): what it does, measured results, how to run it
+- [Evaluation guide](docs/JUDGES.md): the judging criteria (accuracy, verifiable reasoning, creativity, low inference cost) mapped to evidence and to commands that reproduce it
+- [Architecture](docs/ARCHITECTURE.md): the pipeline module by module, and where each design rule is enforced in code
+- [Proof contract](contracts/proof.py): the single interface between engine, API and UI (value, evidence elements, voters, tier, scale anchors, tagged assumptions, cost)
+
+## Evidence
+
+- [Stress report on full-size Stoa sheets](docs/stress-report-r9.md): every question, answer, tier, time and cost
+- [Latest accuracy report](docs/evidence/20261115-024003-gate_r9/report.md): per-intent accuracy with confidence intervals and tier calibration
+- [Deep read handoff](docs/handoff/deep-sheets.md): how symbols are discovered, counted and named on huge sheets
+- [Design decisions](docs/decisions/): why each trade-off was made
+- [Pitch deck](docs/pitch/Plumb_pitch_deck.pdf) and [submission text](docs/SUBMISSION.md)
+
+## Code
+
+- [engine/pipeline.py](engine/pipeline.py): cache, triage, sibling resolution, extraction, two voters, tier, ProofObject
+- [engine/scale/sheet_scale.py](engine/scale/sheet_scale.py): scale from scale notes, graphic bars, dimension strings and paper size, cross-checked
+- [engine/symbols.py](engine/symbols.py): deep read, symbol discovery by repetition and counting
+- [engine/sheet_lookup.py](engine/sheet_lookup.py): reads back what the sheet itself prints (tags, schedules, notes) with a receipt
+- [engine/layers.py](engine/layers.py): body-like layers and pipe, cable and lighting estimates by EN 806-3, EN 12056-2, EN 12464-1
+- [engine/query/](engine/query/): query engine for questions no template matches (an LLM may draft the spec; code runs it)
+- [api/main.py](api/main.py): FastAPI service
+- [web/src/](web/src/): React, TypeScript and three.js interface
+
+## Optional
+
+- [Agent instructions used to build it](AGENTS.md)
+- [Runbook](RUNBOOK.md)
+- [Handoff notes](docs/HANDOFF.md)

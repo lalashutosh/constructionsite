@@ -107,7 +107,9 @@ const S = {
     await click(page.getByRole('button', { name: 'Where?' }), 'where'); await wait(2500); await shot('pins', { hold: 1 }); end();
   },
   async measure() {
-    begin('measure'); await open(NOSCALE, 'Plan with no scale'); await view('Top');
+    begin('measure');
+    await page.request.post('http://localhost:8001/api/scale', { data: { path: NOSCALE, anchors: [], questions: ['How many doors?'] } }); // forget earlier takes
+    await open(NOSCALE, 'Plan with no scale'); await view('Top');
     await shot('before', { hold: 1 });
     await click(page.getByRole('button', { name: /Set real size/ }), 'set'); await wait(800);
     for (const [x, y] of [[545.6, 156.9], [564.6, 156.9]]) {
@@ -127,8 +129,9 @@ const S = {
     await page.mouse.move(cur.x, cur.y); await page.mouse.down();
     for (let i = 0; i < 70; i++) { cur = { x: cur.x - 4, y: cur.y - (i < 35 ? 0.6 : -0.6) }; await page.mouse.move(cur.x, cur.y); await shot('orbit', { frame: 1 }); }
     await page.mouse.up();
-    for (const l of ['Furniture', 'Piping', 'Electrical']) { await click(page.getByRole('button', { name: new RegExp(l) }), l); await wait(1500); await shot(`layer:${l}`, { hold: 1 }); }
     for (const l of ['Furniture', 'Piping', 'Electrical']) { await page.getByRole('button', { name: new RegExp(l) }).first().click(); await wait(300); }
+    await wait(1200); await shot('layers:off', { hold: 1 });
+    for (const l of ['Furniture', 'Piping', 'Electrical']) { await click(page.getByRole('button', { name: new RegExp(l) }), l); await wait(1500); await shot(`layer:${l}`, { hold: 1 }); }
     await wait(1000);
     for (const k of ['Beds', 'Stair']) {
       const row = page.locator('.cklist').getByText(new RegExp(`^${k}`)).first();
