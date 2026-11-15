@@ -1,6 +1,6 @@
 # Plumb — pitch script and recording plan
 
-Total: 2:00 (main) or about 2:40 with the optional insert; check the official limit in the Junction dashboard. Slides: `docs/pitch/slides/slide01.png` … `slide13.png` (also `docs/pitch/Plumb_pitch.pptx` with these
+Total: under 2:00, strictly (Junction rule). Target 1:45. Slides: `docs/pitch/slides/slide01.png` … `slide13.png` (also `docs/pitch/Plumb_pitch.pptx` with these
 notes). Every answer quoted below was produced by the live engine (`docs/pitch/feature_check.md`, run before
 writing this). If a number on screen differs while recording, say the number on screen.
 
@@ -37,53 +37,47 @@ api.main:app --port 8001`). Record each clip separately; I cut them together.
 
 ---
 
-## PART B — the voiceover (one continuous story)
+## PART B — the voiceover (one continuous story, HARD LIMIT 2:00)
 
-Read it like you're showing a friend something you're proud of. Brackets say what is on screen; they are not read.
-Main version: about 2:00 spoken. If the official limit is 3 minutes, read the optional part where it is marked.
+Junction: "not a second longer than 2 minutes, and we will be very strict". This reads in about 1:40, which leaves
+room for a slower take and the closing card. Brackets say what is on screen; they are not read.
 
-[C1 · a small apartment plan]
-Here's a simple floor plan. If I asked you how many doors it has, you'd just count them: one, two, three, four,
-five, six. Done in ten seconds.
+[C1 · a small apartment plan, cursor taps the doors]
+Here's a simple floor plan. How many doors? One, two, three, four, five, six. Easy.
 
 [C2 · hard cut to the dormitory sheet, zoom out]
-Now here's a real one: one floor of an Air Force dormitory, ten thousand pixels wide. Now it's not just doors,
-it's beds, hinges, pipe, concrete. For a site engineer that's an afternoon of counting, every day. And a general AI
-model gives you a confident number you can't check.
+Now here's a real one: an Air Force dormitory floor, ten thousand pixels wide. And it's not just doors any more.
+It's beds, hinges, pipe, concrete. For a site engineer that's an afternoon of counting, every day, and a general AI
+model hands you a confident number you can't check.
 
-[slide 4 · the question]
+[slide 4]
 So we asked: can a drawing answer, and show where the answer came from? That's Plumb.
 
 [C3 · scale badge, click "Where?"]
-It starts with the scale, read from the sheet itself, and here it caught a trap: this is a half-size print, so
-the printed note would make everything twice too big. The scale bar and dimensions disagree, so Plumb trusts them,
+It starts with the scale, read from the sheet itself, and here it caught a trap. This is a half-size print, so the
+printed note would make everything twice too big. The scale bar and the dimensions disagree, so Plumb trusts them,
 and shows you where it looked.
 
-[C5 then C4 · checklist, then "How many doors?" and See proof]
-Then it counts. It finds every symbol that repeats, doors, beds, chairs, sinks, and counts each one two ways.
-An AI model only names each symbol, once; it never produces the number. So when I ask how many doors, all one
-hundred and thirty-nine come back boxed on the drawing. Checkable in seconds.
+[C5, then C4 · checklist, then "How many doors?" and See proof]
+Then it counts. It finds every symbol that repeats, doors, beds, chairs, sinks, and counts each one two ways. An AI
+model only names each symbol; it never produces the number. So all one hundred and thirty-nine doors come back
+boxed on the drawing. You can check them in seconds.
 
 [C7 · piping plan, valves]
-On a piping plan it reads the equipment tags: twelve valves, each listed. When the sheet says five check valves
-but only four labels are legible, Plumb says exactly that, instead of guessing.
+On a piping plan it reads the tags: twelve valves, each listed. And when the sheet says five check valves but only
+four labels are legible, Plumb says exactly that.
 
 [C10 · Build plan tab]
-Then the drawing becomes a shopping list: concrete, doors and hinges, fixtures, finishes room by room. With no
-plumbing or electrical sheet, it estimates pipe and wiring by European rules, marked as estimates.
+Then the drawing becomes a shopping list, with pipe and wiring estimated by European rules and marked as estimates.
 
-> OPTIONAL (+40 s, only for a 3-minute limit) [montage: C12, C13, C15, C16, C17]
-> And it isn't fussy about what you give it. Ask in Finnish, German or Spanish and you get the same answer. Give it
-> a sheet with two floors and it reads the floor names. If a drawing has no scale at all, measure one door and
-> every size on the sheet follows. Upload a photo of a person and it tells you that's not a floor plan. Drop in a
-> messy folder of twenty-seven files, and half a minute later it's sorted.
-
-[C19 then slide 11 · the cost line]
-And it's cheap: most answers are pure geometry, zero cents. Reading this whole sheet costs about ten cents, once.
+[C19, then slide 11]
+Most answers cost zero cents. Reading this whole sheet costs about ten cents, once.
 
 [slide 12, then slide 13]
 Models name things; code measures. So a better model next year makes Plumb better, not obsolete. That's Plumb:
 blueprints that show their work.
+
+(Clips C11–C18 are spare footage: not needed for the 2-minute cut.)
 
 ## Speaker notes per slide (also in the pptx)
 
