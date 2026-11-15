@@ -217,6 +217,7 @@ export class PlumbViewer {
     this.T = theme;
     this.el = el;
     this.cb = cb;
+    if (import.meta.env.DEV) (window as unknown as { __plumbViewer?: PlumbViewer }).__plumbViewer = this; // demo recorder hook
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: "high-performance" });
     this.renderer.setPixelRatio(Math.min(2, window.devicePixelRatio));
     this.renderer.setClearColor(theme.bg, 1);
@@ -359,6 +360,15 @@ export class PlumbViewer {
       this.cb.onHoverPin(hit);
       this.applyHot();
     }
+  }
+
+  /** Page position of a drawing pixel on the first floor (dev only: the demo recorder clicks real doors with it). */
+  screenOfPixel(x: number, y: number) {
+    const fl = [...this.floorGroups.values()][0];
+    if (!fl) return null;
+    const s = this.toScreen(fl.group.localToWorld(new THREE.Vector3(x - fl.w / 2, 0, y - fl.h / 2)));
+    const r = this.el.getBoundingClientRect();
+    return { x: s.x + r.left, y: s.y + r.top };
   }
 
   private toScreen(v: THREE.Vector3) {

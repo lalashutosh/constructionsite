@@ -1,0 +1,99 @@
+1
+00:00:00,400 --> 00:00:03,357
+Six doors. Easy, you counted them already.
+
+2
+00:00:03,557 --> 00:00:08,147
+Now this one: an Air Force dormitory, ten thousand pixels wide.
+
+3
+00:00:08,347 --> 00:00:12,120
+How many doors? Nobody should count that by eye.
+
+4
+00:00:12,320 --> 00:00:14,461
+So people ask a chatbot.
+
+5
+00:00:14,661 --> 00:00:19,251
+You get one confident number, and nothing to check it against.
+
+6
+00:00:19,451 --> 00:00:24,041
+Plumb says one hundred and thirty-nine, and boxes every single door.
+
+7
+00:00:24,241 --> 00:00:26,790
+Ask in plain language. Any language.
+
+8
+00:00:26,990 --> 00:00:31,171
+More doors, or toilets and sinks? One thirty-nine against ninety-six.
+
+9
+00:00:31,371 --> 00:00:35,553
+Every answer comes with a receipt: measured, printed, or estimated.
+
+10
+00:00:35,753 --> 00:00:41,567
+Every size starts with the scale, and Plumb reads it off the sheet itself.
+
+11
+00:00:41,767 --> 00:00:48,398
+This one is a half-size print. The printed note alone would be wrong by two times.
+
+12
+00:00:48,598 --> 00:00:54,004
+No scale at all? Click both ends of one door, and everything follows.
+
+13
+00:00:54,204 --> 00:00:58,794
+Then it counts what's inside: forty-eight sinks, forty-eight toilets, forty-six beds.
+
+14
+00:00:58,994 --> 00:01:03,584
+Code counts every symbol two ways. The model only names them.
+
+15
+00:01:03,784 --> 00:01:09,190
+And it turns the drawing into a build plan: concrete, hinges, pipe, cable.
+
+16
+00:01:09,390 --> 00:01:13,163
+Services use European standards, and are labeled as estimates.
+
+17
+00:01:13,363 --> 00:01:15,912
+On hard sheets, it stays honest.
+
+18
+00:01:16,112 --> 00:01:23,151
+This piping plan prints five check valves, but only four tags are legible. Plumb says exactly that.
+
+19
+00:01:23,351 --> 00:01:27,941
+Twenty-four out of twenty-five hard questions right on Stoa's full-size sheets.
+
+20
+00:01:28,141 --> 00:01:31,098
+Scale within two percent, on all three.
+
+21
+00:01:31,298 --> 00:01:36,296
+And it's almost no LLM. Computer vision and formulas, on a laptop.
+
+22
+00:01:36,496 --> 00:01:41,494
+Most answers cost zero tokens. Reading this whole sheet: ten cents, once.
+
+23
+00:01:41,694 --> 00:01:44,243
+The model names things. Code measures.
+
+24
+00:01:44,443 --> 00:01:48,624
+So next year's better model makes Plumb better, not obsolete.
+
+25
+00:01:48,824 --> 00:01:53,006
+I'm Abhinav. This is Plumb: blueprints that show their work.
