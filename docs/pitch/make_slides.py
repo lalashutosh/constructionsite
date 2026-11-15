@@ -14,6 +14,7 @@ import cv2
 import numpy as np
 
 sys.path.insert(0, str(pathlib.Path.home() / ".claude/skills/story-pitch-deck"))
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
 import deck_kit as dk  # noqa: E402
 from matplotlib.patches import Rectangle  # noqa: E402
 
@@ -70,6 +71,27 @@ def save(fig, n):
 
 dorm, pipe = deep(DORM), deep(PIPE)
 tot = {t["kind"]: t for t in dorm["totals"]}
+DORM_PNG = str(ROOT / f"cache/uploads/{DORM}.png")
+PIPE_PNG = str(ROOT / f"cache/uploads/{PIPE}.png")
+SMALL = str(pathlib.Path.home() / "Downloads/junction-dataset-preview/data/cubicasa5k/colorful-2002.png")
+plan = json.load(open(ROOT / "docs/pitch/dorm_plan.json"))
+CHATBOT = ROOT / "docs/pitch/chatbot.png"
+
+
+def fit(rgb, w, h):
+    """Scale an RGB image to fit w x h (keeps aspect). Returns (img, w2, h2)."""
+    s_ = min(w / rgb.shape[1], h / rgb.shape[0])
+    return cv2.resize(rgb, (int(rgb.shape[1] * s_), int(rgb.shape[0] * s_)), interpolation=cv2.INTER_AREA), \
+        int(rgb.shape[1] * s_), int(rgb.shape[0] * s_)
+
+
+def full(path):
+    return cv2.cvtColor(cv2.imread(path), cv2.COLOR_BGR2RGB)
+
+
+def boxes_of(kinds):
+    return [e["polygon"] for e in dorm["elements"] if e["kind"] in kinds]
+
 
 # 1 title -----------------------------------------------------------------------------------------------------
 fig, ax = dk.canvas(W, H)
@@ -78,79 +100,92 @@ dk.T(ax, 116, 560, "Blueprints that show their work", 46, BLUE, bold=True)
 dk.T(ax, 116, 660, "Junction 2026  ·  Stoa: Make Blueprints Talk  ·  Abhinav Chutani", 26, GREY)
 save(fig, 1)
 
-# 2 the character --------------------------------------------------------------------------------------------
-fig, ax = slide("Meet the site engineer", "the character")
-dk.T(ax, 116, 300, "One dormitory floor.", 40, INK, bold=True)
-dk.T(ax, 116, 360, "10,200 × 6,600 pixels.", 40, BLUE, bold=True)
-dk.T(ax, 116, 450, "Every dot is a door\nto find, count and order.", 30, GREY)
-dk.panel(ax, 980, 220, 830, 760, PANEL)
-dk.person(ax, 1395, 330, 52, INK)
-n = tot["door"]["count"]
-cols = 14
-for i in range(n):
-    cx, cy = 1050 + (i % cols) * 50, 470 + (i // cols) * 48
-    ax.add_patch(dk.Circle((cx, cy), 15, color=dk.DOT, zorder=3))
-dk.T(ax, 1395, 950, f"{n} doors on this sheet", 24, GREY, ha="center")
+# 2 hook: 6 doors vs a 10,200 px sheet -----------------------------------------------------------------------
+fig, ax = slide("Six doors is easy. This isn't.", "the problem")
+from engine.api import get_engine  # noqa: E402
+small_doors = [e.polygon for e in get_engine("pipeline").analyze(SMALL).elements if e.kind == "door"]
+im, w2, h2 = fit(crop(SMALL, (0, 0, cv2.imread(SMALL).shape[1], cv2.imread(SMALL).shape[0]), small_doors, BLUE, 3), 560, 600)
+img(ax, im, 110, 260, w2, h2)
+dk.T(ax, 110, 260 + h2 + 50, f"{len(small_doors)} doors: count them in ten seconds", 26, INK, bold=True)
+im, w2, h2 = fit(full(DORM_PNG), 1000, 640)
+img(ax, im, 810, 250, w2, h2)
+dk.T(ax, 810, 250 + h2 + 40, "Air Force dormitory, 10,200 × 6,600 px", 26, INK, bold=True)
+tag(ax, "real sheets: CubiCasa5k colorful-2002 · Stoa dataset A-2")
 save(fig, 2)
 
-# 3 the problem is normal ------------------------------------------------------------------------------------
-fig, ax = slide("And that is only the doors", "the problem")
-rows = [("Doors", tot["door"]["count"]), ("Chairs", tot["chair"]["count"]), ("Sinks", tot["sink"]["count"]),
-        ("Toilets", tot["toilet"]["count"]), ("Beds", tot["bed"]["count"])]
-mx = max(v for _, v in rows)
-for k, (lab, v) in enumerate(rows):
-    y = 290 + k * 118
-    dk.T(ax, 116, y, lab, 34, INK, bold=True)
-    ax.add_patch(Rectangle((400, y - 30), 1000 * v / mx, 60, color=ORANGE if k == 0 else dk.DOT, zorder=2))
-    dk.T(ax, 420 + 1000 * v / mx, y, str(v), 36, INK, bold=True)
-dk.T(ax, 116, 920, "Then: hinges, pipe, cable, concrete, finishes. By hand, an engineer's afternoon, every day.", 28, GREY)
-tag(ax, "counts: Plumb deep read of the A-2 dormitory sheet")
+# 3 chatbot vs Plumb -----------------------------------------------------------------------------------------
+fig, ax = slide("A guess you can't check, or a receipt", "general AI vs Plumb")
+dk.panel(ax, 110, 230, 820, 720, PANEL)
+dk.T(ax, 150, 290, "GENERAL AI CHATBOT", 22, GREY, bold=True)
+if CHATBOT.exists():
+    im, w2, h2 = fit(full(str(CHATBOT)), 740, 600)
+    img(ax, im, 150, 330, w2, h2)
+else:
+    dk.T(ax, 520, 600, "[ your ChatGPT screenshot:\n docs/pitch/chatbot.png ]", 30, ORANGE, bold=True, ha="center")
+dk.T(ax, 150, 920, "one number, nothing to check", 26, INK, bold=True)
+dk.panel(ax, 990, 230, 820, 720, TINT)
+dk.T(ax, 1030, 290, "PLUMB", 22, BLUE, bold=True)
+im, w2, h2 = fit(crop(DORM_PNG, (1750, 4700, 4300, 5650), boxes_of(("door",)), BLUE, 7), 740, 470)
+img(ax, im, 1030, 330, w2, h2)
+dk.T(ax, 1030, 850, f"{tot['door']['count']} doors", 60, BLUE, bold=True)
+dk.T(ax, 1030, 920, "every one boxed on the drawing", 26, INK, bold=True)
 save(fig, 3)
 
-# 4 the question ---------------------------------------------------------------------------------------------
-fig, ax = slide("Can a drawing answer, and show where?", "the question")
-dk.panel(ax, 760, 260, 400, 110, ORANGE, r=55)
-dk.T(ax, 960, 315, "139 doors?", 40, "white", bold=True, ha="center")
-for x, head, sub, col in ((260, "A guess", "general AI: nothing to check", dk.DOT), (1060, "A receipt", "every door boxed on the drawing", BLUE)):
-    dk.arrow(ax, 960, 380, x + 300, 520, ORANGE)
-    dk.panel(ax, x, 540, 600, 300, PANEL if col == dk.DOT else TINT)
-    dk.T(ax, x + 300, 640, head, 46, INK if col == dk.DOT else BLUE, bold=True, ha="center")
-    dk.T(ax, x + 300, 730, sub, 26, GREY, ha="center")
+# 4 how it works ---------------------------------------------------------------------------------------------
+fig, ax = slide("Read the sheet. Count by code. Show the receipt.", "how it works")
+steps = [("1  Read", "scale, outline, printed text,\nfrom the drawing itself"),
+         ("2  Count by code", "every repeated symbol,\ncounted two ways"),
+         ("3  Show the receipt", "every number boxed,\ntagged: measured, printed\nor estimated")]
+for k, (h_, c_) in enumerate(steps):
+    x = 110 + k * 600
+    dk.panel(ax, x, 280, 520, 440, TINT if k == 2 else PANEL)
+    dk.T(ax, x + 40, 360, h_, 38, BLUE if k == 2 else INK, bold=True)
+    dk.T(ax, x + 40, 500, c_, 28, GREY)
+    if k < 2:
+        dk.arrow(ax, x + 530, 500, x + 590, 500, ORANGE)
+dk.T(ax, 110, 850, "An AI model only names what each symbol is. It never produces a number.", 32, ORANGE, bold=True)
 save(fig, 4)
 
-# 5 the solution: three steps ---------------------------------------------------------------------------------
-fig, ax = slide("Three steps, all checkable", "the solution")
-steps = [("1  Read the sheet", "scale, outline, printed text\nfrom the drawing itself"),
-         ("2  Count by code", "find every repeated symbol,\ncount each copy two ways"),
-         ("3  Show the receipt", "every number boxed,\ntagged, and costed")]
-for k, (h, c) in enumerate(steps):
-    x = 110 + k * 600
-    dk.panel(ax, x, 300, 520, 520, TINT if k == 2 else PANEL)
-    dk.T(ax, x + 40, 380, h, 36, BLUE if k == 2 else INK, bold=True)
-    dk.T(ax, x + 40, 520, c, 28, GREY)
-    if k < 2:
-        dk.arrow(ax, x + 530, 560, x + 590, 560, ORANGE)
-dk.T(ax, 110, 900, "A vision model only names each kind of symbol, once. It never produces a number.", 28, INK, bold=True)
+# 5 ask anything, see why ------------------------------------------------------------------------------------
+fig, ax = slide("Ask anything. See why.", "reasoning a human can verify")
+dk.panel(ax, 110, 230, 1700, 120, PANEL)
+dk.T(ax, 150, 290, "Are there more doors or toilets and sinks?", 34, INK, bold=True)
+dk.T(ax, 1770, 290, "Doors 139 vs 96 (48 + 48)", 34, BLUE, bold=True, ha="right")
+both = crop(DORM_PNG, (2100, 4750, 3300, 5600), boxes_of(("door",)), BLUE, 6)
+tsk = [ (np.array(b, np.float32) - [2100, 4750]).astype(np.int32) for b in boxes_of(("toilet", "sink"))]
+bgr = cv2.cvtColor(both, cv2.COLOR_RGB2BGR)
+for p_ in tsk:
+    cv2.polylines(bgr, [p_], True, (26, 122, 255), 6)
+im, w2, h2 = fit(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB), 1000, 560)
+img(ax, im, 110, 390, w2, h2)
+dk.T(ax, 110, 390 + h2 + 40, "blue: doors · orange: toilets and sinks · each one a box you can click", 24, GREY)
+dk.T(ax, 1180, 420, "SAME QUESTION, ANY LANGUAGE", 20, GREY, bold=True)
+for k, (q, a) in enumerate([("How many bedrooms?", "2"), ("Montako makuuhuonetta?", "2"), ("Wie viele Schlafzimmer?", "2"),
+                            ("¿Cuántos dormitorios hay?", "2"), ("Mitu magamistuba on?", "2")]):
+    dk.T(ax, 1180, 490 + k * 72, q, 28, INK)
+    dk.T(ax, 1780, 490 + k * 72, a, 32, BLUE, bold=True, ha="right")
+dk.T(ax, 1180, 880, "$0.0000 each", 28, ORANGE, bold=True)
 save(fig, 5)
 
-# 6 demo: dorm with its door boxes ----------------------------------------------------------------------------
-fig, ax = slide("Every door, boxed on the drawing", "demo · A-2 dormitory")
-doors = [e["polygon"] for e in dorm["elements"] if e["kind"] == "door"]
-img(ax, crop(str(ROOT / f"cache/uploads/{DORM}.png"), (1750, 4700, 4300, 5650), doors, BLUE, 6), 110, 230, 1100, 409)
-dk.panel(ax, 1290, 230, 520, 700, PANEL)
-for k, (lab, big, note, col) in enumerate([("SCALE", '1" = 40\'-0"', "half-size print caught", ORANGE),
-                                           ("DOORS", f"{tot['door']['count']}", "per wing, each boxed", BLUE),
-                                           ("BEDS", f"{tot['bed']['count']}", "two counts agree", BLUE)]):
-    y = 310 + k * 210
-    dk.T(ax, 1330, y, lab, 20, GREY, bold=True)
-    dk.T(ax, 1330, y + 70, big, 54, col, bold=True)
-    dk.T(ax, 1330, y + 130, note, 24, GREY)
-dk.T(ax, 110, 700, "The printed note would make everything twice too big.\nThe scale bar and the dimensions outvote it.", 28, INK)
-tag(ax, "real sheet, real output")
+# 6 the scale ------------------------------------------------------------------------------------------------
+fig, ax = slide("The scale, read from the sheet. Or from one length.", "creativity")
+from engine.scale import sheet_scale as S2  # noqa: E402
+from engine import cache as C2  # noqa: E402
+st = S2.sheet_state(DORM_PNG, C2.sha256_file(DORM_PNG))
+sb = [b for c in st["cons"]["winner"]["items"] for b in c["boxes"]]
+quads = [[[b[0] - 20, b[1] - 20], [b[2] + 20, b[1] - 20], [b[2] + 20, b[3] + 20], [b[0] - 20, b[3] + 20]] for b in sb]
+im, w2, h2 = fit(crop(DORM_PNG, (7400, 5850, 8800, 6400), quads, ORANGE, 6), 900, 400)
+img(ax, im, 110, 260, w2, h2)
+dk.T(ax, 110, 260 + h2 + 50, "Note, scale bar and dimensions agree: 49.2 px per metre.\nA half-size print caught: the note alone would be 2× wrong.", 26, INK)
+dk.panel(ax, 1110, 250, 700, 640, TINT)
+dk.T(ax, 1150, 320, "NO SCALE ON THE DRAWING?", 20, GREY, bold=True)
+dk.T(ax, 1150, 410, "Measure one door.", 46, BLUE, bold=True)
+dk.T(ax, 1150, 560, "Click its two ends, type 0.9 m:\nevery room, wall and area on\nthe sheet follows.", 30, INK)
+dk.T(ax, 1150, 760, "One known length → all dimensions", 28, ORANGE, bold=True)
 save(fig, 6)
 
-# 7 the deep read: symbol cards ------------------------------------------------------------------------------
-fig, ax = slide("The deep read: find it, count it, then name it", "creativity")
+# 7 the deep read --------------------------------------------------------------------------------------------
+fig, ax = slide("Every bed, chair and staircase, found and counted", "creativity · the deep read")
 cards = [tot[k] for k in ("door", "chair", "sink", "toilet", "bed", "staircase") if k in tot]
 for k, t in enumerate(cards):
     x, y = 110 + (k % 3) * 580, 260 + (k // 3) * 330
@@ -159,62 +194,83 @@ for k, t in enumerate(cards):
         img(ax, thumb(t["thumb"]), x + 30, y + 45, 200, 200)
     dk.T(ax, x + 260, y + 110, t["label"], 34, INK, bold=True)
     dk.T(ax, x + 260, y + 200, str(t["count"]), 70, BLUE, bold=True)
-dk.T(ax, 110, 960, "Click a count in the app and every copy lights up in 3D.", 28, GREY)
-tag(ax, "symbol pictures: cut from the sheet by the app")
+dk.T(ax, 110, 960, "Code finds every repeated symbol; a model names each kind once. Click a count: every copy lights up in 3D.", 26, GREY)
 save(fig, 7)
 
-# 8 hard sheets, honest answers -------------------------------------------------------------------------------
+# 8 building: build plan + service runs ----------------------------------------------------------------------
+fig, ax = slide("From drawing to what to buy", "creativity · the build plan")
+sm = plan.get("services_map") or {}
+g0 = cv2.imread(DORM_PNG, cv2.IMREAD_GRAYSCALE)
+ol = np.array(sm.get("outline") or [[0, 0]], np.float32)
+x0, y0 = ol.min(0).astype(int) - 60
+x1, y1 = ol.max(0).astype(int) + 60
+bg = cv2.cvtColor(255 - ((255 - g0[y0:y1, x0:x1]) // 4), cv2.COLOR_GRAY2BGR)
+for lines_, col in ((sm.get("piping", []), (235, 130, 59)), (sm.get("electrical", []), (11, 158, 245))):
+    for l in lines_:
+        cv2.polylines(bg, [(np.array(l, np.float32) - [x0, y0]).astype(np.int32)], False, col, 14)
+im, w2, h2 = fit(cv2.cvtColor(bg, cv2.COLOR_BGR2RGB), 820, 700)
+img(ax, im, 110, 240, w2, h2)
+dk.T(ax, 110, 240 + h2 + 36, "blue: pipe runs · amber: circuits (estimated, European rules)", 22, GREY)
+q = {c["item"]: c for c in plan["checklist"]}
+rows = [("Foundation concrete", q.get("Foundation concrete")), ("Hinges", q.get("Hinges")),
+        ("Light fittings (EN 12464-1)", q.get("Light fittings")),
+        ("Pipework", q.get("Pipework (supply + waste runs)")), ("Cable", q.get("Cable (lighting + power circuits)"))]
+for k, (lab, c_) in enumerate(rows):
+    if not c_:
+        continue
+    y = 290 + k * 128
+    dk.panel(ax, 1010, y - 50, 800, 105, TINT if lab in ("Pipework", "Cable") else PANEL)
+    dk.T(ax, 1045, y, lab, 28, INK, bold=True)
+    v = c_["qty"]
+    dk.T(ax, 1780, y, f"{v:,.0f} {c_['unit']}" if isinstance(v, (int, float)) else str(v), 36, BLUE, bold=True, ha="right")
+dk.T(ax, 1010, 950, "Plus walls, doors, fixtures, finishes.\nEstimates are labelled.", 24, GREY)
+save(fig, 8)
+
+# 9 accuracy: honest on hard sheets --------------------------------------------------------------------------
 fig, ax = slide("Hard sheets, honest answers", "accuracy · M-101A piping + S-100F foundation")
 tagb = [e["polygon"] for e in pipe["elements"] if e["kind"].startswith("tag ")]
-img(ax, crop(str(ROOT / f"cache/uploads/{PIPE}.png"), (2500, 1600, 6400, 4200), tagb, BLUE, 6), 110, 230, 1020, 680)
+img(ax, crop(PIPE_PNG, (2500, 1600, 6400, 4200), tagb, BLUE, 6), 110, 230, 1020, 680)
 dk.panel(ax, 1210, 230, 600, 680, PANEL)
 for k, (lab, big, note, col) in enumerate([("VALVES", "12", "every tag listed", BLUE),
                                            ("CHECK VALVES", "5", 'prints "TYP. OF 5";\n4 tags legible: says so', ORANGE),
-                                           ("TRENCH LENGTH", "4275", "quoted from the note\n(foundation sheet S-100F)", GREY)]):
+                                           ("TRENCH LENGTH", "4275", "quoted from the note\n(foundation sheet)", GREY)]):
     y = 300 + k * 205
     dk.T(ax, 1250, y, lab, 20, GREY, bold=True)
     dk.T(ax, 1250, y + 60, big, 50, col, bold=True)
     dk.T(ax, 1450, y + 55, note, 22, GREY)
-save(fig, 8)
+save(fig, 9)
 
-# 9 proof beyond one case ------------------------------------------------------------------------------------
-fig, ax = slide("Measured, not claimed", "proof")
+# 10 accuracy: measured ---------------------------------------------------------------------------------------
+fig, ax = slide("Measured, not claimed", "accuracy")
 bars = [("Harder questions, 3 full-size Stoa sheets", 24 / 25 * 100, "24 / 25"),
         ("Dataset plans, exact counts (n = 400)", 81.5, "81.5%"),
         ("Swiss dwellings, counts (n = 206)", 91.3, "91.3%")]
-for k, (lab, v, s) in enumerate(bars):
+for k, (lab, v, s_) in enumerate(bars):
     y = 320 + k * 190
     dk.T(ax, 116, y - 45, lab, 28, INK, bold=True)
     ax.add_patch(Rectangle((116, y), 1300, 50, color=PANEL, zorder=1))
     ax.add_patch(Rectangle((116, y), 13 * v, 50, color=BLUE, zorder=2))
-    dk.T(ax, 1450, y + 25, s, 40, INK, bold=True)
+    dk.T(ax, 1450, y + 25, s_, 40, INK, bold=True)
 dk.T(ax, 116, 930, "Scale read from the sheet itself: within 2% on all three Stoa sheets.", 28, ORANGE, bold=True)
 tag(ax, "docs/stress-report-r9.md · evalkit gate, 2026-11-15")
-save(fig, 9)
-
-# 10 from drawing to shopping list ----------------------------------------------------------------------------
-fig, ax = slide("From drawing to what to buy", "build plan")
-tiles = [("Pipework", "2,023 m", "routing estimate"), ("Cable", "418 m", "HD 60364 circuits"),
-         ("Supply load", "148 LU", "EN 806-3"), ("Waste flow", "8.0 l/s", "EN 12056-2")]
-for k, (lab, big, sub) in enumerate(tiles):
-    x = 110 + k * 440
-    dk.panel(ax, x, 280, 400, 330, TINT)
-    dk.T(ax, x + 36, 350, lab, 28, GREY, bold=True)
-    dk.T(ax, x + 36, 450, big, 62, BLUE, bold=True)
-    dk.T(ax, x + 36, 540, sub, 24, GREY)
-dk.T(ax, 110, 720, "Plus concrete, walls, doors and hinges, fixtures, and floor finishes room by room.", 30, INK, bold=True)
-dk.T(ax, 110, 790, "No plumbing sheet in the set? Estimated by European rules, and labelled as estimates.", 28, ORANGE)
-tag(ax, "A-2 dormitory, estimates")
 save(fig, 10)
 
 # 11 low inference cost --------------------------------------------------------------------------------------
-fig, ax = slide("Most answers cost nothing", "low inference cost")
-dk.T(ax, 116, 430, "$0.0000", 190, BLUE, bold=True)
-dk.T(ax, 124, 580, "0 tokens: geometry and code answer most questions", 32, INK, bold=True)
-dk.panel(ax, 1240, 280, 570, 400, PANEL)
-dk.T(ax, 1280, 360, "DEEP READ, 67-MEGAPIXEL SHEET", 20, GREY, bold=True)
-dk.T(ax, 1280, 470, "about $0.10", 60, ORANGE, bold=True)
-dk.T(ax, 1280, 570, "paid once per drawing;\nre-reads are free", 26, GREY)
+fig, ax = slide("Computer vision and formulas, on a laptop", "low inference cost")
+dk.panel(ax, 110, 250, 1100, 560, TINT)
+dk.T(ax, 150, 320, "RUNS LOCALLY, NO MODEL CALLS", 20, GREY, bold=True)
+for k, s_ in enumerate(["Scale from notes, bars and dimension lines", "Symbols found and counted by computer vision",
+                        "Areas, lengths, perimeters: geometry", "Pipe, cable, lights: fixed engineering formulas",
+                        "Every answer boxed and tagged"]):
+    dk.tick(ax, 165, 400 + k * 80, 20, BLUE)
+    dk.T(ax, 205, 400 + k * 80, s_, 30, INK, bold=True)
+dk.panel(ax, 1260, 250, 550, 260, PANEL)
+dk.T(ax, 1300, 320, "AN LLM, ONLY TO NAME THINGS", 20, GREY, bold=True)
+dk.T(ax, 1300, 400, "'this symbol is a bed'", 28, INK)
+dk.T(ax, 1300, 460, "once per symbol type", 24, GREY)
+dk.T(ax, 1270, 620, "$0.0000", 80, BLUE, bold=True)
+dk.T(ax, 1275, 700, "most answers: 0 tokens", 26, INK, bold=True)
+dk.T(ax, 1275, 770, "whole sheet: about $0.10, once", 26, ORANGE, bold=True)
 save(fig, 11)
 
 # 12 why it lasts --------------------------------------------------------------------------------------------
@@ -228,11 +284,11 @@ dk.T(ax, 1040, 500, "scale, counts, areas, lengths,\nwith a box for every number
 dk.T(ax, 110, 840, "A better model makes Plumb better. It doesn't replace it.", 34, ORANGE, bold=True)
 save(fig, 12)
 
-# 13 thank you -----------------------------------------------------------------------------------------------
+# 13 close ---------------------------------------------------------------------------------------------------
 fig, ax = dk.canvas(W, H)
-dk.T(ax, 110, 420, "Can a drawing answer, and show where?", 54, INK, bold=True)
-dk.T(ax, 110, 540, "Yes. Every number, boxed on the drawing.", 54, BLUE, bold=True)
-dk.T(ax, 116, 680, "Plumb  ·  Abhinav Chutani  ·  Junction 2026", 28, GREY)
+dk.T(ax, 110, 420, "Ask a drawing anything.", 60, INK, bold=True)
+dk.T(ax, 110, 540, "Get the answer, and see where it came from.", 54, BLUE, bold=True)
+dk.T(ax, 116, 680, "Plumb  ·  blueprints that show their work  ·  Junction 2026", 28, GREY)
 save(fig, 13)
 
 dk.contact_sheet(sorted(OUT.glob("slide*.png")), OUT / "contact_sheet.png")
