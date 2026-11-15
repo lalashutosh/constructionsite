@@ -243,7 +243,7 @@ class PipelineEngine:
         try:
             from engine import symbols as _sym
             _sha = facts_cache.sha256_file(_abs(path))
-            _ck = _sym.answer(_sha, question)
+            _ck = None if self._printed_first(path, question) else _sym.answer(_sha, question)
         except Exception:  # noqa: BLE001
             _ck = None
         if _ck is not None:
@@ -257,7 +257,8 @@ class PipelineEngine:
             _cmp = None
         if _cmp is None:                                      # a count of something the deep read did not find
             try:
-                _miss = _sym.missing_note(_sha, question) if _sym.cached(_sha) else None
+                _miss = (_sym.missing_note(_sha, question) if _sym.cached(_sha) and not self._printed_first(path, question)
+                         else None)
             except Exception:  # noqa: BLE001
                 _miss = None
             if _miss:
@@ -626,6 +627,26 @@ class PipelineEngine:
                           "voter confirmed at the same spot").strip()
         notes.append(f"door fusion: {old} confident detections + {len(added)} weak detections confirmed by a door "
                      "swing arc at the same place")
+
+    def _printed_first(self, path: str, question: str) -> bool:
+        """The sheet PRINTS this count ('TYP. OF 5', '48 DORMS') or tags it (FSI-1..5): that answer beats the deep read."""
+        import re as _re
+        if not _re.search(r"\bhow\s+many\b|\bnumber\s+of\b|\bno\.?\s+of\b", question, _re.I):
+            return False
+        from engine import sheet_lookup as L
+        ap = _abs(path)
+        try:
+            facts = self.analyze(path)
+            if facts.extras.get("route") != "cad":
+                return False
+            sha = facts.provenance.sha256 or facts_cache.sha256_file(ap)
+            lk = L.lookup(ap, sha, question)
+            if lk and lk["kind"] == "count":
+                return True
+            noun = L._noun(question) or ""
+            return bool(noun and (L.class_count(ap, sha, noun) or L.tag_count(ap, sha, question)))
+        except Exception:  # noqa: BLE001
+            return False
 
     def _services_answer(self, path: str, question: str, t0: float) -> Optional[ProofObject]:
         """Estimated pipework / electrical (engine/layers.estimate_services) when the set has no MEP sheet."""

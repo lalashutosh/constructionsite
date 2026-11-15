@@ -94,6 +94,20 @@ def worker(path: str, llm: str) -> dict:
                         "route": facts.extras.get("route")}
     except Exception as e:  # noqa: BLE001
         out["analyze_error"] = f"{type(e).__name__}: {e}"
+    try:                                         # the deep read runs on open in the app: run it here too
+        from engine import symbols
+        from engine.query import llm as _L
+        revs = None
+        if llm == "on":
+            fast = _L.VerdaLLM(_L.provider(), "fast"); fast.no_think = True
+            strong = _L.VerdaLLM(_L.provider(), "strong"); strong.no_think = False; strong.timeout = 240
+            revs = [fast, strong]
+        t = time.perf_counter()
+        ck = symbols.checklist(abs_path, facts.provenance.sha256, facts, llm=revs)
+        out["steps"]["deep_read_s"] = round(time.perf_counter() - t, 1)
+        out["deep_read"] = [(x["label"], x["count"]) for x in ck.get("totals", [])][:14]
+    except Exception as e:  # noqa: BLE001
+        out["deep_read_error"] = f"{type(e).__name__}: {e}"
     if abs_path.lower().endswith((".png", ".jpg")):
         t = time.perf_counter()
         try:
@@ -169,6 +183,7 @@ def main():
         md.append(f"total {r.get('total_s')} s, peak RSS {r.get('peak_rss_mb')} MB, steps {r.get('steps')}")
         md.append(f"profile: {r.get('profile') or r.get('profile_error')}")
         md.append(f"facts: {r.get('facts') or r.get('analyze_error')}")
+        md.append(f"deep read: {r.get('deep_read') or r.get('deep_read_error')}")
         if "geometry" in r or "geometry_error" in r:
             md.append(f"geometry: {r.get('geometry') or r.get('geometry_error')}")
         md.append("")

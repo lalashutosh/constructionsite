@@ -27,7 +27,7 @@ import numpy as np
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 CACHE = ROOT / "cache" / "symbols"
-VERSION = "v20"
+VERSION = "v24"
 NAMES = ["bed", "side table", "desk", "chair", "sofa", "lounge chair", "seating group", "exercise bike", "treadmill", "table", "closet", "wardrobe", "toilet", "sink",
          "shower", "bathtub", "door", "window", "stair", "tv", "kitchen counter", "fridge", "gym equipment", "washer",
          "plant", "column", "other"]
@@ -162,7 +162,7 @@ def _whole_symbols(thin: np.ndarray, lab_raw: np.ndarray, ppm: float) -> list[di
     return reps
 
 
-def _ncc_hits(g: np.ndarray, mask: np.ndarray, box: list[int]) -> Optional[list[tuple[float, float]]]:
+def _ncc_hits(g: np.ndarray, mask: np.ndarray, box: list[int], thr: float = 0.78) -> Optional[list[tuple[float, float]]]:
     """Second voter: template-match the exemplar (8 orientations) at half resolution inside the outline."""
     x, y, w, h = box
     if min(w, h) < 16:
@@ -182,7 +182,7 @@ def _ncc_hits(g: np.ndarray, mask: np.ndarray, box: list[int]) -> Optional[list[
         if v.shape[0] >= img.shape[0] or v.shape[1] >= img.shape[1]:
             continue
         m = cv2.matchTemplate(img, v, cv2.TM_CCOEFF_NORMED)
-        yy, xx = np.where(m >= 0.78)
+        yy, xx = np.where(m >= thr)
         hits += [(float(m[a, b]), b + v.shape[1] / 2, a + v.shape[0] / 2) for a, b in zip(yy, xx)]
     hits.sort(key=lambda t: -t[0])
     keep: list[tuple] = []
@@ -491,7 +491,11 @@ def _checklist(abs_path: str, sha: str, facts, llm) -> dict:
         if nm == "other":
             continue
         x, y, w, h = [int(v) for v in r["st"][r["members"][0]][:4]]
-        hits = _ncc_hits(g, mask, [x, y, w, h])
+        d_ = r["d"]                                   # mirror-ASYMMETRIC symbols (a tilted lounge chair) are drawn in
+        mirror = max(float((v & d_).sum()) / max(1.0, float((v | d_).sum()))   # mirrored pairs whose copies score lower
+                     for v in [np.rot90(np.fliplr(d_), k) for k in range(4)])
+        big_ = max(w, h) / ppm >= 0.6 and not _plain_box(d_) and mirror < 0.55
+        hits = _ncc_hits(g, mask, [x, y, w, h], 0.66 if big_ else 0.78)   # mirrored / tilted copies of a large symbol
         if hits:                                     # every template hit must ALSO have the exemplar's shape
             hits = [hc for hc in hits if _same_shape(g, mask, r["d"], hc, w, h)]
         n = len(r["members"])
@@ -508,9 +512,9 @@ def _checklist(abs_path: str, sha: str, facts, llm) -> dict:
         # the stroke clusters miss); clusters are the fallback; 2 exemplars agreeing within 10% -> green
         good = sorted([c for c in cands if c["hits"]], key=lambda c: -len(c["hits"]))
         if good:
-            best = good[0]
+            best = good[(len(good) - 1) // 2]    # the (upper) MEDIAN exemplar: one over-eager exemplar does not set the count
             pts = best["hits"]
-            agree = len(good) >= 2 and abs(len(good[1]["hits"]) - len(pts)) <= max(1, 0.1 * len(pts))
+            agree = len(good) >= 2 and sum(1 for c in good if abs(len(c["hits"]) - len(pts)) <= max(1, 0.1 * len(pts))) >= 2
             w, h = best["w"], best["h"]
             boxes = [[cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2] for cx, cy in pts]
             note = (f"{len(pts)} copies of the exemplar found by template matching (8 orientations)"
