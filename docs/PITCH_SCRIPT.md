@@ -1,6 +1,6 @@
 # Plumb — pitch script and recording plan
 
-Total: 3:00. Slides: `docs/pitch/slides/slide01.png` … `slide13.png` (also `docs/pitch/Plumb_pitch.pptx` with these
+Total: 2:00 (main) or about 2:40 with the optional insert; check the official limit in the Junction dashboard. Slides: `docs/pitch/slides/slide01.png` … `slide13.png` (also `docs/pitch/Plumb_pitch.pptx` with these
 notes). Every answer quoted below was produced by the live engine (`docs/pitch/feature_check.md`, run before
 writing this). If a number on screen differs while recording, say the number on screen.
 
@@ -37,55 +37,53 @@ api.main:app --port 8001`). Record each clip separately; I cut them together.
 
 ---
 
-## PART B — the 3:00 voiceover (slide or clip on screen in brackets)
+## PART B — the voiceover (one continuous story)
 
-**0:00–0:12 · Hook** [C1, then hard cut to the dorm, C2]
-"How many doors in this plan? One, two, three, four, five, six. Easy.
-Now this one. Ten thousand pixels wide. And while you're at it: beds, hinges, pipe, cable, concrete, stairs."
+Read it like you're showing a friend something you're proud of. Brackets say what is on screen; they are not read.
+Main version: about 2:00 spoken. If the official limit is 3 minutes, read the optional part where it is marked.
 
-**0:12–0:22 · The problem** [slide 3, then slide 4]
-"That's a site engineer's afternoon. Every day. General AI models guess at drawings like this, and you can't
-check a guess. So the question is: can a drawing answer, and show where?"
+[C1 · a small apartment plan]
+Here's a simple floor plan. If I asked you how many doors it has, you'd just count them: one, two, three, four,
+five, six. Done in ten seconds.
 
-**0:22–0:35 · The idea** [slide 5]
-"Plumb reads the sheet, counts by code, two independent ways, and shows the receipt. A model only names each
-kind of symbol, once. It never produces a number."
+[C2 · hard cut to the dormitory sheet, zoom out]
+Now here's a real one: one floor of an Air Force dormitory, ten thousand pixels wide. Now it's not just doors,
+it's beds, hinges, pipe, concrete. For a site engineer that's an afternoon of counting, every day. And a general AI
+model gives you a confident number you can't check.
 
-**0:35–0:55 · Verify in seconds** [C3, C4, slide 6]
-"The scale is read from the sheet itself, and it caught a trap: this is a half-size print. The printed note
-would make everything twice too big; the scale bar and the dimensions outvote it. Then: a hundred and thirty-nine
-doors, every one boxed on the drawing. Click. Check. Done."
+[slide 4 · the question]
+So we asked: can a drawing answer, and show where the answer came from? That's Plumb.
 
-**0:55–1:15 · The deep read** [C5, C6, slide 7]
-"On a big sheet Plumb does a deep read, by itself, and tells you it will take a minute. Beds, chairs, sinks,
-toilets, staircases. Click one: every copy lights up. And you can ask the questions you actually have:
-more doors, or toilets and sinks? A hundred and thirty-nine against ninety-six."
+[C3 · scale badge, click "Where?"]
+It starts with the scale, read from the sheet itself, and here it caught a trap: this is a half-size print, so
+the printed note would make everything twice too big. The scale bar and dimensions disagree, so Plumb trusts them,
+and shows you where it looked.
 
-**1:15–1:35 · Hard sheets, honest answers** [C7, C9, slide 8]
-"A piping plan. Twelve valves, every tag listed. Check valves: five, because the sheet says 'typical of five',
-and Plumb tells you only four tags were legible. It reads the notes too: trench length, forty-two seventy-five,
-quoted from the sheet. No silent guesses."
+[C5 then C4 · checklist, then "How many doors?" and See proof]
+Then it counts. It finds every symbol that repeats, doors, beds, chairs, sinks, and counts each one two ways.
+An AI model only names each symbol, once; it never produces the number. So when I ask how many doors, all one
+hundred and thirty-nine come back boxed on the drawing. Checkable in seconds.
 
-**1:35–2:00 · From drawing to what to buy** [C10, C11, C8, slide 10]
-"Then the drawing becomes a shopping list: concrete, doors and hinges, fixtures, finishes room by room. No
-plumbing sheet? Pipework and wiring are estimated by European rules, and labelled as estimates. Every system is
-its own layer, like a body."
+[C7 · piping plan, valves]
+On a piping plan it reads the equipment tags: twelve valves, each listed. When the sheet says five check valves
+but only four labels are legible, Plumb says exactly that, instead of guessing.
 
-**2:00–2:25 · Whatever you throw at it** [rapid montage, 3 s each: C12, C13, C14, C15, C16, C17, C18]
-"Finnish, German, French, Spanish: same answer, zero cents. Two floors on one sheet. A faint old scan. No
-scale? Measure one door, every size follows. A photo: not a floor plan, it says so. A messy folder of
-twenty-seven files: sorted in thirty seconds."
+[C10 · Build plan tab]
+Then the drawing becomes a shopping list: concrete, doors and hinges, fixtures, finishes room by room. With no
+plumbing or electrical sheet, it estimates pipe and wiring by European rules, marked as estimates.
 
-**2:25–2:40 · Proof and cost** [slide 9, C19, slide 11]
-"Measured, not claimed: twenty-four of twenty-five harder questions on Stoa's full-size sheets, the scale within
-two percent on all three. Most answers cost nothing: zero tokens, zero cents. A deep read of a sixty-seven
-megapixel sheet: about ten cents, once."
+> OPTIONAL (+40 s, only for a 3-minute limit) [montage: C12, C13, C15, C16, C17]
+> And it isn't fussy about what you give it. Ask in Finnish, German or Spanish and you get the same answer. Give it
+> a sheet with two floors and it reads the floor names. If a drawing has no scale at all, measure one door and
+> every size on the sheet follows. Upload a photo of a person and it tells you that's not a floor plan. Drop in a
+> messy folder of twenty-seven files, and half a minute later it's sorted.
 
-**2:40–3:00 · Why it lasts, close** [slide 12, slide 13]
-"Models name things. Code measures. So when next year's model is better, Plumb gets better. It doesn't get
-replaced. Can a drawing answer, and show where? With Plumb: yes. Every number, boxed on the drawing."
+[C19 then slide 11 · the cost line]
+And it's cheap: most answers are pure geometry, zero cents. Reading this whole sheet costs about ten cents, once.
 
----
+[slide 12, then slide 13]
+Models name things; code measures. So a better model next year makes Plumb better, not obsolete. That's Plumb:
+blueprints that show their work.
 
 ## Speaker notes per slide (also in the pptx)
 
@@ -95,15 +93,15 @@ replaced. Can a drawing answer, and show where? With Plumb: yes. Every number, b
 | 2 Character | "Meet the site engineer. One dormitory floor, ten thousand pixels wide." | 6 |
 | 3 Problem | "A hundred and thirty-nine doors, eighty-four chairs, forty-eight sinks… and that is only the start." | 8 |
 | 4 Question | "A guess, or a receipt? Can a drawing answer, and show where?" (pause) | 7 |
-| 5 Solution | Part B 0:22 | 13 |
-| 6 Demo | Part B 0:35 (over C3/C4) | 20 |
-| 7 Deep read | Part B 0:55 (over C5/C6) | 20 |
-| 8 Honest | Part B 1:15 (over C7/C9) | 20 |
-| 9 Proof | Part B 2:25 first sentence | 8 |
-| 10 Build plan | Part B 1:35 (over C10/C11) | 25 |
-| 11 Cost | Part B 2:25 second half | 8 |
-| 12 Why it lasts | Part B 2:40 first half | 10 |
-| 13 Thank you | Part B 2:40 last line | 6 |
+| 5 Solution | the 'It starts with the scale' paragraph's lead-in ("So we asked…") | 13 |
+| 6 Demo | 'It starts with the scale…' (over C3) | 20 |
+| 7 Deep read | 'Then it counts…' (over C5/C4) | 20 |
+| 8 Honest | 'On a piping plan…' (over C7) | 20 |
+| 9 Proof | optional: '24 of 25 harder questions, scale within 2%' (Q&A material) | 8 |
+| 10 Build plan | 'Then the drawing becomes a shopping list…' (over C10) | 25 |
+| 11 Cost | 'And it's cheap…' | 8 |
+| 12 Why it lasts | 'Models name things; code measures…' | 10 |
+| 13 Thank you | 'That's Plumb: blueprints that show their work.' | 6 |
 
 DO NOT SAY: "employing people for this is stupid"; any accuracy number not in the reports; "certified to EN
 standards" (the services are estimates); "counts every symbol perfectly" (some symbol names can be wrong).
