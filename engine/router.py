@@ -292,7 +292,7 @@ def is_complex(q: str) -> bool:
 COUNT_CUE = re.compile(
     r"\b(how\s+many|number\s+of|count|counts|is\s+there|are\s+there|any|total\s+number|quantity|"
     r"montako|kuinka\s+monta|onko|wie\s+viele|anzahl|gibt\s+es|combien|nombre\s+de|y\s+a-t-il|quant[ie]|ci\s+sono|"
-    r"hur\s+många|hvor\s+mange)\b", re.I)
+    r"hur\s+många|hvor\s+mange|mitu|kui\s+palju|kas\s+on|hoeveel|aantal|cu[aá]nt[oa]s|hay)\b", re.I)
 
 
 def _not_a_count(question: str, name: str) -> bool:

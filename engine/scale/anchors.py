@@ -436,6 +436,14 @@ def solve(facts: SheetFacts, user_anchors: tuple[dict[str, Any], ...] = ()) -> S
         anchors.append(_user_anchor(ua))
 
     live = [a for a in anchors if "REJECTED:" not in (a.note or "")]   # sheet consensus rejects stay on the receipt only
+    users = [a for a in live if a.kind == "user"]
+    if users:                                   # a length the user measured decides; the rest stays on the receipt
+        u = users[-1]
+        for a in anchors:
+            if a.kind != "user" and "REJECTED" not in (a.note or ""):
+                a.note = (a.note or a.kind) + "; not used: your measurement decides"
+        return ScaleInfo(px_per_m=u.px_per_m, rel_sigma=u.rel_sigma, anchors=anchors, widths_relative=False,
+                         needs_user=False)
     combined = _combine(live)
     if combined.px_per_m is None:
         return ScaleInfo(px_per_m=None, rel_sigma=None, anchors=[], widths_relative=False, needs_user=True)
