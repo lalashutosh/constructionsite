@@ -35,7 +35,18 @@ MAX_UPLOAD = 60 * 1024 * 1024
 
 app = FastAPI(title="Plumb", version="0.2")
 app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+                   allow_origin_regex=r"https://plumb-blueprints(-[a-z0-9-]+)?\.vercel\.app",   # the deployed UI only
                    allow_methods=["*"], allow_headers=["*"])
+
+
+@app.middleware("http")
+async def _private_network(request, call_next):
+    """The deployed UI (https, public) calls this engine on localhost: Chromium's Private Network Access preflight
+    must be answered with Access-Control-Allow-Private-Network."""
+    resp = await call_next(request)
+    if request.headers.get("access-control-request-private-network"):
+        resp.headers["Access-Control-Allow-Private-Network"] = "true"
+    return resp
 
 _engine = None
 _engine_lock = threading.Lock()

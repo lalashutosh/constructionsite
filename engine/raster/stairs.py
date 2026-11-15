@@ -393,6 +393,8 @@ def _detect(image_bgr: np.ndarray, walls, faint: bool) -> list[dict]:
             m[ink_s > 0] = 0
             if m.any() and float(np.median(sat[m > 0])) > MAX_BG_SAT:
                 continue                                     # slats on a coloured fill: sauna bench, deck
+        if _is_grid(thin, box):
+            continue                                         # tiles: evenly spaced lines in BOTH directions
         turn = st["turn"]
         conf = min(0.95, 0.45 + 0.05 * min(len(win), 10) - st["gcv"] - 0.5 * st["lcv"])
         out.append({"kind": "stairs",
@@ -402,6 +404,20 @@ def _detect(image_bgr: np.ndarray, walls, faint: bool) -> list[dict]:
                               "tread_px": round(st["len"], 1), "turn_deg": round(turn),
                               "reader": READER}})
     return _dedupe(out)
+
+
+def _is_grid(thin: np.ndarray, box) -> bool:
+    """Tiled floor / grille: inside the flight's box, >= 4 near-full lines run each way (treads run one way only)."""
+    x0, y0 = np.floor(box.min(0)).astype(int)
+    x1, y1 = np.ceil(box.max(0)).astype(int)
+    sub = thin[max(0, y0):max(0, y1), max(0, x0):max(0, x1)] > 0
+    if sub.shape[0] < 8 or sub.shape[1] < 8:
+        return False
+
+    def lines(cov):
+        r = np.where(cov >= 0.6)[0]
+        return 0 if not len(r) else len(np.split(r, np.where(np.diff(r) > 2)[0] + 1))
+    return lines(sub.mean(axis=1)) >= 4 and lines(sub.mean(axis=0)) >= 4
 
 
 def _dedupe(found: list[dict]) -> list[dict]:
