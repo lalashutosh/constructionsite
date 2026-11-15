@@ -120,6 +120,18 @@ print), outer walls (legend-zone union), wings, printed tables. What they want n
   sheets hide residential findings and get sheet-fit chips, Build plan tab badge "what to buy", layer menu only lists
   real layers + "not on this sheet" line.
 
+## Update 2026-11-15 ~05:00 — pitch
+- Pitch: docs/PITCH_SCRIPT.md (recording plan C1-C19 with expected answers, 3:00 voiceover, notes, Q&A),
+  slides docs/pitch/slides/slide01-13.png (+ contact_sheet.png), deck docs/pitch/Plumb_pitch.pptx (notes inside),
+  generator docs/pitch/make_slides.py, live feature check docs/pitch/feature_check.py -> feature_check.md.
+- Fixes found by the feature check: a user-measured length decides the scale (was averaged away); Estonian /
+  Dutch / Spanish count words (8 languages agree on colorful-2002: 2 bedrooms).
+- Deployed UI: https://plumb-blueprints.vercel.app (works on the machine running the engine on :8001; CORS +
+  private-network allowed for that origin only). Redeploy: `cd web && VITE_ENGINE=http://localhost:8001/api npx
+  vite build --outDir .deploy/plumb-blueprints --emptyOutDir false && cd .deploy/plumb-blueprints && vercel deploy --prod --yes`.
+- Repo copy under abhinavchutani: not created (needs the user to run `gh repo create abhinavchutani/constructionsite
+  --public --source . --remote mine --push`).
+
 ## How to run / test
 API: `LLM_PROVIDER=verda .venv/bin/python -m uvicorn api.main:app --port 8001`; web: `cd web && VITE_ENGINE=http://localhost:8001/api npx vite`.
 Stress: `.venv/bin/python scripts/stress_big.py` (manifest `cache/stress/manifest.json`, 3 full-res Stoa sheets).
