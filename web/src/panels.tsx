@@ -1,4 +1,4 @@
-import { ViewCube, LayerToggles, LAYER_COLOURS, ServiceMap } from "./deepui";
+import { ViewCube, LayerToggles, LAYER_COLOURS, ServiceMap, PlanHeadline, FinishesMap } from "./deepui";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ClipboardList, ChevronDown, ChevronRight, CircleCheck, CircleMinus, FolderUp, BookOpen, FolderTree, LayoutGrid, Moon, Play, Ruler, Square, Sun, TriangleAlert, Upload, X } from "lucide-react";
 import { imageUrl, type BuildPlan, type Geometry, type Sample, type ScanCheck } from "./api";
@@ -833,6 +833,8 @@ export function BuildPanel(p: {
             </ol>
           ) : (
             <div className="flist">
+              <PlanHeadline basis={pl.basis as never} services={pl.services_map?.quantities ?? null} />
+              {pl.finishes_map && pl.finishes_map.rooms.length > 0 && <FinishesMap map={pl.finishes_map} />}
               {ordered.map(([g, items]) => (
                 <div key={g} className="cgroup">
                   <h3>{g}</h3>

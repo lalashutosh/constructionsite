@@ -295,3 +295,56 @@ export function ServiceMap({ map, kind }: { map: { outline: [number, number][]; 
     </figure>
   );
 }
+
+
+// ---------------------------------------------------------------- build plan: headline numbers + finishes map
+export function PlanHeadline({ basis, services }: { basis: Record<string, { value: number | null; unit: string; tag: string }>;
+  services?: Record<string, { value: number; unit: string }> | null }) {
+  const pick: [string, string, string][] = [["floor_area_m2", "floor area", "m²"], ["wall_area_m2", "wall area", "m²"],
+    ["doors", "doors", ""], ["windows", "windows", ""]];
+  const tiles = pick.filter(([k]) => basis[k]?.value != null && Number(basis[k].value) > 0)
+    .map(([k, w, u]) => ({ k, v: Number(basis[k].value), w, u, est: basis[k].tag === "defaulted" }));
+  for (const [k, w, u] of [["pipe_m", "pipework", "m"], ["cable_m", "cable", "m"]] as const)
+    if (services?.[k]) tiles.push({ k, v: services[k].value, w, u, est: true });
+  if (!tiles.length) return null;
+  return (
+    <div className="plan-head">
+      {tiles.map((t) => (
+        <div key={t.k} className={`ph-tile ${t.k}`}>
+          <b>{Math.round(t.v).toLocaleString()}{t.u ? <small> {t.u}</small> : null}</b>
+          <span>{t.w}{t.est ? " · est." : ""}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export function FinishesMap({ map }: { map: NonNullable<import("./api").BuildPlan["finishes_map"]> }) {
+  const xs = map.outline.map((q) => q[0]), ys = map.outline.map((q) => q[1]);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+  const pad = 0.03 * Math.max(x1 - x0, y1 - y0);
+  const [hot, setHot] = useState<string | null>(null);
+  const tot = Object.entries(map.totals).sort((a, b) => b[1].m2 - a[1].m2);
+  const sum = tot.reduce((a, [, v]) => a + v.m2, 0) || 1;
+  return (
+    <figure className="finmap">
+      <figcaption><b>Floor finishes</b> <small className="muted">by room type · hover a finish</small></figcaption>
+      <svg viewBox={`${x0 - pad} ${y0 - pad} ${x1 - x0 + 2 * pad} ${y1 - y0 + 2 * pad}`} preserveAspectRatio="xMidYMid meet" role="img" aria-label="rooms coloured by floor finish">
+        <polygon points={map.outline.map((q) => q.join(",")).join(" ")} className="svc-outline" />
+        {map.rooms.map((r, i) => (
+          <polygon key={i} points={r.polygon.map((q) => q.join(",")).join(" ")} fill={r.colour}
+            opacity={hot && hot !== r.finish ? 0.18 : 0.85} className="fin-room"><title>{`${r.name}: ${r.finish}, ${r.area_m2} m²`}</title></polygon>
+        ))}
+      </svg>
+      <div className="finbar" aria-hidden="true">{tot.map(([n, v]) => <i key={n} style={{ width: `${(v.m2 / sum) * 100}%`, background: v.colour }} />)}</div>
+      <ul className="finlegend">
+        {tot.map(([n, v]) => (
+          <li key={n} onMouseEnter={() => setHot(n)} onMouseLeave={() => setHot(null)} onFocus={() => setHot(n)} onBlur={() => setHot(null)} tabIndex={0}>
+            <i style={{ background: v.colour }} /><span>{n}</span><b>{v.m2.toFixed(1)} m²</b>
+          </li>
+        ))}
+      </ul>
+      <small className="muted">{map.note}</small>
+    </figure>
+  );
+}

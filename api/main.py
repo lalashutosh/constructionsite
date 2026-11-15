@@ -814,7 +814,37 @@ async def build_plan(path: str, vibe: str = "standard", it_load_kw: Optional[flo
         counts.update(sh)
         out = plan(facts, vibe, px, tag, needs={"it_load_kw": it_load_kw} if it_load_kw else None, counts=counts)
         out["read_from"] = use
-        if fpo is not None and facts.extras.get("route") == "cad":      # services: estimated from the deep read
+        rooms_ = [e for e in facts.elements if e.kind == "room" and len(e.polygon) >= 3]
+        ppm_ = float(fpo.attrs["px_per_m"]) if fpo is not None else (px if px and px != 1.0 else None)
+        if fpo is None and rooms_ and ppm_:                 # any drawing: outline = union of its rooms
+            from shapely.geometry import Polygon as _Pg
+            from shapely.ops import unary_union as _uu
+            u = _uu([_Pg(r.polygon).buffer(0.3 * ppm_) for r in rooms_]).buffer(-0.3 * ppm_)
+            u = max(u.geoms, key=lambda g: g.area) if u.geom_type == "MultiPolygon" else u
+            if not u.is_empty:
+                from contracts.proof import Element as _El
+                fpo = _El(id="footprint_rooms", kind="footprint", polygon=[tuple(c) for c in u.exterior.coords][:-1],
+                          attrs={"px_per_m": ppm_})
+        if fpo is not None and rooms_:                      # finishes map: each room's floor finish and area
+            FIN = [(r"bath|wc|toilet|sauna|shower|kylpy|pesu|vessa|kph|wet", "Ceramic tiles", "#38bdf8"),
+                   (r"kitchen|keitti|kk\b|k\b", "Kitchen tiles", "#22d3ee"),
+                   (r"bed|living|makuu|mh|oh|olohuone|dining|room|study|office|dorm", "Oak parquet", "#d4a373"),
+                   (r"hall|corridor|entr|eteinen|storage|closet|vaate|utility|circulation", "Vinyl", "#a3a3a3"),
+                   (r"balcon|parveke|terrace", "Decking", "#84cc16")]
+            import re as _re2
+            from shapely.geometry import Polygon as _Pg2
+            k_ = float(fpo.attrs["px_per_m"])
+            fin_rooms, fin_tot = [], {}
+            for r in rooms_:
+                name = f"{r.label or ''} {r.subtype or ''}".lower()
+                f_ = next(((n, c) for rx, n, c in FIN if _re2.search(rx, name)), ("Laminate", "#c084fc"))
+                a_ = float(r.attrs.get("area_m2") or _Pg2(r.polygon).buffer(0).area / k_ ** 2)
+                fin_rooms.append({"polygon": [list(map(float, q)) for q in r.polygon], "finish": f_[0], "colour": f_[1],
+                                  "name": r.label or (r.subtype or "room"), "area_m2": round(a_, 1)})
+                fin_tot[f_[0]] = {"m2": round(fin_tot.get(f_[0], {}).get("m2", 0) + a_, 1), "colour": f_[1]}
+            out["finishes_map"] = {"outline": [list(map(float, q)) for q in fpo.polygon], "rooms": fin_rooms,
+                                   "totals": fin_tot, "note": "finish by room type (wet rooms tiled); +10% waste not included"}
+        if fpo is not None:                                 # services: estimated (deep read or the plan's fixtures)
             try:
                 from engine import symbols as SY
                 from engine.layers import estimate_services

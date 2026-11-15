@@ -102,6 +102,9 @@ export interface BuildPlan {
   /** estimated services drawn over the building (construction sheets without an MEP sheet) */
   services_map?: { w: number; h: number; outline: [number, number][]; piping: [number, number][][]; electrical: [number, number][][];
     quantities: Record<string, { value: number; unit: string; tag: string; basis: string }> } | null;
+  /** each room coloured by its floor finish, with totals per finish */
+  finishes_map?: { outline: [number, number][]; rooms: { polygon: [number, number][]; finish: string; colour: string; name: string; area_m2: number }[];
+    totals: Record<string, { m2: number; colour: string }>; note: string } | null;
   /** true when the engine endpoint was unreachable and the local sample shape is shown */
   mock?: boolean;
 }

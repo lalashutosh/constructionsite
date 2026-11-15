@@ -126,6 +126,20 @@ def _iou(a: np.ndarray, b: np.ndarray, tol: int) -> Optional[float]:
     return None if u == 0 else float((a & b).sum() / u)
 
 
+import re as _re
+FLOOR_WORD = _re.compile(
+    r"\b(\d+\.?\s*(kerros|krs|floor|fl|etage|stock|og|v[åa]ning|plan|korrus)|(kerros|floor|etage|level|v[åa]ning|korrus)\s*\d+|"
+    r"(first|second|third|fourth|ground|basement|upper|lower|attic)\s+floor|kellari|ullakko|erdgeschoss|obergeschoss|"
+    r"untergeschoss|dachgeschoss|kellergeschoss|bottenv[åa]ning|k[äa]llare|vind|pohjakerros|maantasokerros|[EKOU]G\b)", _re.I)
+
+
+def _printed_levels(floors: list[dict]) -> bool:
+    """Several floors only when at least two plans carry DIFFERENT printed floor names (1. KERROS / 2. KERROS,
+    First floor / Second floor, Erdgeschoss / Obergeschoss ...). Separate-looking regions alone are one floor."""
+    names = {f.get("level_label", "").strip().lower() for f in floors if FLOOR_WORD.search(f.get("level_label") or "")}
+    return len(names) >= 2
+
+
 def _in_box(wl: dict, box) -> bool:
     xs = [p[0] for p in wl["outer"]]
     ys = [p[1] for p in wl["outer"]]
@@ -306,6 +320,10 @@ def check(img: np.ndarray, walls_cnn: Optional[list], walls_trace: list, rooms_c
         floors.append({"view": v["n"], "box": v["box"], "level": lv, "level_label": v.get("level_label") or "",
                        "label": v.get("level_label") or (f"Level {lv}" if isinstance(lv, int) else f"Floor {k + 1}"),
                        "wall_indices": idx, "level_source": "read by AI reviewers" if isinstance(lv, int) else "position on sheet"})
+    if len(floors) > 1 and not _printed_levels(floors):
+        warnings.append(f"{len(floors)} plan regions looked separate, but the sheet does not print distinct floor names: "
+                        "read as ONE floor")
+        floors = []
     if len(floors) > 1:
         warnings.append(f"{len(floors)} floor plans on one sheet: shown as {len(floors)} floors")
     warnings += [f"Views: {c}" for c in cut_notes]

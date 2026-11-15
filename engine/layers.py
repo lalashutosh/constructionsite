@@ -102,6 +102,10 @@ def estimate_services(facts, ck: dict | None, ppm: float) -> dict[str, Any]:
     from shapely.geometry import Point, Polygon
     out: dict[str, Any] = {"piping": [], "electrical": [], "quantities": {}}
     els = (ck or {}).get("elements", [])
+    if not any(e["kind"] in WET for e in els):          # no deep read: the plan's own fixtures (CubiCasa symbols)
+        km = {"toilet": "toilet", "sink": "sink", "bath": "bathtub", "shower": "shower", "bathtub": "bathtub"}
+        els = [{"kind": km[e.kind], "polygon": [list(q) for q in e.polygon]} for e in facts.elements
+               if e.kind in km and len(e.polygon) >= 2]
     zones = [(Polygon(z["polygon"]).buffer(0), z["name"]) for z in (ck or {}).get("zones", []) if len(z.get("polygon", [])) >= 3]
     wet = []
     for e in els:
