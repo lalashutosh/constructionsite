@@ -66,6 +66,33 @@ areas without the DXF sibling are weak. The app shows such answers amber ("needs
 - Providers are swappable (open-weight models via Verda or Featherless, Gemini, Anthropic) because they never
   produce the number.
 
+## 5. Best use of Verda
+
+- **1,219 logged Verda calls, 2.2 M tokens, $9.35 for the whole hackathon** (`logs/verda_cost.jsonl`): DeepSeek V4.1
+  Flash for fast calls (806, $0.24), Kimi K3.1 Pro for strong calls (413, $9.11). Every call is priced, logged and
+  checked against a hard budget cap (`scripts/verda.py`).
+- **Product:** two Verda vision reviewers must agree before a sheet is built in 3D (`engine/scancheck.py`, about
+  $0.0045 per sheet); Verda names symbol types on the deep read (`engine/symbols.py`); Verda plans queries for new
+  questions (`engine/query/`). None of these produce a number.
+- **Build process:** `scripts/verda_task.py` uses a cheap Verda model as a code-writing worker. It writes one scoped
+  file, the tests check it, errors are fed back, and the result is staged for review. `engine/sheet_findings.py`
+  was written this way in one attempt (`logs/verda_tasks.jsonl`).
+
+## 6. Google Gemini
+
+- Drop-in provider through Google's OpenAI-compatible endpoint: `LLM_PROVIDER=gemini`, `gemini-2.5-flash` (fast) and
+  `gemini-2.5-pro` (strong), overridable per tier (`engine/query/llm.py`).
+- Same prompts, vision inputs, cost ledger and budget cap as Verda. Because the model only names things, swapping
+  providers does not change how counts and measurements are produced.
+
+## 7. CI/CD on CRACI
+
+- Six jobs on CRACI runners (`.github/workflows/ci.yml`): the test suite on **native amd64 and arm64**, web typecheck
+  and build with the artifact uploaded, the real API booted and **attacked with the path-traversal requests our own
+  stress test found**, an **egress-lock proof** that tests the network policy instead of trusting it, and a summary.
+- Right-sized machines per job (4 / 2 / 1 vCPU), no secrets needed, pip and npm caching.
+- Honest status: the egress job showed the lock was not yet in force on our project on 2026-11-14; we report it.
+
 ## Five-minute check
 
 ```bash

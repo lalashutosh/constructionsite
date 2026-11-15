@@ -14,6 +14,19 @@ Junction 2026 · Stoa challenge *"Make Blueprints Talk"* ·
 
 ---
 
+## By the numbers
+
+| | |
+|---|---|
+| **6,192** | dataset questions scored end to end (DEV split; holdout never tuned on) |
+| **24 / 25** | harder questions right on Stoa's three full-size construction sheets |
+| **67 megapixels** | the largest sheet read in one pass: 139 doors, 84 chairs, 48 sinks, 48 toilets, 46 beds |
+| **99.8%** | IFC areas within 2% (n = 816) |
+| **0 tokens · 214 ms** | mean cost and time per answer in the latest accuracy run, on a laptop CPU |
+| **1,219 calls · 2.2 M tokens · $9.35** | every Verda model call made during the whole hackathon, logged one by one |
+| **255** | automated tests, run on native amd64 **and** arm64 CRACI runners on every push |
+| **8** | languages you can ask in |
+
 ## What it does
 
 | You give it | You get |
@@ -64,6 +77,50 @@ sibling are weak. Low-agreement answers are shown amber ("needs a look"), never 
 - A deep read of a huge sheet: two vision-model reviews to name the symbol types, about $0.08 for the dormitory sheet,
   once; re-reads are free (cached by file SHA-256).
 - Pluggable providers: none (default), Verda / Featherless (open-weight models), Gemini, Anthropic.
+
+## Verda: open-weight models doing real work, on a hard budget
+
+Verda is Plumb's model layer, in the product **and** in how we built it. Every call goes through one client
+(`engine/query/llm.py` → `scripts/verda.py`), is priced, appended to `logs/verda_cost.jsonl`, and refused if it would
+cross the budget cap (`BUDGET_VERDA_USD`).
+
+| | Model | Calls | Tokens (in / out) | Cost |
+|---|---|---|---|---|
+| fast | DeepSeek V4.1 Flash | 806 | 654 k / 78 k | $0.24 |
+| strong | Kimi K3.1 Pro | 413 | 733 k / 764 k | $9.11 |
+| **total** | | **1,219** | **2.2 M** | **$9.35** |
+
+*Source: `logs/verda_cost.jsonl`, 2026-11-14 12:57 → 2026-11-15 07:47 (Helsinki).*
+
+**In the product, three jobs, never a number:**
+
+1. **Two-reviewer scan check** (`engine/scancheck.py`). Before anything is built in 3D, a fast and a strong Verda
+   vision model each judge the sheet (numbered views, two wall-reader overlays) in a fixed JSON form. Their
+   **consensus** labels the views and raises flags; code picks the walls. About **$0.0045 per sheet**, cached by
+   SHA-256 ([decision](docs/decisions/scan-check-reviewers.md)).
+2. **Naming on the deep read** (`engine/symbols.py`). Computer vision finds and counts every repeated symbol; the
+   models only name each *type*, in parallel, with a second focused pass for anything left unnamed.
+3. **Query planner** (`engine/query/`). A question no template matches becomes a validated `query_spec` that code
+   executes against the drawing's elements.
+
+**In the build, Verda wrote code.** `scripts/verda_task.py` gives a cheap model one tightly scoped file to write,
+checks it (syntax, then the tests), feeds errors back, retries, and stages the result for review before it can
+land. `engine/sheet_findings.py` was produced this way: one attempt, 13.8 s
+(`logs/verda_tasks.jsonl`).
+
+## Google Gemini: a first-class, drop-in provider
+
+Because models only name things and code measures, the model is swappable. Gemini is wired in through Google's
+OpenAI-compatible endpoint (`engine/query/llm.py`):
+
+```bash
+LLM_PROVIDER=gemini        # GEMINI_API_KEY (or GOOGLE_API_KEY) in .env
+# fast tier  -> gemini-2.5-flash     strong tier -> gemini-2.5-pro   (override with GEMINI_MODEL_FAST / _STRONG)
+```
+
+Same fixed-JSON prompts, same vision inputs, same cost ledger and budget cap, same "never produces a number" rule.
+Switching from open-weight models to Gemini is one environment variable; the accuracy of counts and measurements
+does not depend on which provider is on.
 
 ## How it works
 
@@ -116,13 +173,33 @@ CubiCasa5k weights (`weights/`, see `docs/HANDOFF.md`) and the dataset (`DATASET
 | `evalkit/` | Scoring harness, deterministic DEV/holdout split, reports in `evalkit/out/` |
 | `docs/` | [Evaluation guide](docs/JUDGES.md), [architecture](docs/ARCHITECTURE.md), [evidence](docs/evidence/) (the cited evaluation reports), stress reports, decisions, pitch |
 
-## CI on CRACI
+## CI/CD on CRACI
 
-Every push runs `.github/workflows/ci.yml` on CRACI runners: the Python suite on native amd64 and arm64, the FastAPI
-server booted and probed with the path-traversal requests our stress test found (all must return 400), right-sized
-machines per job, no secrets needed (dataset-dependent tests skip), and the web build uploaded as an artifact. An
-`egress-proof` job checks the network policy instead of trusting it; on 2026-11-14 the lock was not in force for our
-project, and we report that rather than claim it.
+Every push and pull request runs [`.github/workflows/ci.yml`](.github/workflows/ci.yml) entirely on CRACI runners.
+Six jobs, each set up with `cracicorp/setup@v1`, a right-sized machine and its own network policy:
+
+| Job | Runner | What it proves |
+|---|---|---|
+| `python (amd64)` | `ubuntu-24.04`, 4 vCPU | the full 255-test suite + the ProofObject contract check |
+| `python (arm64)` | `craci-slim-arm`, 4 vCPU, **native arm64, no QEMU** | the same suite on the architecture most judges' laptops run |
+| `web` | 4 vCPU | TypeScript typecheck + production build, `web/dist` uploaded as an artifact |
+| `api smoke + security` | 2 vCPU | boots the real FastAPI server and **replays the attacks our own stress test found**: `/etc/passwd`, `../../etc/passwd`, `/proc/self/environ` must all return 400 |
+| `egress lock proof` | 1 vCPU, `default: deny` + PyPI/GitHub presets | **tests the supply-chain lock instead of trusting it**: PyPI must be reachable, `example.com` must not |
+| `summary` | 1 vCPU | writes a job summary of every result |
+
+Design choices: **no secrets in CI** (dataset, weights, OCR and LLM tests skip cleanly, so there is nothing to leak
+through a dependency); **a security bug found once stays fixed** (it becomes a CI probe); **pip and npm caches** keyed
+on the lock files. On 2026-11-14 the egress job showed the lock was not yet in force on our project, so that job is
+red and we say so, rather than claim a lock we could not verify.
+
+## What's next
+
+- **A provider bake-off in CI:** run the same deep read through Verda and Gemini and publish naming agreement and
+  cost per sheet side by side.
+- **Eval as a gate:** a nightly CRACI job that runs `make eval` on the DEV split and fails on any accuracy regression.
+- **Verda as a review swarm:** more `verda_task` workers on scoped files, each one checked by tests before review.
+- **Renaming in one click feeds back:** user corrections to symbol names become labelled data for the next read.
+- **More sheet types:** electrical and HVAC schedules read the same way piping tags are today.
 
 ## Credits and licences
 
