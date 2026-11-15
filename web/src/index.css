@@ -661,3 +661,30 @@ body { font-size: 15px; }
 .seg .segplan small { font-size: 10px; letter-spacing: .02em; text-transform: none; color: var(--accent-text); border: 1px solid var(--accent);
   border-radius: 999px; padding: 1px 6px; }
 .seg .segplan-ic { color: var(--accent-text); }
+
+/* ---- UI/UX pass (ui-ux-pro-max checklist): z-index scale, focus, stable hovers, targets, hierarchy ---- */
+:root { --z-overlay: 10; --z-controls: 20; --z-panel: 30; --z-tour: 50; }
+.layers { z-index: var(--z-controls); }
+.vcube { z-index: var(--z-controls); }
+.tour { z-index: var(--z-tour); }
+.tourbtn { z-index: calc(var(--z-tour) - 10); }
+.layers-btn { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; }
+.vcube-row button { min-width: 34px; min-height: 28px; display: inline-flex; align-items: center; justify-content: center; }
+.layer { min-height: 32px; }
+/* visible keyboard focus on every new control */
+.vcube-row button:focus-visible, .layer:focus-visible, .layers-btn:focus-visible, .cktotals li:focus-visible,
+.ck-rename:focus-visible, .tourbtn:focus-visible, .tour-nav button:focus-visible, .ckrooms li:focus-visible,
+.selchip button:focus-visible, .scalebadge .linkbtn:focus-visible, .seg button:focus-visible {
+  outline: 2px solid var(--accent-text); outline-offset: 2px; }
+/* hovers change colour / shadow, never position (no layout shift) */
+.cktotals li:hover { transform: none; box-shadow: 0 0 0 1px var(--accent) inset; }
+.tourbtn:hover { transform: none; background: var(--tint); }
+/* rename is discoverable without hover (touch) */
+.ck-rename { opacity: .45; min-width: 28px; min-height: 28px; display: inline-flex; align-items: center; justify-content: center; }
+.cktotals li:hover .ck-rename, .ck-rename:focus-visible { opacity: 1; }
+/* hierarchy: the sheet summary headline and the counts read first */
+.cksummary p.lead { font-size: 15px; font-weight: 700; color: var(--text); }
+.cktotals li b, .svc-tile b, .svc-big b, .flist .crow .cq { font-variant-numeric: tabular-nums; }
+.scalebadge b { font-size: 13px; }
+.segplan small { white-space: nowrap; }
+.cksummary p { line-height: 1.5; }

@@ -1,6 +1,6 @@
 import { ViewCube, LayerToggles, LAYER_COLOURS, ServiceMap } from "./deepui";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ChevronDown, ChevronRight, CircleCheck, CircleMinus, FolderUp, BookOpen, FolderTree, LayoutGrid, Moon, Play, Ruler, Square, Sun, TriangleAlert, Upload, X } from "lucide-react";
+import { ClipboardList, ChevronDown, ChevronRight, CircleCheck, CircleMinus, FolderUp, BookOpen, FolderTree, LayoutGrid, Moon, Play, Ruler, Square, Sun, TriangleAlert, Upload, X } from "lucide-react";
 import { imageUrl, type BuildPlan, type Geometry, type Sample, type ScanCheck } from "./api";
 import { fmtCost, fmtNum, reliabilityWord, sentenceOf, tierSentence, verdict, type FindingSpec } from "./logic";
 import ProofView, { ProofCard, SeeProof, verdictLine } from "./proofview";
@@ -755,7 +755,7 @@ export function Seg({ mode, onMode }: { mode: "findings" | "plan"; onMode: (m: "
     <div className="seg" role="tablist" aria-label="Right column view">
       <button role="tab" aria-selected={mode === "findings"} className={mode === "findings" ? "on" : ""} onClick={() => onMode("findings")}>Findings</button>
       <button role="tab" aria-selected={mode === "plan"} className={`${mode === "plan" ? "on" : ""} segplan`} onClick={() => onMode("plan")}>
-        <span className="segplan-ic" aria-hidden="true">▤</span>Build plan <small>what to buy</small></button>
+        <ClipboardList size={14} aria-hidden="true" className="segplan-ic" />Build plan <small>what to buy</small></button>
     </div>
   );
 }

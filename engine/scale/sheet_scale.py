@@ -31,7 +31,7 @@ from engine.scale import sheet_text
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 CACHE = ROOT / "cache" / "sheet_scale"
 CHECKS = ROOT / "cache" / "checks"
-VERSION = "v2"
+VERSION = "v3"
 AGREE = 0.05           # anchors within 5% count as agreeing
 M_PER_IN = 0.0254
 
@@ -770,6 +770,12 @@ def sheet_state(abs_path: str, sha: str, max_px: int = 2000) -> dict:
         if v:
             users.append({"id": i, "ppm": v, "label": c["label"] if c else i, "boxes": c["boxes"] if c else []})
     cons = consensus(live)
+    w = cons["winner"]
+    if w and not users and len(w["items"]) == 1 and w["items"][0]["family"] == "dim" and w["items"][0].get("members", 1) == 1:
+        span_m = max(res["w"], res["h"]) / w["ppm"]       # one unconfirmed dimension that makes the sheet > 120 m wide
+        if span_m > 120:                                  # is a misread (8719 read where 2719 is printed): not a scale
+            live = [c for c in live if c is not w["items"][0]]
+            cons = consensus(live)
     return {"res": res, "cands": cands, "live": live, "rejected": sorted(rejected), "answers": answers, "users": users,
             "cons": cons, "conf": 0.99 if users else confidence(res, cons)}
 

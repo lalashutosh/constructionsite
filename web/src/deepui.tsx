@@ -1,5 +1,6 @@
 /** Deep-read UI: view cube (2D/3D, orbit, re-centre), layer toggles, "What's on this sheet" checklist, first-time tour. */
 import { useEffect, useRef, useState } from "react";
+import { Crosshair, Layers as LayersIcon, ChevronUp, ChevronDown, Pencil } from "lucide-react";
 import { BASE } from "./api";
 import type { PlumbViewer } from "./viewer3d";
 
@@ -41,7 +42,7 @@ export function ViewCube({ viewer }: { viewer: () => PlumbViewer | null }) {
         <button className={mode === "front" ? "on" : ""} onClick={() => go("front")}>Front</button>
         <button className={mode === "side" ? "on" : ""} onClick={() => go("side")}>Side</button>
         <button className={mode === "3d" ? "on" : ""} onClick={() => go("3d")}>3D</button>
-        <button title="Re-centre" onClick={() => viewer()?.recenter()}>⌖</button>
+        <button title="Re-centre" aria-label="Re-centre the view" onClick={() => viewer()?.recenter()}><Crosshair size={13} aria-hidden="true" /></button>
       </div>
     </div>
   );
@@ -62,7 +63,8 @@ export function LayerToggles({ viewer, layers, extra }: { viewer: () => PlumbVie
   if (!layers) return null;
   return (
     <div className={`layers ${open ? "open" : ""}`}>
-      <button className="layers-btn" onClick={() => setOpen((o) => !o)} aria-expanded={open}>Layers {open ? "▾" : "▸"}</button>
+      <button className="layers-btn" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
+        <LayersIcon size={14} aria-hidden="true" /> Layers {open ? <ChevronDown size={13} aria-hidden="true" /> : <ChevronUp size={13} aria-hidden="true" />}</button>
       {open && <div className="layers-list">
       {LAYER_NAMES.filter(([k]) => k === "walls" || ((layers as Record<string, unknown[] | undefined>)[k]?.length ?? 0) > 0 || (extra?.[k] ?? 0) > 0).map(([k, label]) => {
         const has = true;
@@ -183,7 +185,7 @@ export function ChecklistPanel(p: { path: string | null; deepHint?: { on: boolea
                   <small><i className={`dot ${t.tier}`} /> {t.tier === "green" ? "two checks agree" : "one check"}</small></span>
                 <b>{t.count}</b>
                 <button className="ck-rename" title="Wrong name? Rename this symbol (every copy follows)"
-                  onClick={(ev) => { ev.stopPropagation(); void rename(t.kind); }}>✎</button>
+                  aria-label={`Rename ${t.label}`} onClick={(ev) => { ev.stopPropagation(); void rename(t.kind); }}><Pencil size={13} aria-hidden="true" /></button>
               </li>
             ))}
           </ul>
