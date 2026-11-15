@@ -243,7 +243,10 @@ class PipelineEngine:
         try:
             from engine import symbols as _sym
             _sha = facts_cache.sha256_file(_abs(path))
-            _cad = (self.analyze(path, allow_siblings=allow_siblings).extras.get("route") == "cad")
+            # construction sheets, and EVERY image a user uploads (unknown drawings): the deep read answers counts.
+            # Dataset plans keep their measured residential readers (benchmark protected).
+            _upload = "/cache/uploads/" in _abs(path).replace("\\", "/") and not benchmark
+            _cad = _upload or (self.analyze(path, allow_siblings=allow_siblings).extras.get("route") == "cad")
             _ck = None if (not _cad or self._printed_first(path, question)) else _sym.answer(_sha, question)
         except Exception:  # noqa: BLE001
             _ck = None

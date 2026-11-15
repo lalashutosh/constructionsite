@@ -27,7 +27,7 @@ import numpy as np
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 CACHE = ROOT / "cache" / "symbols"
-VERSION = "v24"
+VERSION = "v25"
 NAMES = ["bed", "side table", "desk", "chair", "sofa", "lounge chair", "seating group", "exercise bike", "treadmill", "table", "closet", "wardrobe", "toilet", "sink",
          "shower", "bathtub", "door", "window", "stair", "tv", "kitchen counter", "fridge", "gym equipment", "washer",
          "plant", "column", "other"]
@@ -438,15 +438,31 @@ def _checklist(abs_path: str, sha: str, facts, llm) -> dict:
     deep = deep_info(prof, len(rooms))
     fp = next((e for e in facts.elements if e.kind == "footprint" and e.attrs.get("px_per_m")), None)
     out: dict[str, Any] = {"deep": deep, "rooms": [], "totals": [], "elements": [], "types": [], "cost": {"usd": 0.0, "ms": 0}}
-    if fp is None:
-        out["note"] = "no verified building outline at a known scale on this sheet"
-        return out
-    ppm = float(fp.attrs["px_per_m"])
     g = cv2.imread(abs_path, cv2.IMREAD_GRAYSCALE)
     if g is None:
         return out
     mask = np.zeros(g.shape, np.uint8)
-    cv2.fillPoly(mask, [np.array(fp.polygon, np.int32)], 1)
+    if fp is not None:
+        ppm = float(fp.attrs["px_per_m"])
+        cv2.fillPoly(mask, [np.array(fp.polygon, np.int32)], 1)
+    else:                                   # any image: the plan's floor area and the solved (or door-prior) scale
+        try:
+            from engine.scale.anchors import solve
+            sc = solve(facts, ())
+            ppm = float(sc.px_per_m) if sc and sc.px_per_m else None
+        except Exception:  # noqa: BLE001
+            ppm = None
+        if not ppm:
+            out["note"] = "no scale could be estimated for this image"
+            return out
+        out["scale_note"] = "estimated scale (typical door width); give one real length for exact sizes"
+        blobs = [e for e in facts.elements if e.kind in ("floor_blob", "room") and len(e.polygon) >= 3]
+        for e in blobs:
+            cv2.fillPoly(mask, [np.array([(q[0], q[1]) for q in e.polygon], np.int32)], 1)
+        if mask.sum() < 0.05 * mask.size:
+            H_, W_ = g.shape
+            mask[int(0.03 * H_):int(0.97 * H_), int(0.03 * W_):int(0.97 * W_)] = 1
+        mask = cv2.dilate(mask, np.ones((max(3, int(0.5 * ppm)) | 1,) * 2, np.uint8))
     words = T.words(abs_path, sha)
     lab, st, keep, thin = _components(g, mask, words, ppm)
     reps = _cluster(lab, st, keep)
@@ -542,6 +558,8 @@ def _checklist(abs_path: str, sha: str, facts, llm) -> dict:
     try:                                     # door swings: grey quarter-circle arcs, found and counted by geometry
         dmask = cv2.dilate(mask, np.ones((int(1.5 * ppm) | 1,) * 2, np.uint8))   # doors in the outer wall swing outside
         dboxes = door_arcs(abs_path, dmask, ppm)
+        if len(dboxes) < 3:
+            dboxes = door_arcs(abs_path, dmask, ppm, dark_ink=True)
         if dboxes:
             out["totals"] = [t for t in out["totals"] if t["kind"] != "door"]
             out["elements"] = [e for e in out["elements"] if e["kind"] != "door"]
@@ -728,7 +746,7 @@ def _summary(abs_path: str, sha: str, facts, words: list[dict], fp, ck: dict) ->
     return out
 
 
-def door_arcs(abs_path: str, mask: np.ndarray, ppm: float) -> list[list[float]]:
+def door_arcs(abs_path: str, mask: np.ndarray, ppm: float, dark_ink: bool = False) -> list[list[float]]:
     """Door swings drawn as thin GREY arcs (CAD draws the swing lighter than the walls): grey, colourless strokes inside
     the building, then a RANSAC circle fit per stroke: radius 0.55-1.25 m at the solved scale, the arc spanning a
     quarter circle (55-135 deg). The leaf line in the same stroke is an outlier. Code only, no model. Boxes in px."""
@@ -739,6 +757,10 @@ def door_arcs(abs_path: str, mask: np.ndarray, ppm: float) -> list[list[float]]:
     sat = cv2.cvtColor(col, cv2.COLOR_BGR2HSV)[:, :, 1]
     dark = cv2.dilate((g < 100).astype(np.uint8), np.ones((3, 3), np.uint8))
     grey = ((g >= 110) & (g <= 215) & (sat < 40) & (mask > 0) & (dark == 0)).astype(np.uint8)
+    if dark_ink:                                        # plans that draw swings in black: thin dark strokes instead
+        dk = ((g < 150) & (mask > 0)).astype(np.uint8)
+        thick = cv2.morphologyEx(dk, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+        grey = dk & (1 - cv2.dilate(thick, np.ones((3, 3), np.uint8)))
     Lw = max(9, int(0.5 * ppm))                         # walls / jambs are straight: take them out so a swing that touches
     straight = cv2.morphologyEx(grey, cv2.MORPH_OPEN, np.ones((1, Lw), np.uint8)) | \
         cv2.morphologyEx(grey, cv2.MORPH_OPEN, np.ones((Lw, 1), np.uint8))   # a wall becomes its own stroke

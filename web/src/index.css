@@ -511,10 +511,10 @@ body { font-size: 15px; }
 /* ---- deep read UI: view cube, layers, checklist, tour, selection chip (theme variables only) ---- */
 .viewer { position: relative; }
 .vcube { position: absolute; top: 64px; right: 14px; z-index: 6; display: flex; flex-direction: column; align-items: center; gap: 6px; user-select: none; }
-.vcube svg { width: 70px; height: 70px; cursor: grab; transition: transform 120ms linear; filter: drop-shadow(0 3px 8px rgba(0,0,0,.18)); }
-.vcube svg:active { cursor: grabbing; }
+.vcube > svg { width: 70px; height: 70px; cursor: grab; transition: transform 120ms linear; filter: drop-shadow(0 3px 8px rgba(0,0,0,.18)); }
+.vcube > svg:active { cursor: grabbing; }
 .vcube-oct { fill: var(--panel); stroke: var(--accent); stroke-width: 2.2; transition: fill 180ms ease-out; }
-.vcube svg:hover .vcube-oct { fill: var(--tint); }
+.vcube > svg:hover .vcube-oct { fill: var(--tint); }
 .vcube-n { fill: var(--muted); font-size: 11px; text-anchor: middle; font-weight: 700; }
 .vcube-mode { fill: var(--accent-text); font-size: 20px; text-anchor: middle; font-weight: 800; letter-spacing: .5px; }
 .vcube-row { display: flex; gap: 2px; background: var(--panel); border: 1px solid var(--rule); border-radius: 8px; padding: 3px; }

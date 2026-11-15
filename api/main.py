@@ -167,7 +167,27 @@ async def _save_upload(file: UploadFile) -> str:
 
 @app.post("/api/upload")
 async def upload(file: UploadFile = File(...)) -> dict:
-    return {"path": await _save_upload(file)}
+    path = await _save_upload(file)
+    threading.Thread(target=_deep_read_bg, args=(path,), daemon=True).start()   # every upload gets the deep read
+    return {"path": path, "deep_read": "started"}
+
+
+def _deep_read_bg(path: str) -> None:
+    """Start the deep read as soon as a drawing arrives (cached per sha: the checklist panel then just loads it)."""
+    try:
+        if not path.lower().endswith((".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff", ".bmp")):
+            return
+        from engine import symbols
+        from engine.pipeline import _abs
+        eng = engine()
+        facts = eng.analyze(path)
+        ap = _abs(path)
+        revs = _reviewers()
+        if revs:
+            revs[-1].no_think, revs[-1].timeout = False, 240
+        symbols.checklist(ap, facts.provenance.sha256 or facts_cache.sha256_file(ap), facts, llm=revs)
+    except Exception:  # noqa: BLE001  (the panel retries on open)
+        __import__("logging").getLogger("plumb.api").warning("background deep read failed for %s", path, exc_info=True)
 
 
 @app.post("/api/ask", response_model=ProofObject)
