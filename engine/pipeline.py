@@ -259,7 +259,8 @@ class PipelineEngine:
             _cmp = _sym.compare(_sha, question) if locals().get("_cad") else None
         except Exception:  # noqa: BLE001
             _cmp = None
-        if _cmp is None and locals().get("_cad"):            # a count of something the deep read did not find
+        _cad_sheet = locals().get("_cad") and self.analyze(path, allow_siblings=allow_siblings).extras.get("route") == "cad"
+        if _cmp is None and _cad_sheet:                       # a count of something the deep read did not find
             try:
                 _miss = (_sym.missing_note(_sha, question) if _sym.cached(_sha) and not self._printed_first(path, question)
                          else None)
