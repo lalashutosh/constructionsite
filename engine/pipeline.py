@@ -255,6 +255,18 @@ class PipelineEngine:
             _cmp = _sym.compare(_sha, question)
         except Exception:  # noqa: BLE001
             _cmp = None
+        if _cmp is None:                                      # a count of something the deep read did not find
+            try:
+                _miss = _sym.missing_note(_sha, question) if _sym.cached(_sha) else None
+            except Exception:  # noqa: BLE001
+                _miss = None
+            if _miss:
+                po = ProofObject(id=hashlib.sha1(f"{path}|{question}|miss".encode()).hexdigest()[:12], question=question,
+                                 intent="deep_read_missing", kind="count", provenance=Provenance(file=path, sha256=_sha))
+                po = self._grey(po, _miss)
+                po.answer_text = f"Not found: {_miss}."
+                po.cost.ms = (time.perf_counter() - t0) * 1000
+                return po
         if _cmp is not None:
             po = ProofObject(id=hashlib.sha1(f"{path}|{question}|cmp".encode()).hexdigest()[:12], question=question,
                              intent="deep_read_compare", kind="text", value=str(_cmp["value"]), unit="label",

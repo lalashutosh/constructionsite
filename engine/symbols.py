@@ -979,8 +979,10 @@ def missing_note(sha: str, question: str) -> Optional[str]:
     if not ck or not m:
         return None
     kinds = ", ".join(t["label"].lower() for t in ck.get("totals", [])[:6]) or "no repeated symbols"
-    return (f"the deep read of this sheet found no {m.group(1).lower()} symbols (it found: {kinds}); "
-            "if they are drawn on another sheet of the set, upload that sheet")
+    sub = [x["kind"] for x in ck.get("subparts", [])]
+    extra = f"; shapes first named {', '.join(sub)} turned out to be parts of other symbols" if sub else ""
+    return (f"the deep read of this sheet found no {m.group(1).lower()} symbols (it found: {kinds}{extra}); "
+            "if they are drawn on another sheet of the set, upload that sheet, or rename a symbol type with the pencil")
 
 
 def enrich(abs_path: str, sha: str, facts, ck: dict) -> dict:
