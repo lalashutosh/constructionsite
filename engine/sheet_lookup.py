@@ -24,7 +24,8 @@ from engine.scale import sheet_text as T
 
 SQFT_M2 = 0.09290304
 STOP = set("""how many much what which is are was were the a an of on in at to for this that these those there does do
-did be by with and or from all every each sheet drawing plan blueprint shown show tell me please its it as per give find value big
+did be by with and or from all every each sheet printed written shown where located location find show say says
+said mention mentioned noted note drawing plan blueprint shown show tell me please its it as per give find value big
 large size number total""".split())
 KEEP_IN_TOTAL = {"total"}            # 'total' is a stopword for matching, but a row that says TOTAL is preferred
 AREA_CUE = re.compile(r"\b(area|square|footage|sq\.?\s*(ft|m)|sf|m2|m²|floor\s*space)\b", re.I)

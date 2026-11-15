@@ -10,6 +10,7 @@ intents:
     kind: text
     patterns:
       - "\\b(what|which)\\b.{0,20}\\bscale\\b|\\bscale\\s+of\\s+(this|the)\\s+(drawing|plan|sheet|blueprint)"
+      - "\\b(where|show|find|point)\\b.{0,30}\\bscale\\b|\\b(printed|drawn|written)\\s+scale\\b|\\bscale\\s+(bar|note)\\b"
       - "\\bmittakaava\\b|\\bskala\\b|\\bm[õo]õtkava\\b|\\bmaßstab\\b|\\bmassstab\\b|\\béchelle\\b"
   largest_room:
     kind: text

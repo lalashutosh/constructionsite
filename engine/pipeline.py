@@ -502,6 +502,9 @@ class PipelineEngine:
                                                      tag=Tag.defaulted, source="dev-median prior"))
                 tier = Tier.amber
             else:
+                loose = self._loose_printed(ctx, po)          # last resort: the sheet prints something that matches
+                if loose is not None:
+                    return loose
                 return self._grey(po, po.refusal or "no reader or query could answer this question from the drawing")
         if capped and tier == Tier.green:
             tier = Tier.amber
@@ -632,6 +635,35 @@ class PipelineEngine:
                           "voter confirmed at the same spot").strip()
         notes.append(f"door fusion: {old} confident detections + {len(added)} weak detections confirmed by a door "
                      "swing arc at the same place")
+
+    def _loose_printed(self, ctx, po: ProofObject) -> Optional[ProofObject]:
+        """Instead of refusing: the printed row that best matches the question (>= half of its content words),
+        quoted as written and boxed, tier amber. Says plainly that it is the printed text, not a computed answer."""
+        from engine import sheet_lookup as L
+        try:
+            kws = L.keywords(ctx.question)
+            if not kws:
+                return None
+            rs = L.blocks(L.rows(L._words(ctx.abs_path, po.provenance.sha256)))
+            best = None
+            for b in rs:
+                hit = [k for k in kws if L._tok_match(k, b["text"])]
+                cov = len(hit) / len(kws)
+                if cov >= 0.5 and (best is None or (cov, -len(b["text"])) > (best[0], -len(best[1]["text"]))):
+                    best = (cov, b)
+            if best is None:
+                return None
+            b = best[1]
+            ev = L.element_boxes("printed_loose", [r["box"] for r in b["rows"]], b["text"])
+            po.kind, po.value, po.unit, po.tier = "text", b["text"], "label", Tier.amber
+            po.refusal = None
+            po.evidence = ev
+            po.voters = [Voter(name="printed_text", value=b["text"], element_ids=[e.id for e in ev],
+                               note="the printed text that best matches the question")]
+            po.notes.append(f"printed answer: the sheet prints '{b['text'][:240]}' (closest printed match, boxed on the drawing).")
+            return po
+        except Exception:  # noqa: BLE001
+            return None
 
     def _printed_first(self, path: str, question: str) -> bool:
         """The sheet PRINTS this count ('TYP. OF 5', '48 DORMS') or tags it (FSI-1..5): that answer beats the deep read."""
@@ -980,7 +1012,21 @@ class PipelineEngine:
                 v = f"1 m = {scale.px_per_m:.1f} px on this image ({src})"
                 po.assumptions.append(_scale_assumption(scale))
                 po.scale = scale
-                return [VoterResult(Voter(name="scale_solver", value=v, note=src), unit="label")]
+                ev = []
+                try:                               # the printed note / bar / dimensions it was read from, boxed
+                    from engine.scale import sheet_scale as _SS
+                    from engine import sheet_lookup as _SL
+                    st = _SS.sheet_state(ctx.abs_path, po.provenance.sha256)
+                    w = st["cons"]["winner"]
+                    boxes = [b for c in (w["items"] if w else []) for b in c.get("boxes", [])][:12]
+                    ev = _SL.element_boxes("scale", boxes, "scale evidence")
+                    lab = next((c["label"] for c in (w["items"] if w else []) if c["family"] == "ratio"), None)
+                    if lab:
+                        v = f"The sheet prints the scale {lab}; it reads as 1 m = {scale.px_per_m:.1f} px ({src})"
+                except Exception:  # noqa: BLE001
+                    pass
+                return [VoterResult(Voter(name="scale_solver", value=v, note=src, element_ids=[e.id for e in ev]),
+                                    evidence=ev, unit="label")]
             return []
         spec = query.spec_for(rt.intent, {}, None)
         if rt.intent == "overall_size":
