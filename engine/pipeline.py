@@ -243,19 +243,20 @@ class PipelineEngine:
         try:
             from engine import symbols as _sym
             _sha = facts_cache.sha256_file(_abs(path))
-            _ck = None if self._printed_first(path, question) else _sym.answer(_sha, question)
+            _cad = (self.analyze(path, allow_siblings=allow_siblings).extras.get("route") == "cad")
+            _ck = None if (not _cad or self._printed_first(path, question)) else _sym.answer(_sha, question)
         except Exception:  # noqa: BLE001
             _ck = None
         if _ck is not None:
             return self._checklist_answer(path, question, _sha, _ck, t0)
-        _sv = self._services_answer(path, question, t0)      # 'how much pipe / cable / how many sockets'
+        _sv = self._services_answer(path, question, t0) if _ck is None and locals().get("_cad") else None
         if _sv is not None:
             return _sv
         try:                                                  # 'more doors or the sum of toilets and sinks?'
-            _cmp = _sym.compare(_sha, question)
+            _cmp = _sym.compare(_sha, question) if locals().get("_cad") else None
         except Exception:  # noqa: BLE001
             _cmp = None
-        if _cmp is None:                                      # a count of something the deep read did not find
+        if _cmp is None and locals().get("_cad"):            # a count of something the deep read did not find
             try:
                 _miss = (_sym.missing_note(_sha, question) if _sym.cached(_sha) and not self._printed_first(path, question)
                          else None)
