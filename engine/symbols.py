@@ -27,7 +27,7 @@ import numpy as np
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 CACHE = ROOT / "cache" / "symbols"
-VERSION = "v18"
+VERSION = "v20"
 NAMES = ["bed", "side table", "desk", "chair", "sofa", "lounge chair", "seating group", "exercise bike", "treadmill", "table", "closet", "wardrobe", "toilet", "sink",
          "shower", "bathtub", "door", "window", "stair", "tv", "kitchen counter", "fridge", "gym equipment", "washer",
          "plant", "column", "other"]
@@ -226,6 +226,37 @@ def _thumb(g: np.ndarray, box: list[float], size: int = 72) -> str:
     sq[(side - c.shape[0]) // 2:(side - c.shape[0]) // 2 + c.shape[0], (side - c.shape[1]) // 2:(side - c.shape[1]) // 2 + c.shape[1]] = c
     sq = cv2.resize(sq, (size, size), interpolation=cv2.INTER_AREA)
     return "data:image/png;base64," + base64.b64encode(cv2.imencode(".png", sq)[1].tobytes()).decode()
+
+
+def _drop_subparts(out: dict) -> None:
+    """A symbol type whose copies (>= 70%) sit INSIDE copies of a larger counted type is a part of that symbol (a pillow
+    or headboard stroke of a bed, a bowl of a sink), not an object of its own: it leaves the totals (kept in `subparts`)."""
+    by = {e["id"]: e for e in out.get("elements", [])}
+
+    def box(e):
+        xs = [q[0] for q in e["polygon"]]; ys = [q[1] for q in e["polygon"]]
+        return min(xs), min(ys), max(xs), max(ys)
+    tot = [t for t in out.get("totals", []) if t["ids"] and t["kind"] not in ("door", "staircase", "stair")]
+    boxes = {t["kind"]: [box(by[i]) for i in t["ids"] if i in by] for t in tot}
+    area = {k: (sum((b[2] - b[0]) * (b[3] - b[1]) for b in v) / max(1, len(v))) for k, v in boxes.items()}
+    drop = set()
+    for t in tot:
+        k = t["kind"]
+        for k2, bs2 in boxes.items():
+            if k2 == k or area[k2] < 2.5 * area[k] or not bs2:
+                continue
+            inside = 0
+            for b in boxes[k]:
+                cx, cy = (b[0] + b[2]) / 2, (b[1] + b[3]) / 2
+                if any(o[0] <= cx <= o[2] and o[1] <= cy <= o[3] for o in bs2):
+                    inside += 1
+            if boxes[k] and inside >= 0.7 * len(boxes[k]):
+                drop.add(k)
+                t["part_of"] = k2
+                break
+    if drop:
+        out["subparts"] = [{"kind": t["kind"], "count": t["count"], "part_of": t.get("part_of")} for t in out["totals"] if t["kind"] in drop]
+        out["totals"] = [t for t in out["totals"] if t["kind"] not in drop]
 
 
 def _add_printed(out: dict, words: list[dict], g: np.ndarray) -> None:
@@ -466,7 +497,9 @@ def _checklist(abs_path: str, sha: str, facts, llm) -> dict:
         n = len(r["members"])
         ncc = len(hits) if hits is not None else None
         plain = _plain_box(r["d"])
-        ncc_ok = ncc is not None and not plain and n <= ncc <= 8 * n   # distinctive symbols: every copy, even on walls
+        big = max(w, h) / ppm >= 0.6                 # a large distinctive symbol whose copies all pass the shape check
+        cap = max(8 * n, 150) if big else 8 * n      # can repeat far more often than its few stroke clusters suggest
+        ncc_ok = ncc is not None and not plain and n <= ncc <= cap     # distinctive symbols: every copy, even on walls
         out["types"].append({"n": k + 1, "name": nm, "count": n, "ncc": ncc, "plain": bool(plain),
                              "size_m": [round(w / ppm, 2), round(h / ppm, 2)]})
         by_name.setdefault(nm, []).append({"k": k, "rep": r, "w": w, "h": h, "n": n, "hits": hits if ncc_ok else None})
@@ -523,6 +556,7 @@ def _checklist(abs_path: str, sha: str, facts, llm) -> dict:
                                   "thumb": _thumb(g, dboxes[0])})
     except Exception as e:  # noqa: BLE001
         out["doors_error"] = f"{type(e).__name__}: {e}"
+    _drop_subparts(out)                      # a 'TV' that is really the headboard stroke of every bed is not an object
     _add_printed(out, words, g)
     # stair flights: the tread detector inside the outline (downscaled so a 10k px sheet stays fast)
     try:
