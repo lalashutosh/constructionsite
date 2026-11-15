@@ -864,6 +864,7 @@ export class PlumbViewer {
   // ---- layers (envelope / walls / furniture / piping / electrical) and multi-highlight
   private layerObjs: Record<string, THREE.Object3D> = {};
   setLayers(floorKey: string | null, layers: { envelope?: [number, number][][]; rooms?: [number, number][][]; furniture?: { polygon: [number, number][] }[];
+    equipment?: { label?: string | null; polygon: [number, number][] }[];
     piping?: [number, number][][]; electrical?: [number, number][][] } | null, colours: Record<string, number>) {
     for (const o of Object.values(this.layerObjs)) o.parent?.remove(o);
     this.layerObjs = {};
@@ -900,8 +901,56 @@ export class PlumbViewer {
       this.layerObjs.furniture = g;
       fl.group.add(g);
     }
-    if (layers.piping?.length) mk("piping", layers.piping, fl.H * 0.35, false);
-    if (layers.electrical?.length) mk("electrical", layers.electrical, fl.H * 0.5, false);
+    // services as solid runs (instanced boxes along every segment), not hairlines
+    const runs = (name: string, polys: [number, number][][], y: number, thick: number) => {
+      const segs: [number, number, number, number][] = [];
+      for (const pl of polys) for (let i = 0; i + 1 < pl.length; i++) segs.push([pl[i][0], pl[i][1], pl[i + 1][0], pl[i + 1][1]]);
+      if (!segs.length) return;
+      const mat = new THREE.MeshBasicMaterial({ color: colours[name] ?? 0xffffff, transparent: true, opacity: 0.92 });   // unlit scene
+      const mesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), mat, segs.length);
+      const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), pos = new THREE.Vector3();
+      segs.forEach(([x0, z0, x1, z1], i) => {
+        const len = Math.hypot(x1 - x0, z1 - z0) + thick;
+        pos.copy(L((x0 + x1) / 2, (z0 + z1) / 2, y));
+        q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), -Math.atan2(z1 - z0, x1 - x0));
+        sc.set(len, thick, thick);
+        mesh.setMatrixAt(i, m4.compose(pos, q, sc));
+      });
+      mesh.instanceMatrix.needsUpdate = true;
+      const g = new THREE.Group();
+      g.add(mesh);
+      this.layerObjs[name] = g;
+      fl.group.add(g);
+    };
+    const t = Math.max(2, Math.min(fl.w, fl.h) * 0.0035);
+    if (layers.piping?.length) runs("piping", layers.piping, fl.H * 0.35, t);
+    if (layers.electrical?.length) runs("electrical", layers.electrical, fl.H * 0.55, t * 0.7);
+    // tagged equipment (pumps, valves, supports ...): a marker post + its tag, so the sheet's equipment stands up in 3D
+    if (layers.equipment?.length) {
+      const g = new THREE.Group();
+      const seen = new Set<string>();
+      const postMat = new THREE.MeshBasicMaterial({ color: colours.equipment ?? 0xf472b6 });
+      for (const e of layers.equipment.slice(0, 120)) {
+        const xs = e.polygon.map((q) => q[0]), zs = e.polygon.map((q) => q[1]);
+        const cx = (Math.min(...xs) + Math.max(...xs)) / 2, cz = (Math.min(...zs) + Math.max(...zs)) / 2;
+        const h = fl.H * 0.5;
+        const post = new THREE.Mesh(new THREE.CylinderGeometry(t * 1.2, t * 1.2, h, 10), postMat);
+        post.position.copy(L(cx, cz, h / 2));
+        g.add(post);
+        const key = e.label ?? "";
+        if (key && !seen.has(key)) {
+          seen.add(key);
+          const { t: tex, wpx, hpx } = this.tagTex(key);
+          const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false, sizeAttenuation: false }));
+          sp.scale.set(this.spritePx(wpx), this.spritePx(hpx), 1);
+          sp.position.copy(L(cx, cz, h * 1.15));
+          sp.renderOrder = 14;
+          g.add(sp);
+        }
+      }
+      this.layerObjs.equipment = g;
+      fl.group.add(g);
+    }
   }
   setLayerVisible(name: string, on: boolean) {
     const o = this.layerObjs[name];

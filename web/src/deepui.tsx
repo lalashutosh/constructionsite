@@ -48,9 +48,10 @@ export function ViewCube({ viewer }: { viewer: () => PlumbViewer | null }) {
 }
 
 // ---------------------------------------------------------------- layers
-export const LAYER_COLOURS: Record<string, number> = { rooms: 0x94a3b8, envelope: 0xe7c98a, walls: 0xcbd5e1, furniture: 0x2dd4bf, piping: 0x3b82f6, electrical: 0xf59e0b };
-const LAYER_NAMES: [string, string][] = [["envelope", "Envelope"], ["walls", "Walls"], ["furniture", "Furniture"], ["piping", "Piping"], ["electrical", "Electrical"]];
+export const LAYER_COLOURS: Record<string, number> = { equipment: 0xf472b6, rooms: 0x94a3b8, envelope: 0xe7c98a, walls: 0xcbd5e1, furniture: 0x2dd4bf, piping: 0x3b82f6, electrical: 0xf59e0b };
+const LAYER_NAMES: [string, string][] = [["envelope", "Envelope"], ["walls", "Walls"], ["furniture", "Furniture"], ["equipment", "Equipment tags"], ["piping", "Piping"], ["electrical", "Electrical"]];
 export type Layers = { envelope?: [number, number][][]; walls?: [number, number][][]; furniture?: { id: string; kind: string; polygon: [number, number][] }[];
+  equipment?: { label?: string | null; polygon: [number, number][] }[];
   piping?: [number, number][][]; electrical?: [number, number][][]; notes?: Record<string, string>; estimated?: boolean;
   quantities?: Record<string, { value: number; unit: string; tag: string; basis: string }> };
 export function LayerToggles({ viewer, layers, extra }: { viewer: () => PlumbViewer | null; layers: Layers | null | undefined; extra?: Record<string, number> }) {

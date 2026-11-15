@@ -627,7 +627,7 @@ export default function App() {
           )}
           <ViewerPane
             vref={vref}
-            layerExtra={active ? { furniture: ckN[active.path] ?? 0 } : undefined}
+            layerExtra={active ? { furniture: ckN[active.path] ?? 0, equipment: ckN[`${active.path}#eq`] ?? 0 } : undefined}
             scaleText={scaleLine ? `${scaleLine.text.split(":")[0]} · ${pctNum(scaleLine.conf)}% sure` : null}
             onScaleWhere={() => { const sc = activeChecks?.find((c) => c.kind === "scale"); setHoverCheck(sc ?? null); vref.current?.setView("top"); }}
             floors={floors}
@@ -736,8 +736,12 @@ export default function App() {
                 services={active.geo?.layers?.quantities ?? null}
                 onShow={(polys) => vref.current?.setMulti(active.key, polys)}
                 onRoom={(id, poly) => { setElSel(id); vref.current?.setMulti(active.key, [poly]); }}
-                onLoaded={(c) => { setCkN((m) => ({ ...m, [active.path]: c.elements.length }));
-                  vref.current?.setLayers(active.key, { ...(active.geo?.layers ?? {}), furniture: c.elements } as never, LAYER_COLOURS); }} />}
+                onLoaded={(c) => {
+                  const equipment = c.elements.filter((e) => e.kind.startsWith("tag ")).map((e) => ({ label: e.kind.slice(4), polygon: e.polygon }));
+                  const furniture = c.elements.filter((e) => !e.kind.startsWith("tag "));
+                  setCkN((m) => ({ ...m, [active.path]: furniture.length, [`${active.path}#eq`]: equipment.length }));
+                  vref.current?.setLayers(active.key, { ...(active.geo?.layers ?? {}), rooms: active.geo?.rooms.map((r) => r.polygon),
+                    furniture, equipment } as never, LAYER_COLOURS); }} />}
                 <ChecksBlock items={activeChecks} busyId={checkBusy} note={checkNote} err={checkErr} onAnswer={(c, ans) => void onCheckAnswer(c, ans)} onType={startScale} onHover={setHoverCheck} />{inspector}</>}
               onSelect={(p) => active && setSelected({ path: active.path, proof: p })}
               onWhy={(p) => {

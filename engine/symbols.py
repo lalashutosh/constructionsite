@@ -27,7 +27,7 @@ import numpy as np
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 CACHE = ROOT / "cache" / "symbols"
-VERSION = "v17"
+VERSION = "v18"
 NAMES = ["bed", "side table", "desk", "chair", "sofa", "lounge chair", "seating group", "exercise bike", "treadmill", "table", "closet", "wardrobe", "toilet", "sink",
          "shower", "bathtub", "door", "window", "stair", "tv", "kitchen counter", "fridge", "gym equipment", "washer",
          "plant", "column", "other"]
@@ -503,7 +503,8 @@ def _checklist(abs_path: str, sha: str, facts, llm) -> dict:
                               "count": len(ids), "ids": ids, "tier": "green" if agree else "amber", "note": note,
                               "thumb": _thumb(g, boxes[0]) if boxes else ""})
     try:                                     # door swings: grey quarter-circle arcs, found and counted by geometry
-        dboxes = door_arcs(abs_path, mask, ppm)
+        dmask = cv2.dilate(mask, np.ones((int(1.5 * ppm) | 1,) * 2, np.uint8))   # doors in the outer wall swing outside
+        dboxes = door_arcs(abs_path, dmask, ppm)
         if dboxes:
             out["totals"] = [t for t in out["totals"] if t["kind"] != "door"]
             out["elements"] = [e for e in out["elements"] if e["kind"] != "door"]
@@ -700,6 +701,10 @@ def door_arcs(abs_path: str, mask: np.ndarray, ppm: float) -> list[list[float]]:
     sat = cv2.cvtColor(col, cv2.COLOR_BGR2HSV)[:, :, 1]
     dark = cv2.dilate((g < 100).astype(np.uint8), np.ones((3, 3), np.uint8))
     grey = ((g >= 110) & (g <= 215) & (sat < 40) & (mask > 0) & (dark == 0)).astype(np.uint8)
+    Lw = max(9, int(0.5 * ppm))                         # walls / jambs are straight: take them out so a swing that touches
+    straight = cv2.morphologyEx(grey, cv2.MORPH_OPEN, np.ones((1, Lw), np.uint8)) | \
+        cv2.morphologyEx(grey, cv2.MORPH_OPEN, np.ones((Lw, 1), np.uint8))   # a wall becomes its own stroke
+    grey = grey & (1 - cv2.dilate(straight, np.ones((3, 3), np.uint8)))
     n, lab, st, _ = cv2.connectedComponentsWithStats(grey, 8)
     rng = np.random.default_rng(7)
     out: list[list[float]] = []
@@ -877,7 +882,9 @@ SYN = {"washbasin": "sink", "basin": "sink", "lavatory": "sink", "wc": "toilet",
 
 
 def cached(sha: str) -> Optional[dict]:
-    fs = sorted(CACHE.glob(f"{sha}-{VERSION}*.json"), key=lambda f: -f.stat().st_mtime)
+    """The deep read of this drawing: the current version, else the newest older one (its counts are still valid)."""
+    fs = sorted(CACHE.glob(f"{sha}-{VERSION}*.json"), key=lambda f: -f.stat().st_mtime) or \
+        sorted(CACHE.glob(f"{sha}-v*.json"), key=lambda f: -f.stat().st_mtime)
     for f in fs:
         try:
             return json.loads(f.read_text())
