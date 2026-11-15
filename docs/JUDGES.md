@@ -66,17 +66,19 @@ areas without the DXF sibling are weak. The app shows such answers amber ("needs
 - Providers are swappable (open-weight models via Verda or Featherless, Gemini, Anthropic) because they never
   produce the number.
 
-## 5. Best use of Verda
+## 5. Open-weight model endpoints (Verda / Modal)
 
-- **1,219 logged Verda calls, 2.2 M tokens, $9.35 for the whole hackathon** (`logs/verda_cost.jsonl`): DeepSeek V4.1
-  Flash for fast calls (806, $0.24), Kimi K3.1 Pro for strong calls (413, $9.11). Every call is priced, logged and
-  checked against a hard budget cap (`scripts/verda.py`).
-- **Product:** two Verda vision reviewers must agree before a sheet is built in 3D (`engine/scancheck.py`, about
-  $0.0045 per sheet); Verda names symbol types on the deep read (`engine/symbols.py`); Verda plans queries for new
+- **1,219 logged model calls, 2.2 M tokens, $9.35 for the whole hackathon** (`logs/verda_cost.jsonl`): DeepSeek V4.1
+  Flash for fast calls (806, $0.24), Kimi K3.1 Pro for strong calls (413, $9.11), on our own OpenAI-compatible
+  endpoints. The client authenticates to a Verda Inference API key or to Modal endpoints (`scripts/verda.py`). Every
+  call is priced, logged and checked against a hard budget cap.
+- **Product:** two vision reviewers must agree before a sheet is built in 3D (`engine/scancheck.py`, about $0.0045
+  per sheet); the models name symbol types on the deep read (`engine/symbols.py`); they plan queries for new
   questions (`engine/query/`). None of these produce a number.
-- **Build process:** `scripts/verda_task.py` uses a cheap Verda model as a code-writing worker. It writes one scoped
-  file, the tests check it, errors are fed back, and the result is staged for review. `engine/sheet_findings.py`
-  was written this way in one attempt (`logs/verda_tasks.jsonl`).
+- **Build process:** `scripts/verda_task.py` uses a cheap model as a code-writing worker. It writes one scoped file,
+  the tests check it, errors are fed back, and the result is staged for review. `engine/sheet_findings.py` was
+  written this way in one attempt (`logs/verda_tasks.jsonl`).
+- Per tech challenge: `docs/TECH_CHALLENGES.md`.
 
 ## 6. Google Gemini
 

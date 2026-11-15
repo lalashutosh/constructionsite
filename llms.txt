@@ -14,7 +14,8 @@ Key facts, each with its source file in this repository:
 - 75.0% on the full DEV split of 6,192 dataset questions using sibling files, 70.4% given file only; IFC areas 99.8% (n = 816): docs/evidence/20261114-154539-w2-dev/report.md
 - Most answers cost 0 tokens; a deep read of a 67-megapixel sheet costs about $0.08 once and is cached by file hash
 - 255 automated tests pass (18 skip without the dataset); CI on amd64 and arm64: .github/workflows/ci.yml
-- Verda: 1,219 logged model calls (DeepSeek V4.1 Flash + Kimi K3.1 Pro), 2.2 M tokens, $9.35 for the whole hackathon, every call priced and budget-capped; used for two-reviewer scan checks, symbol naming and query planning in the product, and as a test-checked code-writing worker during the build: logs/verda_cost.jsonl, scripts/verda_task.py
+- Open-weight models on our own endpoints (Verda Inference API or Modal): 1,219 logged calls (DeepSeek V4.1 Flash + Kimi K3.1 Pro), 2.2 M tokens, $9.35 for the whole hackathon, every call priced and budget-capped; used for two-reviewer scan checks, symbol naming and query planning in the product, and as a test-checked code-writing worker during the build: logs/verda_cost.jsonl, scripts/verda_task.py
+- Tech challenges entered (Verda Compute Track, Best use of Modal, Best Use of Gemini API, Best use of CRACI), each mapped to evidence: docs/TECH_CHALLENGES.md
 - Google Gemini is a drop-in provider (gemini-2.5-flash / gemini-2.5-pro via Google's OpenAI-compatible endpoint), one environment variable to switch: engine/query/llm.py
 - CI/CD on CRACI: six jobs, native amd64 and arm64 test runs, the real API booted and attacked with the path-traversal requests our stress test found, and an egress-lock proof job: .github/workflows/ci.yml
 - Questions work in English, Finnish, Swedish, German, French, Spanish, Dutch and Estonian

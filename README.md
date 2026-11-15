@@ -3,7 +3,7 @@
 **Ask a construction drawing a question in plain language (in any of 8 languages). Get the number, and see exactly
 which elements on the drawing produced it.**
 
-Junction 2026 · Stoa challenge *"Make Blueprints Talk"* ·
+Junction 2026 · Stoa challenge *"Make Blueprints Talk"* · tech challenges: Verda Compute Track, Best use of Modal, Best Use of Gemini API, Best use of CRACI ·
 [2-minute video](docs/SUBMISSION.md) · [pitch deck (PDF)](docs/pitch/Plumb_pitch_deck.pdf) ·
 [web UI](https://plumb-blueprints.vercel.app) · **Reviewers:** [evaluation guide](docs/JUDGES.md) · [`llms.txt`](llms.txt) · [architecture](docs/ARCHITECTURE.md)
 
@@ -23,7 +23,7 @@ Junction 2026 · Stoa challenge *"Make Blueprints Talk"* ·
 | **67 megapixels** | the largest sheet read in one pass: 139 doors, 84 chairs, 48 sinks, 48 toilets, 46 beds |
 | **99.8%** | IFC areas within 2% (n = 816) |
 | **0 tokens · 214 ms** | mean cost and time per answer in the latest accuracy run, on a laptop CPU |
-| **1,219 calls · 2.2 M tokens · $9.35** | every Verda model call made during the whole hackathon, logged one by one |
+| **1,219 calls · 2.2 M tokens · $9.35** | every open-weight model call made during the whole hackathon, logged one by one |
 | **255** | automated tests, run on native amd64 **and** arm64 CRACI runners on every push |
 | **8** | languages you can ask in |
 
@@ -78,11 +78,12 @@ sibling are weak. Low-agreement answers are shown amber ("needs a look"), never 
   once; re-reads are free (cached by file SHA-256).
 - Pluggable providers: none (default), Verda / Featherless (open-weight models), Gemini, Anthropic.
 
-## Verda: open-weight models doing real work, on a hard budget
+## Open-weight models on our own endpoints (Verda / Modal-ready), on a hard budget
 
-Verda is Plumb's model layer, in the product **and** in how we built it. Every call goes through one client
-(`engine/query/llm.py` → `scripts/verda.py`), is priced, appended to `logs/verda_cost.jsonl`, and refused if it would
-cross the budget cap (`BUDGET_VERDA_USD`).
+Plumb's model layer is one OpenAI-compatible client (`engine/query/llm.py` → `scripts/verda.py`) that talks to
+open-weight models on endpoints we control: a Verda Inference API key (`VERDA_API_KEY`) or Modal endpoints
+(`MODAL_TOKEN_ID` / `MODAL_TOKEN_SECRET`, one URL per model, cold starts handled). Every call is priced, appended to
+`logs/verda_cost.jsonl`, and refused if it would cross the budget cap (`BUDGET_VERDA_USD`).
 
 | | Model | Calls | Tokens (in / out) | Cost |
 |---|---|---|---|---|
@@ -90,23 +91,25 @@ cross the budget cap (`BUDGET_VERDA_USD`).
 | strong | Kimi K3.1 Pro | 413 | 733 k / 764 k | $9.11 |
 | **total** | | **1,219** | **2.2 M** | **$9.35** |
 
-*Source: `logs/verda_cost.jsonl`, 2026-11-14 12:57 → 2026-11-15 07:47 (Helsinki).*
+*Source: `logs/verda_cost.jsonl`, 2026-11-14 12:57 → 2026-11-15 07:47 (Helsinki).* Open-weight models on infrastructure
+we choose means client drawings never have to go to a third-party model API.
 
 **In the product, three jobs, never a number:**
 
-1. **Two-reviewer scan check** (`engine/scancheck.py`). Before anything is built in 3D, a fast and a strong Verda
-   vision model each judge the sheet (numbered views, two wall-reader overlays) in a fixed JSON form. Their
-   **consensus** labels the views and raises flags; code picks the walls. About **$0.0045 per sheet**, cached by
-   SHA-256 ([decision](docs/decisions/scan-check-reviewers.md)).
+1. **Two-reviewer scan check** (`engine/scancheck.py`). Before anything is built in 3D, a fast and a strong vision
+   model each judge the sheet (numbered views, two wall-reader overlays) in a fixed JSON form. Their **consensus**
+   labels the views and raises flags; code picks the walls. About **$0.0045 per sheet**, cached by SHA-256
+   ([decision](docs/decisions/scan-check-reviewers.md)).
 2. **Naming on the deep read** (`engine/symbols.py`). Computer vision finds and counts every repeated symbol; the
    models only name each *type*, in parallel, with a second focused pass for anything left unnamed.
 3. **Query planner** (`engine/query/`). A question no template matches becomes a validated `query_spec` that code
    executes against the drawing's elements.
 
-**In the build, Verda wrote code.** `scripts/verda_task.py` gives a cheap model one tightly scoped file to write,
-checks it (syntax, then the tests), feeds errors back, retries, and stages the result for review before it can
-land. `engine/sheet_findings.py` was produced this way: one attempt, 13.8 s
-(`logs/verda_tasks.jsonl`).
+**In the build, the cheap model wrote code.** `scripts/verda_task.py` gives a cheap model one tightly scoped file to
+write, checks it (syntax, then the tests), feeds errors back, retries, and stages the result for review before it can
+land. `engine/sheet_findings.py` was produced this way: one attempt, 13.8 s (`logs/verda_tasks.jsonl`).
+
+Per tech challenge (Verda, Modal, Gemini API, CRACI): [`docs/TECH_CHALLENGES.md`](docs/TECH_CHALLENGES.md).
 
 ## Google Gemini: a first-class, drop-in provider
 
