@@ -36,7 +36,7 @@ MAX_UPLOAD = 60 * 1024 * 1024
 app = FastAPI(title="Plumb", version="0.2")
 app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
                    allow_origin_regex=r"https://plumb-blueprints(-[a-z0-9-]+)?\.vercel\.app",   # the deployed UI only
-                   allow_methods=["*"], allow_headers=["*"])
+                   allow_methods=["*"], allow_headers=["*"], allow_private_network=True)
 
 
 @app.middleware("http")
