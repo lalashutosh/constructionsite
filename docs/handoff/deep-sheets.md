@@ -108,6 +108,18 @@ print), outer walls (legend-zone union), wings, printed tables. What they want n
 - UI: layers in a compact menu, no 'Other'/'space' tags in 3D, max 12 room tags, cube below the measuring button,
   low/light furniture blocks, "See proof" as a primary button.
 
+## Update 2026-11-15 ~03:15
+- Stairs: tread STACKS in metres (`symbols.boxed_stairs`: lines >= 0.9 m, >= 8, spacing 0.18-0.5 m) + tread-walker on
+  full-res tiles; flights grouped by box gap (< 1.5 m). Dorm: 5 staircases / 12 flights incl. the wide exterior stair.
+  S-100F: 0 (its 2 small steel stairs are missed; old cache said 7 = false). Window test (`_rungs`) is off on scaled
+  sheets (it fired on furniture).
+- Services follow European rules (`engine/layers.py`): EN 12464-1 lumen method, EN 806-3 LU, EN 12056-2 Qww,
+  DIN 18015-2-style sockets, HD 60364 note. Chatbot: pipework / cable / sockets / lights / loading units / waste flow.
+- Deep-read answers: compare / sum ("more doors or toilets and sinks?") and bare nouns ("no doors in this?").
+- UI: animated deep-read progress with stages, tour opens with what the app offers (7 steps, per drawing), construction
+  sheets hide residential findings and get sheet-fit chips, Build plan tab badge "what to buy", layer menu only lists
+  real layers + "not on this sheet" line.
+
 ## How to run / test
 API: `LLM_PROVIDER=verda .venv/bin/python -m uvicorn api.main:app --port 8001`; web: `cd web && VITE_ENGINE=http://localhost:8001/api npx vite`.
 Stress: `.venv/bin/python scripts/stress_big.py` (manifest `cache/stress/manifest.json`, 3 full-res Stoa sheets).

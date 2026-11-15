@@ -40,6 +40,16 @@ Big, complex sheets get a deep read automatically.
   "(CV)", standard abbreviations or the ISA-5.1 instrument letters.
 - The printed notes are answered too: "motor control center trench length" gives 4275, citing the note.
 
+## 4b. Services estimated by European rules (when the set has no MEP sheet)
+- Say it plainly: "No plumbing or electrical sheet in this set, so Plumb estimates them, by European rules, and labels
+  every number as an estimate with its formula."
+- Lighting: EN 12464-1 maintained illuminance per room type with the lumen method N = E x A / (lumens x UF x MF).
+- Water supply: EN 806-3 loading units per fixture (washbasin 1, WC cistern 1, shower 2, bath 4). Dorm: 148 LU.
+- Drainage: EN 12056-2, Qww = K x sqrt(sum of discharge units), K = 0.7 for frequent use. Dorm: about 8.0 l/s.
+- Sockets: planning rule in the style of DIN 18015-2 (to check against the national standard). Circuits: HD 60364.
+- Pipework 2,023 m and cable 418 m are routing estimates (+30%), drawn as their own layers and in the build plan.
+- Honest framing: estimates for budgeting and questions, not a stamped design.
+
 ## 5. Layers, like a body
 - Envelope, walls, rooms, furniture, piping and electrical are separate colour-coded layers you can toggle. A sheet that
   has no electrical layer says so; we never invent one.
