@@ -273,14 +273,16 @@ def detect(image_bgr: np.ndarray, rooms=None, walls=None) -> list[dict]:
     return got
 
 
-def _rungs(image_bgr: np.ndarray) -> list[dict]:
+def _rungs(image_bgr: np.ndarray, wins: list[int] | None = None) -> list[dict]:
     """Second stair test (fallback): a window crossed by >= 6 evenly spaced, near-full-width parallel lines (treads).
     Text rows are not continuous lines; a single hatch does not span the window. Faint ink, both orientations."""
     thin = _ink(image_bgr, True) > 0
     h, w = thin.shape
     out: list[dict] = []
-    for frac in (0.22, 0.16, 0.12):
-        win = int(frac * min(h, w))
+    sizes = wins or [int(f * min(h, w)) for f in (0.22, 0.16, 0.12)]
+    for win in sizes:
+        if win < 20 or win > min(h, w):
+            continue
         step = max(4, win // 3)
         for y0 in range(0, h - win + 1, step):
             for x0 in range(0, w - win + 1, step):
@@ -322,7 +324,35 @@ def _rungs(image_bgr: np.ndarray) -> list[dict]:
                                 "attrs": {"treads": int(len(cen)), "spacing_px": round(float(gaps.mean()), 1),
                                           "tread_px": float(win), "turn_deg": 0,
                                           "reader": "evenly spaced parallel treads (fallback window test)"}})
-    return _dedupe(out)
+    return _merge_windows(out)
+
+
+def _merge_windows(found: list[dict]) -> list[dict]:
+    """Overlapping / touching windows over one stair -> one flight (union box, most treads)."""
+    boxes = []
+    for f in found:
+        xs = [q[0] for q in f["polygon"]]; ys = [q[1] for q in f["polygon"]]
+        boxes.append([min(xs), min(ys), max(xs), max(ys), f])
+    merged = True
+    while merged:
+        merged = False
+        for i in range(len(boxes)):
+            for j in range(i + 1, len(boxes)):
+                a, b = boxes[i], boxes[j]
+                if a[0] <= b[2] + 4 and b[0] <= a[2] + 4 and a[1] <= b[3] + 4 and b[1] <= a[3] + 4:
+                    keep = a[4] if a[4]["attrs"]["treads"] >= b[4]["attrs"]["treads"] else b[4]
+                    boxes[i] = [min(a[0], b[0]), min(a[1], b[1]), max(a[2], b[2]), max(a[3], b[3]), keep]
+                    del boxes[j]
+                    merged = True
+                    break
+            if merged:
+                break
+    out = []
+    for x0, y0, x1, y1, f in boxes:
+        g = dict(f)
+        g["polygon"] = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]
+        out.append(g)
+    return out
 
 
 def _detect(image_bgr: np.ndarray, walls, faint: bool) -> list[dict]:

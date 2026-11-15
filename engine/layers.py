@@ -65,6 +65,12 @@ def _linework(abs_path: str, facts, words: list[dict], max_lines: int = 2500) ->
 
 
 WET = ("sink", "toilet", "shower", "bathtub", "washer", "kitchen counter")
+# European rules the estimate follows (values to verify against the national annex; this is an estimate, not a design)
+LU_EN806 = {"sink": 1, "toilet": 1, "shower": 2, "bathtub": 4, "washer": 2, "kitchen counter": 2}     # EN 806-3 loading units
+DU_EN12056 = {"sink": 0.5, "toilet": 2.0, "shower": 0.6, "bathtub": 0.8, "washer": 0.8, "kitchen counter": 0.8}  # l/s, System I
+LUX_EN12464 = [(r"hall|corridor|circulation|stair", 100), (r"bath|wc|toilet|shower", 200), (r"gym|fitness|sport", 300),
+               (r"office|common|lounge|study|class|meeting", 500), (r"kitchen", 300)]   # maintained illuminance, lx
+LUMENS, UF, MF = 1500.0, 0.6, 0.8       # LED fitting, utilisation factor, maintenance factor (lumen method)
 
 
 def _mst(pts: list[tuple[float, float]]) -> list[tuple[int, int]]:
@@ -123,15 +129,30 @@ def estimate_services(facts, ck: dict | None, ppm: float) -> dict[str, Any]:
                                        "basis": f"{len(wet)} wet fixtures from the deep read, branches to {len(mains)} wing mains, "
                                                 "orthogonal runs + 30% routing allowance (estimate, no plumbing sheet)"}
         out["quantities"]["wet_points"] = {"value": len(wet), "unit": "pcs", "tag": "drawn", "basis": "wet fixtures counted"}
+        kinds = [e["kind"] for e in els if e["kind"] in WET]
+        lu = sum(LU_EN806.get(k, 1) for k in kinds)
+        du = sum(DU_EN12056.get(k, 0.5) for k in kinds)
+        K = 0.7                              # EN 12056-2 frequency factor: frequent use (dormitory, hotel, school)
+        q = K * math.sqrt(du)
+        out["quantities"]["loading_units"] = {"value": lu, "unit": "LU", "tag": "defaulted",
+                                              "basis": "EN 806-3 loading units: washbasin 1, WC cistern 1, shower 2, bath 4, "
+                                                       "kitchen sink 2 (supply pipe sizing starts from this total)"}
+        out["quantities"]["waste_flow_ls"] = {"value": round(q, 2), "unit": "l/s", "tag": "defaulted",
+                                              "basis": f"EN 12056-2: Qww = K x sqrt(sum DU) = 0.7 x sqrt({du:.1f}) "
+                                                       "(discharge units: WC 2.0, washbasin 0.5, shower 0.6, bath 0.8; "
+                                                       "K = 0.7 frequent use)"}
     rooms = [e for e in facts.elements if e.kind == "room" and len(e.polygon) >= 3]
     if rooms:
+        import re as _re
         cents, lights, sockets = [], 0, 0
         for r in rooms:
             pg = Polygon(r.polygon).buffer(0)
             a = float(r.attrs.get("area_m2") or pg.area / ppm ** 2)
             per = pg.exterior.length / ppm
-            lights += max(1, math.ceil(a / 10))
-            sockets += max(1, math.ceil(per / 4))
+            name = f"{r.label or ''} {r.subtype or ''}".lower()
+            E = next((lx for rx, lx in LUX_EN12464 if _re.search(rx, name)), 200)
+            lights += max(1, math.ceil(E * a / (LUMENS * UF * MF)))           # lumen method
+            sockets += 2 if a <= 8 else 3 if a <= 12 else 4 if a <= 20 else 5 + int((a - 20) // 10)
             c = pg.representative_point()
             cents.append((c.x, c.y))
         bc = (sum(c[0] for c in cents) / len(cents), sum(c[1] for c in cents) / len(cents))
@@ -145,9 +166,15 @@ def estimate_services(facts, ck: dict | None, ppm: float) -> dict[str, Any]:
             cable += abs(a[0] - b[0]) + abs(a[1] - b[1])
         out["quantities"].update({
             "cable_m": {"value": round(cable / ppm * 1.3, 1), "unit": "m", "tag": "defaulted",
-                        "basis": f"room-to-room circuit tree from a panel near the building centre over {len(rooms)} rooms, +30%"},
-            "lights": {"value": lights, "unit": "pcs", "tag": "defaulted", "basis": "1 light per 10 m2 of each room"},
-            "sockets": {"value": sockets, "unit": "pcs", "tag": "defaulted", "basis": "1 socket per 4 m of each room's walls"}})
+                        "basis": f"room-to-room circuit tree from a panel near the building centre over {len(rooms)} rooms, "
+                                 "+30% routing (circuits per HD 60364 / IEC 60364; cross-sections not sized here)"},
+            "lights": {"value": lights, "unit": "pcs", "tag": "defaulted",
+                       "basis": "lumen method N = E x A / (lumens x UF x MF) per room, E from EN 12464-1 by room type "
+                                "(corridors 100 lx, rooms / bathrooms 200, gym 300, common / study 500), 1500 lm LED, "
+                                "UF 0.6, MF 0.8"},
+            "sockets": {"value": sockets, "unit": "pcs", "tag": "defaulted",
+                        "basis": "planning rule in the style of DIN 18015-2 (room <= 8 m2: 2, <= 12: 3, <= 20: 4, "
+                                 "then +1 per 10 m2); check the national standard"}})
     return out
 
 

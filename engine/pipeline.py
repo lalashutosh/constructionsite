@@ -251,6 +251,19 @@ class PipelineEngine:
         _sv = self._services_answer(path, question, t0)      # 'how much pipe / cable / how many sockets'
         if _sv is not None:
             return _sv
+        try:                                                  # 'more doors or the sum of toilets and sinks?'
+            _cmp = _sym.compare(_sha, question)
+        except Exception:  # noqa: BLE001
+            _cmp = None
+        if _cmp is not None:
+            po = ProofObject(id=hashlib.sha1(f"{path}|{question}|cmp".encode()).hexdigest()[:12], question=question,
+                             intent="deep_read_compare", kind="text", value=str(_cmp["value"]), unit="label",
+                             tier=Tier.amber, provenance=Provenance(file=path, sha256=_sha),
+                             voters=[Voter(name="deep_read", value=str(_cmp["value"]), note=_cmp["text"])])
+            po.answer_text = _cmp["text"]
+            po.notes.append("both sides counted from the deep read of this sheet; compared by code")
+            po.cost.ms = (time.perf_counter() - t0) * 1000
+            return po
         # --- end deep read ---
         rt = route_question(question, path, classifier=self.classifier)
         from engine.query import measure as _measure
@@ -606,11 +619,13 @@ class PipelineEngine:
         """Estimated pipework / electrical (engine/layers.estimate_services) when the set has no MEP sheet."""
         import re as _re
         q = question.lower()
-        key = ("pipe_m" if _re.search(r"\b(pipe|pipes|piping|pipework|plumbing)\b", q) else
+        key = ("waste_flow_ls" if _re.search(r"\b(waste|drain|drainage|sewer)\b", q) else
+               "loading_units" if _re.search(r"loading units?|supply load|water demand", q) else
+               "pipe_m" if _re.search(r"\b(pipe|pipes|piping|pipework|plumbing)\b", q) else
                "cable_m" if _re.search(r"\b(cable|cabling|wiring|wire|electrical)\b", q) and not _re.search(r"socket|light", q) else
                "sockets" if _re.search(r"\bsockets?|outlets?\b", q) else
                "lights" if _re.search(r"\blights?|light fittings?|luminaires?\b", q) else None)
-        if key is None or not _re.search(r"how\s+(much|many|long)|length|metres|meters|total|estimate", q):
+        if key is None or not _re.search(r"how\s+(much|many|long|big)|length|metres|meters|total|estimate|flow|load|size", q):
             return None
         from engine import symbols as _sym
         from engine.layers import estimate_services
@@ -627,9 +642,12 @@ class PipelineEngine:
                          unit=qv["unit"], tier=Tier.amber, provenance=Provenance(file=path, sha256=facts.provenance.sha256),
                          voters=[Voter(name="services_estimate", value=qv["value"], note=qv["basis"])])
         po.assumptions.append(Assumption(key=f"estimate:{key}", value=qv["value"], tag=Tag.defaulted, source=qv["basis"]))
-        what = {"pipe_m": "of pipework", "cable_m": "of cable", "sockets": "sockets", "lights": "light fittings"}[key]
-        po.answer_text = (f"About {qv['value']:g} {qv['unit'] + ' ' if key.endswith('_m') else ''}{what} (ESTIMATE: this set has "
-                          f"no {'plumbing' if key == 'pipe_m' else 'electrical'} sheet; {qv['basis']}).")
+        what = {"pipe_m": "of pipework", "cable_m": "of cable", "sockets": "sockets", "lights": "light fittings",
+                "loading_units": "of water supply load", "waste_flow_ls": "peak waste water flow"}[key]
+        unit = "" if key in ("sockets", "lights") else qv["unit"] + " "
+        plumbing = key in ("pipe_m", "loading_units", "waste_flow_ls")
+        po.answer_text = (f"About {qv['value']:g} {unit}{what} (ESTIMATE: this set has no "
+                          f"{'plumbing' if plumbing else 'electrical'} sheet; {qv['basis']}).")
         po.notes.append("estimated services (engine/layers.estimate_services); upload the MEP sheet for drawn quantities")
         po.cost.ms = (time.perf_counter() - t0) * 1000
         return po

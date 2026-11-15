@@ -643,3 +643,21 @@ body { font-size: 15px; }
 .cktotals li b { font-size: 19px; font-weight: 800; }
 .ckcost { font-size: 12px; color: var(--muted); }
 .ckcost b { color: var(--accent-text); font-size: 14px; font-weight: 800; }
+
+.ckbusy.live { display: flex; gap: 12px; align-items: flex-start; padding: 12px; border-radius: 10px; background: var(--tint);
+  border: 1px solid var(--accent); animation: pulseBorder 1.6s ease-in-out infinite; }
+.ck-spin { width: 22px; height: 22px; border-radius: 50%; border: 3px solid var(--rule); border-top-color: var(--accent); flex: none;
+  animation: spin 900ms linear infinite; margin-top: 2px; }
+.ck-busytext { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 0; }
+.ck-busytext b { font-size: 14px; color: var(--text); }
+.ck-busytext span { font-size: 13px; color: var(--accent-text); }
+.ck-busytext small { font-size: 11px; color: var(--muted); }
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes pulseBorder { 0%, 100% { box-shadow: 0 0 0 0 rgba(23,133,130,.0); } 50% { box-shadow: 0 0 0 4px rgba(23,133,130,.18); } }
+.layer-none { font-size: 11px; color: var(--muted); margin: 4px 2px 0; max-width: 190px; }
+@media (prefers-reduced-motion: reduce) { .ck-spin, .ckbusy.live { animation: none; } }
+
+.seg .segplan { display: inline-flex; align-items: center; gap: 6px; }
+.seg .segplan small { font-size: 10px; letter-spacing: .02em; text-transform: none; color: var(--accent-text); border: 1px solid var(--accent);
+  border-radius: 999px; padding: 1px 6px; }
+.seg .segplan-ic { color: var(--accent-text); }

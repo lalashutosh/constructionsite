@@ -63,8 +63,8 @@ export function LayerToggles({ viewer, layers, extra }: { viewer: () => PlumbVie
     <div className={`layers ${open ? "open" : ""}`}>
       <button className="layers-btn" onClick={() => setOpen((o) => !o)} aria-expanded={open}>Layers {open ? "▾" : "▸"}</button>
       {open && <div className="layers-list">
-      {LAYER_NAMES.map(([k, label]) => {
-        const has = k === "walls" || ((layers as Record<string, unknown[] | undefined>)[k]?.length ?? 0) > 0 || (extra?.[k] ?? 0) > 0;
+      {LAYER_NAMES.filter(([k]) => k === "walls" || ((layers as Record<string, unknown[] | undefined>)[k]?.length ?? 0) > 0 || (extra?.[k] ?? 0) > 0).map(([k, label]) => {
+        const has = true;
         const why = layers.notes?.[k];
         return (
           <button key={k} title={has ? `${label}: show / hide` : why || "not on this sheet"}
@@ -79,6 +79,9 @@ export function LayerToggles({ viewer, layers, extra }: { viewer: () => PlumbVie
         );
       })}
       {msg && <div className="layer-msg">{msg}</div>}
+      {LAYER_NAMES.filter(([k]) => k !== "walls" && !((layers as Record<string, unknown[] | undefined>)[k]?.length) && !(extra?.[k])).length > 0 && (
+        <p className="layer-none">Not on this sheet: {LAYER_NAMES.filter(([k]) => k !== "walls" && !((layers as Record<string, unknown[] | undefined>)[k]?.length) && !(extra?.[k])).map(([, l]) => l.toLowerCase()).join(", ")}</p>
+      )}
       </div>}
     </div>
   );
@@ -144,10 +147,23 @@ export function ChecklistPanel(p: { path: string | null; deepHint?: { on: boolea
         <p className="deepnote">Deep read: this sheet is very detailed ({p.deepHint?.reason}). Counting every symbol takes about {Math.round(eta / 60) || 1} min.</p>
       )}
       {!data && !busy && err && <button className="btn" onClick={() => void run()}>Try again</button>}
-      {busy && (
-        <div className="ckbusy"><div className="bar"><i style={{ width: `${Math.min(96, ((now - since) / 1000 / eta) * 100)}%` }} /></div>
-          <span className="muted sm">Finding every symbol, naming each type once, counting ({Math.round((now - since) / 1000)} s of ~{eta} s)</span></div>
-      )}
+      {busy && (() => {
+        const el = (now - since) / 1000;
+        const stages = ["Tracing the building and its rooms", "Finding every repeated symbol", "Naming each symbol type once",
+          "Counting every copy (two ways)", "Doors, stairs, equipment tags", "Estimating pipework and electrical"];
+        const k = Math.min(stages.length - 1, Math.floor((el / Math.max(eta, 1)) * stages.length));
+        return (
+          <div className="ckbusy live" role="status" aria-live="polite">
+            <div className="ck-spin" aria-hidden="true" />
+            <div className="ck-busytext">
+              <b>Deep read in progress</b>
+              <span>{stages[k]}…</span>
+              <div className="bar"><i style={{ width: `${Math.min(96, (el / eta) * 100)}%` }} /></div>
+              <small>{Math.round(el)} s of about {eta} s · keep exploring, results appear here when done</small>
+            </div>
+          </div>
+        );
+      })()}
       {err && <p className="err sm">{err}</p>}
       {data && (
         <>
@@ -176,8 +192,9 @@ export function ChecklistPanel(p: { path: string | null; deepHint?: { on: boolea
               <div className="svc-tiles">
                 {Object.entries(p.services).map(([k, v]) => (
                   <div key={k} className={`svc-tile ${k}`} title={v.basis}>
-                    <b>{v.value.toLocaleString()}{v.unit === "m" ? <small> m</small> : null}</b>
-                    <span>{({ pipe_m: "Pipework", cable_m: "Cable", lights: "Light fittings", sockets: "Sockets", wet_points: "Wet points" } as Record<string, string>)[k] ?? k}</span>
+                    <b>{v.value.toLocaleString()}{["m", "LU", "l/s"].includes(v.unit) ? <small> {v.unit}</small> : null}</b>
+                    <span>{({ pipe_m: "Pipework", cable_m: "Cable", lights: "Light fittings (EN 12464-1)", sockets: "Sockets", wet_points: "Wet points",
+                      loading_units: "Supply load (EN 806-3)", waste_flow_ls: "Waste flow (EN 12056-2)" } as Record<string, string>)[k] ?? k}</span>
                   </div>
                 ))}
               </div>

@@ -132,7 +132,9 @@ export default function App() {
   }, [floors, activeKey]);
 
   // findings for the active drawing, asked in sequence
-  const specs = useMemo(() => (active ? findingSpecs(active.path, samples) : []), [active, samples]);
+  // construction sheets: the deep read (checklist) is the finding list; residential counters (bedrooms, kitchens) don't apply
+  const isCad = !!active?.geo?.wall_note?.startsWith("construction sheet");
+  const specs = useMemo(() => (active && !isCad ? findingSpecs(active.path, samples) : []), [active, samples, isCad]);
   useEffect(() => {
     if (!active || !specs.length) return;
     const path = active.path;
@@ -600,6 +602,9 @@ export default function App() {
         <section className="col left">
           {active?.geo && (
             <Tour k={active.path} steps={[
+              { title: "Welcome to Plumb: drawings that show their work",
+                body: "In 3D on the left: the building read from your drawing. On the right: everything on the sheet, counted, with a receipt for every number. Below: ask anything. Build plan tab: what to buy, with quantities.",
+                act: () => vref.current?.setView("3d") },
               { title: "We read the scale from the sheet itself",
                 body: scaleLine ? `${scaleLine.text} The pins on the drawing show exactly where: the printed scale note, the graphic bar and the dimension strings we measured.` : "No printed scale was found; one real length you measure unlocks every size.",
                 act: () => { const sc = activeChecks?.find((c) => c.kind === "scale"); setHoverCheck(sc ?? null); vref.current?.setView("top"); } },
@@ -609,6 +614,12 @@ export default function App() {
               { title: "What's on this sheet",
                 body: active.geo.deep?.on ? `This sheet is very detailed: the deep read counts every bed, door, chair and fixture and names every room. It takes about ${Math.max(1, Math.round((active.geo.deep.eta_s || 60) / 60))} min and we tell you before it starts.` : "The checklist on the right counts every element and names every room. Click a row to light up all of them.",
                 act: () => document.querySelector(".cklist")?.scrollIntoView({ behavior: "smooth", block: "center" }) },
+              { title: "Layers, like a body",
+                body: "Envelope, walls, rooms, furniture, piping and electrical are separate layers (bottom-left). Where the set has no plumbing or electrical sheet, we estimate them by European rules (EN 806-3, EN 12056-2, EN 12464-1) and say so.",
+                act: () => vref.current?.setView("top") },
+              { title: "The build plan: what to buy",
+                body: "The Build plan tab turns the counts into a shopping list: concrete, walls, doors, fixtures, pipework and cable, each with its quantity, how it was worked out and a drawing of the runs.",
+                act: () => document.querySelector(".seg button:nth-child(2)")?.scrollIntoView({ behavior: "smooth", block: "nearest" }) },
               { title: "Look around, click anything, ask",
                 body: "The octagon top-right switches 2D / 3D (tap) and rotates (drag); the wheel zooms where your cursor is. Click a room, then ask 'what is the size of this room?'.",
                 act: () => vref.current?.setView("3d") },
@@ -666,7 +677,8 @@ export default function App() {
           />
           <Ask
             active={askPath}
-            chips={askPath ? (flat ? chipsFor(flat.path).slice(0, 2) : chipsFor(askPath)) : []}
+            chips={askPath ? (flat ? chipsFor(flat.path).slice(0, 2) : isCad ? ["How many doors?", "How many staircases?", "How much pipework?",
+              "Are there more doors or toilets and sinks?", "What is the scale of this drawing?"] : chipsFor(askPath)) : []}
             selected={selected && askPath && selected.path === askPath ? selected.proof : null}
             asking={asking}
             err={askErr}

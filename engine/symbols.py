@@ -27,7 +27,7 @@ import numpy as np
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 CACHE = ROOT / "cache" / "symbols"
-VERSION = "v16"
+VERSION = "v17"
 NAMES = ["bed", "side table", "desk", "chair", "sofa", "lounge chair", "seating group", "exercise bike", "treadmill", "table", "closet", "wardrobe", "toilet", "sink",
          "shower", "bathtub", "door", "window", "stair", "tv", "kitchen counter", "fridge", "gym equipment", "washer",
          "plant", "column", "other"]
@@ -743,6 +743,59 @@ def door_arcs(abs_path: str, mask: np.ndarray, ppm: float) -> list[list[float]]:
     return out
 
 
+def boxed_stairs(col: np.ndarray, near: np.ndarray, ppm: float) -> list[dict]:
+    """Stacks of treads, at the solved scale: straight lines >= 0.9 m long that overlap along their length (>= 80%),
+    have similar lengths (+-20%) and repeat >= 8 times at a steady 0.18-0.5 m spacing (+-25%). Catches wide exterior
+    stairs whose box merges with the building wall (the tread-walker and closed-box tests miss those)."""
+    g = cv2.cvtColor(col, cv2.COLOR_BGR2GRAY)
+    ink = ((g < 200) & (near > 0)).astype(np.uint8)
+    Lmin = max(8, int(0.9 * ppm))
+    out = []
+    for axis in (0, 1):
+        A = ink if axis == 0 else np.ascontiguousarray(ink.T)
+        hl = cv2.morphologyEx(A, cv2.MORPH_OPEN, np.ones((1, Lmin), np.uint8))
+        n, lab, st, _ = cv2.connectedComponentsWithStats(hl, 8)
+        lines = sorted([(st[i][1] + st[i][3] / 2, st[i][0], st[i][0] + st[i][2]) for i in range(1, n) if st[i][3] <= 6],
+                       key=lambda t: t[0])
+        used = set()
+        for i, (y0, a0, b0) in enumerate(lines):
+            if i in used:
+                continue
+            chain, gap = [i], None
+            cy, ca, cb = y0, a0, b0
+            for j in range(i + 1, len(lines)):
+                y, a1, b1 = lines[j]
+                d = y - cy
+                if d < 0.18 * ppm * 0.75:
+                    continue
+                if d > 0.5 * ppm * 1.3:
+                    break
+                ov = min(cb, b1) - max(ca, a1)
+                if ov < 0.8 * min(cb - ca, b1 - a1) or not (0.8 <= (b1 - a1) / max(1, cb - ca) <= 1.25):
+                    continue
+                if gap is not None and abs(d / gap - 1) > 0.25:
+                    continue
+                gap = d if gap is None else gap
+                chain.append(j)
+                cy, ca, cb = y, a1, b1
+            if len(chain) < 8 or gap is None or not (0.18 * ppm <= gap <= 0.5 * ppm):
+                continue
+            used.update(chain)
+            ys = [lines[k][0] for k in chain]
+            xa = min(lines[k][1] for k in chain); xb = max(lines[k][2] for k in chain)
+            box = [[xa, min(ys)], [xb, min(ys)], [xb, max(ys)], [xa, max(ys)]]
+            if axis == 1:
+                box = [[q[1], q[0]] for q in box]
+            box = [[float(q[0]), float(q[1])] for q in box]
+            cx = float(np.mean([q[0] for q in box])); cy_ = float(np.mean([q[1] for q in box]))
+            if any((cx - o["c"][0]) ** 2 + (cy_ - o["c"][1]) ** 2 < (1.0 * ppm) ** 2 for o in out):
+                continue
+            out.append({"polygon": box, "c": (cx, cy_),
+                        "attrs": {"treads": len(chain), "spacing_px": round(float(gap), 1), "tread_px": float(xb - xa),
+                                  "turn_deg": 0, "reader": "stack of evenly spaced treads (metric)"}})
+    return out
+
+
 def stair_flights(abs_path: str, mask: np.ndarray, ppm: float) -> list[dict]:
     """Stair flights on a big sheet: the tread detector (engine/raster/stairs.py) runs on full-resolution tiles of the
     building (treads ~0.28 m apart stay ~10+ px apart; a whole-sheet downscale loses them). Polygons in original px,
@@ -751,7 +804,7 @@ def stair_flights(abs_path: str, mask: np.ndarray, ppm: float) -> list[dict]:
     col = cv2.imread(abs_path, cv2.IMREAD_COLOR)
     if col is None:
         return []
-    near = cv2.dilate(mask, np.ones((int(3 * ppm) | 1,) * 2, np.uint8))      # exterior stairs sit just outside
+    near = cv2.dilate(mask, np.ones((int(5 * ppm) | 1,) * 2, np.uint8))      # exterior stairs reach up to ~5 m out
     ys, xs = np.where(near > 0)
     if not len(xs):
         return []
@@ -766,8 +819,8 @@ def stair_flights(abs_path: str, mask: np.ndarray, ppm: float) -> list[dict]:
             tile = col[y0:min(Y1, y0 + T), x0:min(X1, x0 + T)]
             old_ratio = ST.MAX_RATIO
             try:                                   # at a known scale a wide exterior stair (2.4 m treads, 0.28 m apart)
-                ST.MAX_RATIO = 10.0                # is checked in metres below; the slat-ratio guard can relax
-                found = ST.detect(tile)
+                ST.MAX_RATIO = 20.0                # is checked in metres below; the slat-ratio guard can relax
+                found = ST.detect(tile)            # tread-walker; boxed stairs are added for the whole sheet below
             except Exception:  # noqa: BLE001
                 continue
             finally:
@@ -778,20 +831,38 @@ def stair_flights(abs_path: str, mask: np.ndarray, ppm: float) -> list[dict]:
                 if not near[int(np.clip(cy, 0, near.shape[0] - 1)), int(np.clip(cx, 0, near.shape[1] - 1))]:
                     continue
                 L = max(np.ptp([q[0] for q in poly]), np.ptp([q[1] for q in poly])) / ppm
-                if not (0.8 <= L <= 12):            # a flight is ~1-10 m long at the solved scale
+                W_ = min(np.ptp([q[0] for q in poly]), np.ptp([q[1] for q in poly])) / ppm
+                if not (0.8 <= L <= 12) or W_ < 0.7:   # a flight is ~1-10 m long and >= 0.7 m wide at the solved scale
+                    continue
+                gap_m = float(f["attrs"].get("spacing_px") or 0) / ppm
+                if not (0.18 <= gap_m <= 0.5):      # treads are 0.18-0.5 m apart (treadmill belts, grilles are not)
                     continue
                 if any((cx - o["c"][0]) ** 2 + (cy - o["c"][1]) ** 2 < (1.0 * ppm) ** 2 for o in out):
                     continue
                 out.append({"polygon": poly, "c": (cx, cy), "attrs": f["attrs"]})
+    for f in boxed_stairs(col, near, ppm):     # a closed box crossed by >= 8 evenly spaced full-width treads
+        cx, cy = f["c"]
+        if not any((cx - o["c"][0]) ** 2 + (cy - o["c"][1]) ** 2 < (1.0 * ppm) ** 2 for o in out):
+            out.append(f)
     # flights within 3 m of each other are one staircase (a U-stair has two flights)
+    def bx(f):
+        xs = [q[0] for q in f["polygon"]]; ys = [q[1] for q in f["polygon"]]
+        return min(xs), min(ys), max(xs), max(ys)
+
+    def gap(a, b):                                 # distance between two boxes (0 when they touch / overlap)
+        A, B = bx(a), bx(b)
+        dx = max(0.0, max(A[0], B[0]) - min(A[2], B[2]))
+        dy = max(0.0, max(A[1], B[1]) - min(A[3], B[3]))
+        return (dx * dx + dy * dy) ** 0.5
     sets: list[list[int]] = []
-    for i, f in enumerate(out):
-        for st_ in sets:
-            if any((f["c"][0] - out[j]["c"][0]) ** 2 + (f["c"][1] - out[j]["c"][1]) ** 2 < (3 * ppm) ** 2 for j in st_):
-                st_.append(i)
-                break
-        else:
+    for i, f in enumerate(out):                    # flights within 1.5 m of each other (box to box) = one staircase
+        hit = [k for k, st_ in enumerate(sets) if any(gap(f, out[j]) < 1.5 * ppm for j in st_)]
+        if not hit:
             sets.append([i])
+        else:
+            sets[hit[0]].append(i)
+            for k in sorted(hit[1:], reverse=True):     # f joins two sets: merge them
+                sets[hit[0]] += sets.pop(k)
     for k, st_ in enumerate(sets):
         for j in st_:
             out[j]["set"] = k
@@ -819,8 +890,12 @@ def answer(sha: str, question: str):
     """'how many beds / sinks / stairs ...' from the deep read of this drawing (each count with its boxes)."""
     m = re.search(r"\bhow\s+many\s+(.+?)(?:\s+(?:are|is|do|does|in|on|there|here|shown|drawn)\b|\?|$)|\bnumber\s+of\s+(.+?)(?:\?|$)",
                   question, re.I)
-    if not m:
-        return None
+    if not m:                              # 'no doors in this?', 'any stairs?', 'doors?': a noun the deep read holds
+        m2 = re.search(r"^\s*(?:are\s+there\s+)?(?:no|any|some)?\s*([a-z ]+?)\s*(?:in\s+(?:this|here|the\s+\w+))?\s*\??\s*$",
+                       question.strip(), re.I)
+        if not m2 or len(m2.group(1).split()) > 3:
+            return None
+        m = re.match(r"(.*)()", m2.group(1))
     ck = cached(sha)
     if not ck or not ck.get("totals"):
         return None
@@ -933,3 +1008,42 @@ def rename(sha: str, kind: str, new: str) -> Optional[dict]:
     ck.setdefault("renamed", []).append({"from": kind, "to": new})
     fs[0].write_text(json.dumps(ck))
     return ck
+
+
+def _count_for(ck: dict, noun: str) -> Optional[tuple[int, str]]:
+    """Count of one noun phrase from the deep read (class words sum their types). (count, label) or None."""
+    words = [w.rstrip("s") if len(w) > 3 else w for w in re.findall(r"[a-z]+", noun.lower()) if w not in ("the", "of", "all", "total", "number")]
+    for w in words[::-1]:
+        w = SYN.get(w, w)
+        hits = [t for t in ck.get("totals", []) if t["kind"] == w or t["kind"].split()[-1] == w or
+                (len(w) >= 4 and (t["kind"].startswith(w) or w.startswith(t["kind"]))) or
+                w in [x.rstrip("s") for x in re.findall(r"[a-z]+", t["label"].lower())]]
+        if w in ("stair",):                       # 'stairs' = staircases, not flights
+            hits = [t for t in hits if t["kind"] == "staircase"] or hits
+        if hits:
+            return sum(t["count"] for t in hits), (hits[0]["label"].lower() if len(hits) == 1 else f"{w}s")
+    return None
+
+
+def compare(sha: str, question: str) -> Optional[dict]:
+    """'are there more doors or (the sum of) toilets and sinks?' -> both sides counted from the deep read, by code."""
+    m = re.search(r"\b(?:more|fewer|less)\s+(.+?)\s+(?:or|than)\s+(.+?)\??$", question.strip(), re.I)
+    if not m:
+        return None
+    ck = cached(sha)
+    if not ck:
+        return None
+    sides = []
+    for part in (m.group(1), m.group(2)):
+        part = re.sub(r"^(?:the\s+)?(?:sum|total)\s+of\s+", "", part.strip(), flags=re.I)
+        terms = [t for t in re.split(r"\s*(?:\+|\band\b|,|\bplus\b)\s*", part) if t.strip()]
+        got = [_count_for(ck, t) for t in terms]
+        if not got or any(g is None for g in got):
+            return None
+        sides.append((sum(g[0] for g in got), " + ".join(g[1] for g in got),
+                      " + ".join(str(g[0]) for g in got) if len(got) > 1 else ""))
+    (a, la, ea), (b, lb, eb) = sides
+    win = la if a > b else lb if b > a else None
+    txt = (f"{la.capitalize()}: {a}{f' ({ea})' if ea else ''} vs {lb}: {b}{f' ({eb})' if eb else ''}. "
+           + (f"More {win}, by {abs(a - b)}." if win else "They are equal."))
+    return {"text": txt, "value": win or "equal", "a": a, "b": b}

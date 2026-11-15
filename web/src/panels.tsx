@@ -754,7 +754,8 @@ export function Seg({ mode, onMode }: { mode: "findings" | "plan"; onMode: (m: "
   return (
     <div className="seg" role="tablist" aria-label="Right column view">
       <button role="tab" aria-selected={mode === "findings"} className={mode === "findings" ? "on" : ""} onClick={() => onMode("findings")}>Findings</button>
-      <button role="tab" aria-selected={mode === "plan"} className={mode === "plan" ? "on" : ""} onClick={() => onMode("plan")}>Build plan</button>
+      <button role="tab" aria-selected={mode === "plan"} className={`${mode === "plan" ? "on" : ""} segplan`} onClick={() => onMode("plan")}>
+        <span className="segplan-ic" aria-hidden="true">▤</span>Build plan <small>what to buy</small></button>
     </div>
   );
 }
