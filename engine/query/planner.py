@@ -20,10 +20,15 @@ SYSTEM = (
     "For 'what share / percentage / fraction of X is Y' use two parts with combine ratio (part1 = Y, part2 = X, "
     "e.g. sum_area of bathrooms over sum_area of all rooms). "
     "Use aggregate argmax_area/argmin_area for 'which room is largest/smallest', argmax_group/argmin_group with group_by "
-    "for 'which apartment/storey has the most/fewest X', avg_area for averages; for sum_attr "
+    "for 'which apartment/storey has the most/fewest X', each_area to list each room's size ('size of both bedrooms', "
+    "'area of each room', 'respectively'), avg_area for averages; for sum_attr "
     "use an attr listed under numeric_attrs for that kind (e.g. volume_m3). If the question needs something the schema "
     "cannot express (direction, facing, orientation, adjacency to the entrance, cost, time), reply "
     "{\"unsupported\": \"<short reason>\"} instead of a spec. "
+    "Element kind 'zone' (subtype colour_module) is a colour-filled AREA read from a legend swatch, and kind 'region' is "
+    "just a closed outline on a structural sheet: neither is an individual room, dorm, unit or apartment, so never count "
+    "them as rooms/dorms/units (use sum_area over zone for an area question; if the question asks for a number of rooms "
+    "or units that only a printed schedule gives, reply {\"unsupported\": \"count not drawn individually\"}). "
     "NEVER include a numeric answer; only describe what to select. Use only the allowed keys, element kinds, room types and rules."
 )
 
@@ -41,6 +46,7 @@ class Plan:
     specs: list[dict]
     combine: str = "single"
     cost: Cost = field(default_factory=Cost)
+    derive: Optional[object] = None   # validated engine.takeoff.derive.DeriveSpec when the reply carried a `derive` object
 
 
 def drawing_vocabulary(facts: SheetFacts) -> dict:
@@ -77,6 +83,10 @@ def plan(question: str, facts: SheetFacts, llm: LLM) -> Plan:
                     usd=cost.usd + reply.usd, llm_calls=2, planner_calls=1)
     try:
         obj = _parse_json(reply.text)
+        derive_spec = None
+        if "derive" in obj:                    # tiles/paint/... wanted on top of the base quantity: validated, code computes
+            from engine.takeoff import derive as D
+            derive_spec = D.from_obj(obj.pop("derive"))
         if "unsupported" in obj:
             raise SpecError(f"unsupported: {str(obj['unsupported'])[:120]}")
         if "parts" in obj:
@@ -88,7 +98,7 @@ def plan(question: str, facts: SheetFacts, llm: LLM) -> Plan:
         else:
             specs, comb = [obj], "single"
         kinds = set(vocab["element_kinds"])
-        return Plan([validate(s, known_kinds=kinds) for s in specs], comb, cost)
+        return Plan([validate(s, known_kinds=kinds) for s in specs], comb, cost, derive_spec)
     except (SpecError, ValueError, KeyError, TypeError) as e:
         raise PlannerError(f"{type(e).__name__}: {e}", Cost(
             tokens_in=cost.tokens_in, tokens_out=cost.tokens_out, usd=cost.usd, llm_calls=1)) from e

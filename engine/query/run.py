@@ -5,6 +5,7 @@ Area units: attrs.area_m2 (vector sources in real units) wins; else polygon px a
 from __future__ import annotations
 
 import json
+import math
 import pathlib
 from dataclasses import dataclass, field
 from typing import Any, Optional
@@ -136,6 +137,46 @@ def _subtype_ok(e: Element, want: str, rules: list[str], wet: Optional[set] = No
     return st == w or e.kind.casefold() == w
 
 
+TYPE_WORD = {"living": "living room", "living_room": "living room", "wc": "WC", "bath": "bathroom", "other_rooms": "room",
+             "room": "room", "hallway": "hallway", "storage": "storage room", "utility": "utility room"}
+
+
+def _where_on_plan(e: Element, among: list[Element]) -> str:
+    """'bottom left' / 'top centre' ... of the element among the rooms on its floor (drawing coordinates, y down)."""
+    pts = [p for x in among if x.attrs.get("storey", "") == e.attrs.get("storey", "") for p in x.polygon]
+    if not pts or not e.polygon:
+        return ""
+    x0, x1 = min(p[0] for p in pts), max(p[0] for p in pts)
+    y0, y1 = min(p[1] for p in pts), max(p[1] for p in pts)
+    cx = sum(p[0] for p in e.polygon) / len(e.polygon)
+    cy = sum(p[1] for p in e.polygon) / len(e.polygon)
+    fx = (cx - x0) / max(x1 - x0, 1e-9)
+    fy = (cy - y0) / max(y1 - y0, 1e-9)
+    row = "top" if fy < 1 / 3 else "bottom" if fy > 2 / 3 else "middle"
+    col = "left" if fx < 1 / 3 else "right" if fx > 2 / 3 else "centre"
+    return "in the centre" if (row, col) == ("middle", "centre") else f"at the {row} {col}" if row != "middle" else f"on the {col}"
+
+
+def describe_room(e: Element, among: list[Element], facts: SheetFacts) -> str:
+    """How a person would point at one room: 'the bedroom marked MH 2 at the bottom left of 2. KERROS'."""
+    rooms = [x for x in facts.elements if x.kind == e.kind] or among
+    word = TYPE_WORD.get((e.subtype or e.kind or "").casefold(), (e.subtype or e.kind).replace("_", " "))
+    out = f"the {word}"
+    num = e.attrs.get("number")
+    if e.label and e.label.casefold() != word.casefold():
+        out += f" marked {e.label}"
+    if num and num != e.label:
+        out += f" (no. {num})"
+    twins = [x for x in among if (x.subtype or "") == (e.subtype or "") and (x.label or "") == (e.label or "")]
+    if len(twins) > 1 or not e.label:
+        where = _where_on_plan(e, rooms)
+        if where:
+            out += f" {where}"
+    if e.attrs.get("storey"):
+        out += f" {'of' if ' at the ' in out or ' on the ' in out else 'on'} {e.attrs['storey']}"
+    return out
+
+
 def select(spec: dict, facts: SheetFacts) -> list[Element]:
     sel = spec["select"]
     kinds = [sel] if isinstance(sel, str) else list(sel)
@@ -208,6 +249,16 @@ def _area_m2(e: Element, px_per_m: Optional[float]) -> Optional[float]:
     return p.area / (px_per_m ** 2)
 
 
+def _perimeter_m(e: Element, px_per_m: Optional[float]) -> Optional[float]:
+    """Length of a room's outline = the summed lengths of the walls around it (skirting / baseboard length)."""
+    if "perimeter_m" in e.attrs:
+        return float(e.attrs["perimeter_m"])
+    p = _poly(e)
+    if p is None or not px_per_m:
+        return None
+    return p.exterior.length / px_per_m
+
+
 def _length_m(e: Element, px_per_m: Optional[float]) -> Optional[float]:
     if "length_m" in e.attrs:
         return float(e.attrs["length_m"])
@@ -244,6 +295,8 @@ def _agg(els: list[Element], spec: dict, facts: SheetFacts, px_per_m, res: Resul
             v = _area_m2(e, px_per_m)
         elif agg == "sum_length":
             v = _length_m(e, px_per_m)
+        elif agg == "perimeter":
+            v = _perimeter_m(e, px_per_m)
         else:
             raw = e.attrs.get(spec["attr"])
             v = float(raw) if isinstance(raw, (int, float)) else None
@@ -266,8 +319,8 @@ def run(spec: dict, facts: SheetFacts, px_per_m: Optional[float] = None) -> Resu
     validate(spec)
     rules = list(spec.get("rules") or [])
     els = select(spec, facts)
-    unit = {"sum_area": "m2", "max_area": "m2", "avg_area": "m2", "sum_length": "m",
-            "argmax_area": "label", "argmin_area": "label", "argmax_group": "label",
+    unit = {"sum_area": "m2", "max_area": "m2", "avg_area": "m2", "sum_length": "m", "perimeter": "m",
+            "argmax_area": "label", "argmin_area": "label", "argmax_group": "label", "each_area": "label",
             "argmin_group": "label"}.get(spec["aggregate"], "count")
     if spec["aggregate"] == "sum_attr":
         unit = next((u for suf, u in (("_m3", "m3"), ("_m2", "m2"), ("_m", "m")) if spec["attr"].endswith(suf)), "count")
@@ -287,6 +340,35 @@ def run(spec: dict, facts: SheetFacts, px_per_m: Optional[float] = None) -> Resu
         res.notes.append(f"no matching elements: no {what} recognised on this drawing")
         res.value = None                          # a sum over nothing is 'not found', not a confident 0
         return res
+    if spec["aggregate"] == "extent":                    # overall length x width of the selected outline(s)
+        from shapely.geometry import MultiPoint
+        pts = [pt for e in els for pt in e.polygon]
+        if len(pts) < 3:
+            return res
+        rect = MultiPoint(pts).minimum_rotated_rectangle
+        xs = list(rect.exterior.coords)
+        a, b = sorted([math.dist(xs[0], xs[1]), math.dist(xs[1], xs[2])], reverse=True)
+        res.unit = "label"
+        res.evidence_ids = [e.id for e in els]
+        if px_per_m:
+            res.value = f"{a / px_per_m:.2f} m x {b / px_per_m:.2f} m"
+            res.groups = {"length_m": round(a / px_per_m, 3), "width_m": round(b / px_per_m, 3)}
+        else:
+            res.needs_scale = True
+            res.notes.append(f"outline is {a:.0f} x {b:.0f} px (ratio {a / b:.2f}); a scale is needed for metres")
+        return res
+    if spec["aggregate"] == "each_area":                 # "size of both bedrooms respectively"
+        scored = [(a, e) for e in els if (a := _area_m2(e, px_per_m)) is not None]
+        if not scored:
+            res.needs_scale = bool(els)
+            return res
+        scored.sort(key=lambda t: -t[0])
+        res.value = "; ".join(f"{describe_room(e, [x for _, x in scored], facts)}: {a:.1f} m²" for a, e in scored)
+        res.unit = "label"
+        res.groups = {e.id: round(a, 2) for a, e in scored}
+        res.evidence_ids = [e.id for _, e in scored]
+        res.notes.append(f"{len(scored)} rooms, each measured separately")
+        return res
     if spec["aggregate"] in ("argmax_area", "argmin_area"):
         scored = [(a, e) for e in els if (a := _area_m2(e, px_per_m)) is not None]
         unit_word = "m2"
@@ -297,14 +379,12 @@ def run(spec: dict, facts: SheetFacts, px_per_m: Optional[float] = None) -> Resu
             res.needs_scale = bool(els)
             return res
         a, e = (max if spec["aggregate"] == "argmax_area" else min)(scored, key=lambda t: t[0])
-        num = e.attrs.get("number")
-        name = e.label or (e.subtype or e.kind).replace("_", " ")
-        same = [x for _, x in scored if (x.label or x.subtype) == (e.label or e.subtype)]
-        if len(same) > 1 and not num:           # several rooms share the name: say which one (rank by area)
-            order = sorted(same, key=lambda x: _area_m2(x, px_per_m) or (_poly(x).area if _poly(x) else 0))
-            name = f"{name} #{order.index(e) + 1} of {len(same)} (by size)"
-        size = f", {a:.1f} m²" if unit_word == "m2" else ""
-        res.value = f"{name}" + (f" ({num})" if num and num != e.label else "") + size
+        total = sum(t[0] for t in scored)
+        rt_w = ((spec.get("where") or {}).get("room_type") or "room").casefold()
+        plural = TYPE_WORD.get(rt_w, rt_w.replace("_", " ")) + "s"
+        size = (f"{a:.1f} m²" if unit_word == "m2" else
+                f"{a / total:.0%} of the area of all {len(scored)} {plural}; set a real size for m²" if total and len(scored) > 1 else "")
+        res.value = describe_room(e, [x for _, x in scored], facts) + (f" ({size})" if size else "")
         res.notes.append(f"{len(scored)} candidates compared by area; chosen {a:.2f} {unit_word}")
         res.groups = {"area": round(a, 2)}
         res.evidence_ids = [e.id]
@@ -353,6 +433,6 @@ def run(spec: dict, facts: SheetFacts, px_per_m: Optional[float] = None) -> Resu
             res.value = 1
         res.value = int(res.value)
         res.runs = [res.value]
-    if res.needs_scale and spec["aggregate"] in ("sum_area", "max_area", "avg_area", "sum_length") and not px_per_m:
+    if res.needs_scale and spec["aggregate"] in ("sum_area", "max_area", "avg_area", "sum_length", "perimeter") and not px_per_m:
         res.value = None
     return res

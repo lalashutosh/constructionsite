@@ -26,7 +26,15 @@ AREA_PHRASE = {"apartment_net_area": "The apartment's net floor area is", "total
 KIND_UNIT = {"m2": "m²", "m3": "m³", "m": "m"}
 
 
+# room_type / subtype codes -> the words a person says ('living' is a code, never 'livings')
+DISPLAY = {"living": "living room", "living_room": "living room", "wc": "WC", "bath": "bathroom",
+           "other_rooms": "room", "room": "room", "storage": "storage room", "utility": "utility room",
+           "entry": "entrance", "hallway": "hallway", "dining": "dining room"}
+
+
 def _plural(word: str) -> str:
+    if word.endswith("WC"):
+        return word + "s"
     if word.endswith("y") and not word.endswith(("ay", "ey", "oy")):
         return word[:-1] + "ies"
     return word if word.endswith("s") else word + "s"
@@ -37,7 +45,8 @@ def _what(spec: dict) -> tuple[str, str]:
     sel = spec.get("select")
     sel = sel if isinstance(sel, str) else " and ".join(sel or [])
     w = spec.get("where") or {}
-    base = (w.get("room_type") or w.get("subtype") or sel or "item").replace("_", " ")
+    base = (w.get("room_type") or w.get("subtype") or sel or "item")
+    base = DISPLAY.get(str(base).casefold(), str(base)).replace("_", " ")
     if sel == "room" and (w.get("room_type") or w.get("subtype")):
         base = base if base.endswith(("room", "kitchen", "hall", "sauna", "storage")) else base
     if w.get("label"):
@@ -58,6 +67,19 @@ def sentence(po) -> Optional[str]:
         parts = re.findall(r"part\d+=([^,]+)", " ".join(n for n in po.notes if n.startswith("query parts")))
         names = [_what(s)[1] for s in spec["parts"][:2]]
         if len(parts) >= 2 and len(names) == 2:
+            q = po.question.lower()
+            if re.search(r"\b(more|fewer|less)\b.*\bor\b|\bor\s+(more|fewer|less)\b|\bvs\b|versus|which", q):
+                try:                                   # either/or question: name the winner, not yes/no
+                    x, y = float(parts[0]), float(parts[1])
+                    if x == y:
+                        return f"The same: {parts[0].strip()} {names[0]} and {parts[1].strip()} {names[1]}."
+                    win, lose = ((names[0], names[1]) if x > y else (names[1], names[0]))
+                    word = "fewer" if re.search(r"\b(fewer|less)\b", q) else "more"
+                    if word == "fewer":
+                        win, lose = lose, win
+                    return f"There are {word} {win}: {parts[0].strip()} {names[0]} vs {parts[1].strip()} {names[1]}."
+                except ValueError:
+                    pass
             return f"{v}: {parts[0].strip()} {names[0]} vs {parts[1].strip()} {names[1]}."
         return f"{v}."
     if spec and "parts" in spec and spec.get("combine") == "ratio" and isinstance(v, (int, float)):
@@ -70,10 +92,15 @@ def sentence(po) -> Optional[str]:
             return f"There are as many {a} as {b}."
         word = _what(spec["parts"][0])[0] if n == 1 else a
         return f"There {'is' if n == 1 else 'are'} {n} {'more' if v > 0 else 'fewer'} {word} than {b}."
+    if spec and spec.get("aggregate") == "each_area" and isinstance(v, str):
+        items = [x.strip() for x in v.split(";") if x.strip()]
+        return ("; ".join(x[0].upper() + x[1:] for x in items) + ".") if items else None
     if spec and spec.get("aggregate") in ("argmax_area", "argmin_area"):
         sing, _ = _what(spec)
         which = "largest" if spec["aggregate"] == "argmax_area" else "smallest"
         name = str(v)
+        if name.startswith("the "):
+            return f"The {which} {sing} is {name}."
         if "#" in name or "(" in name:
             return f"The {which} {sing} is {name}."
         return f"The {which} {sing} is the {name.lower() if name.islower() or ' ' not in name else name}."
@@ -97,6 +124,9 @@ def sentence(po) -> Optional[str]:
             sing, plur = _what(spec)
             if spec["aggregate"] == "avg_area":
                 return f"The average {sing} area is {_num(v, po.unit)}."
+            if kind == "area" and spec["aggregate"] == "sum_area" and sing != plur and \
+                    len([e for e in po.evidence if e.kind == "room"]) == 1:
+                return f"The {sing} covers {_num(v, po.unit)}."          # one room matched: not 'the livings ... in total'
             return f"The {plur} cover {_num(v, po.unit)} in total." if kind == "area" else f"{_num(v, po.unit)} in total."
         lead = AREA_PHRASE.get(intent, "The answer is")
         return f"{lead} {_num(v, po.unit)}."

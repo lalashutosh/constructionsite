@@ -8,7 +8,7 @@ _RL = ["room", "label"]
 # the 12 cubicasa intents (mirror engine.count.rules; tests/test_query.py checks equality on cached facts)
 CUBICASA: dict = {
     "windows": {"select": "window", "aggregate": "count"},
-    "doors": {"select": "door", "aggregate": "count"},  # raster door icons are leaf-only already
+    "doors": {"select": "door", "aggregate": "count", "rules": ["reader_doors"]},  # leaf-only icons, fragments merged
     "toilets": {"select": "toilet", "aggregate": "count"},
     "sinks": {"select": "sink", "aggregate": "count"},
     "showers_baths": {"select": "bath", "aggregate": "count", "rules": ["prior_fallback_1"]},
@@ -36,8 +36,20 @@ def element_kind(name: str) -> str:
     return n[:-1] if n.endswith("s") and not n.endswith("ss") else n
 
 
+# sheet-level questions that make sense on ANY drawing (engine/router_sheet.yaml routes to these)
+SHEET: dict = {
+    "rooms_count": {"select": "room", "aggregate": "count", "rules": ["rooms_only"]},
+    "total_room_area": {"select": ["room", "zone"], "aggregate": "sum_area", "rules": ["exclude_outdoor"]},
+    "largest_room": {"select": ["room", "zone"], "aggregate": "argmax_area", "rules": ["exclude_outdoor"]},
+    "smallest_room": {"select": ["room", "zone"], "aggregate": "argmin_area", "rules": ["exclude_outdoor"]},
+    "overall_size": {"select": ["footprint"], "aggregate": "extent"},
+}
+
+
 def spec_for(intent: str, params: Optional[dict] = None, source: Optional[str] = None) -> Optional[dict]:
     p = {k: v for k, v in (params or {}).items() if v}
+    if intent in SHEET:
+        return dict(SHEET[intent])
     if intent in CUBICASA and source in (None, "cubicasa5k"):
         return dict(CUBICASA[intent])
     fixtures = {"toilets": "toilet", "washbasins": "washbasin", "bathtubs": "bathtub", "showers": "shower"}

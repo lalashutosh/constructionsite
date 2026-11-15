@@ -82,13 +82,20 @@ def basis(facts: SheetFacts, vibe: dict, px_per_m: Optional[float], scale_tag: s
             return None, "open"
         return p.area / px_per_m ** 2, scale_tag
 
+    def k_len(e):
+        """metres per polygon unit: an element read at a known sheet scale carries px_per_m; a DXF room is in metres"""
+        if e.attrs.get("px_per_m"):
+            return 1.0 / float(e.attrs["px_per_m"])
+        if "area_m2" in e.attrs:
+            return 1.0                 # DXF units are metres
+        return 1.0 / px_per_m if px_per_m else None
+
     def perim_m(e):
         p = _poly(e)
-        if p is None:
+        k = k_len(e)
+        if p is None or k is None:
             return None
-        if "area_m2" in e.attrs:
-            return p.length            # DXF units are metres
-        return p.length / px_per_m if px_per_m else None
+        return p.length * k
 
     areas = [area_m2(e) for e in rooms]
     tag_area = "drawn" if areas and all(t == "drawn" for _, t in areas) else (scale_tag if px_per_m else "open")
@@ -107,12 +114,11 @@ def basis(facts: SheetFacts, vibe: dict, px_per_m: Optional[float], scale_tag: s
     if floor is not None:
         from shapely.ops import unary_union
         polys = [p for p in (_poly(e) for e in rooms) if p is not None]
-        u = unary_union([p.buffer(0.15 if "area_m2" in (rooms[0].attrs if rooms else {}) else
-                                  0.15 * (px_per_m or 1)) for p in polys]) if polys else None
+        k1 = k_len(rooms[0]) if rooms else None
+        k1 = k1 or (1 / px_per_m if px_per_m else 1.0)
+        u = unary_union([p.buffer(0.15 / k1) for p in polys]) if polys else None
         if u is not None:
-            k2 = 1.0 if (rooms and "area_m2" in rooms[0].attrs) else (1 / px_per_m ** 2)
-            foot = u.area * k2
-            k1 = 1.0 if (rooms and "area_m2" in rooms[0].attrs) else (1 / px_per_m)
+            foot = u.area * k1 * k1
             put("footprint_perimeter_m", round(u.length * k1, 2), "m", tag_area, "outline of all rooms + wall allowance")
     put("footprint_m2", round(foot, 2) if foot is not None else None, "m2", tag_area,
         "outline of all rooms incl. 0.15 m wall allowance")

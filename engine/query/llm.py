@@ -38,7 +38,9 @@ def _verda_module():
 
 
 class VerdaLLM:
-    """provider verda | featherless; model tier from LLM_MODEL_KIND (fast|strong, default fast)."""
+    """provider verda | featherless | gemini (OpenAI-compatible endpoints); model tier from LLM_MODEL_KIND (fast|strong).
+    gemini: GEMINI_API_KEY (or GOOGLE_API_KEY) in .env; models GEMINI_MODEL_FAST / GEMINI_MODEL_STRONG
+    (default gemini-2.5-flash / gemini-2.5-pro)."""
 
     def __init__(self, prov: str = "verda", kind: Optional[str] = None):
         self.v = _verda_module()
@@ -57,11 +59,14 @@ class VerdaLLM:
         import httpx
 
         v, env = self.v, self.v.load_env()
-        pre = "VERDA" if self.prov == "verda" else "FEATHERLESS"
+        pre = {"verda": "VERDA", "featherless": "FEATHERLESS", "gemini": "GEMINI"}.get(self.prov, "VERDA")
         k = self.kind.upper()
-        key = env.get(f"{pre}_API_KEY", "")
+        key = env.get(f"{pre}_API_KEY", "") or (env.get("GOOGLE_API_KEY", "") if pre == "GEMINI" else "")
         base = (env.get(f"{pre}_BASE_URL_{k}") or env.get(f"{pre}_BASE_URL", "")).rstrip("/")
         model = env.get(f"{pre}_MODEL_{k}") or env.get(f"{pre}_MODEL", "")
+        if pre == "GEMINI":                 # Google Gemini through its OpenAI-compatible endpoint
+            base = base or "https://generativelanguage.googleapis.com/v1beta/openai"
+            model = model or ("gemini-2.5-pro" if k == "STRONG" else "gemini-2.5-flash")
         headers = {"Content-Type": "application/json"}
         if key:
             headers["Authorization"] = key if key.lower().startswith("bearer ") else f"Bearer {key}"
@@ -73,10 +78,14 @@ class VerdaLLM:
             raise RuntimeError("LLM budget reached")
         body = {"model": model, "max_tokens": max_tokens, "temperature": 0,
                 "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}
-        if self.no_think:                   # judge-style calls: answer directly, no hidden reasoning tokens
+        if self.no_think and pre != "GEMINI":  # judge-style calls: answer directly, no hidden reasoning tokens
             body["chat_template_kwargs"] = {"thinking": False, "enable_thinking": False}
             body["reasoning_effort"] = "low"
-        r = httpx.post(f"{base}/chat/completions", json=body, timeout=60, headers=headers)
+        elif self.no_think:
+            body["reasoning_effort"] = "low"
+        elif getattr(self, "effort", None):
+            body["reasoning_effort"] = self.effort
+        r = httpx.post(f"{base}/chat/completions", json=body, timeout=getattr(self, "timeout", 60), headers=headers)
         r.raise_for_status()
         data = r.json()
         text = data["choices"][0]["message"].get("content") or ""
@@ -97,7 +106,7 @@ class VerdaLLM:
 def default_llm() -> Optional[LLM]:
     """None when LLM_PROVIDER=none. `anthropic` is reserved for the live demo and not wired here."""
     p = provider()
-    if p in ("verda", "featherless"):
+    if p in ("verda", "featherless", "gemini"):
         llm = VerdaLLM(p)
         llm.no_think = True          # planner/classifier want short JSON, not hidden reasoning that eats the budget
         return llm

@@ -1,7 +1,17 @@
 # Plumb: where we are
 
 Plain-language status. Updated after every milestone. Branch `p2-finish` on GitHub (`main` untouched).
-Last update: **18:15**
+Last update: **19:20**
+
+## 19:20 update: two floors on one sheet, proof you can see, measuring fixed
+
+- **Two floor plans on one sheet become two floors:** stacked in 3D with tabs **All floors · 1. KERROS · 2. KERROS**, every finding shows its count per floor, and "how many doors on the ground floor?" answers **"There are 8 doors on 1. KERROS."**
+- **Bedrooms fixed on that sheet:** an AI now reads the printed room labels (MH, OH, WC...) and code counts them through a Finnish/Nordic glossary. It is better than the old reader on bedrooms (**88% vs 71%**) and WC rooms (**91% vs 74%**), so it decides those. colorful-13685: **4 bedrooms** (answer key 4), was 3.
+- **Proof you can see:** **Why?** shows the drawing with a numbered circle on each counted thing, then who said what ("Symbol detector found 3 · AI label reader read MH, MH, MH, MH → 4 · the answer follows the label reader").
+- **Rooms are named like a person would:** "The smallest bedroom is the bedroom marked MH at the top left of 2. KERROS."
+- **Set real size works again:** the "click both ends" prompt was hidden behind the header. Now visible, Esc cancels, and you measure one floor from above.
+- **CI was red** (a stricter type check + API tests without the dataset). Fixed locally (`a9af145`), needs a push.
+- **In progress:** stairs on scanned plans, linked between floors in 3D.
 
 ## 18:15 update: smarter, safer, multi-floor
 

@@ -95,9 +95,12 @@
     "argmin_area",
     "avg_area",
     "argmax_group",
-    "argmin_group"
+    "argmin_group",
+    "each_area",
+    "extent",
+    "perimeter"
    ],
-   "description": "argmax_area/argmin_area answer WHICH element (its label) is largest/smallest; avg_area is the mean area; argmax_group/argmin_group need group_by and answer WHICH group has the most/fewest selected elements"
+   "description": "argmax_area/argmin_area answer WHICH element (its label) is largest/smallest; avg_area is the mean area; argmax_group/argmin_group need group_by and answer WHICH group has the most/fewest selected elements; each_area lists every selected room with its own area ('size of each/both bedrooms', 'respectively'); extent = overall length x width of the selected elements' outline (e.g. footprint); perimeter = total length of the outline of the selected rooms in metres (the summed lengths of the walls around them, skirting/baseboard length): 'length of the walls of the garage', 'perimeter of the kitchen'"
   },
   "attr": {
    "type": "string",

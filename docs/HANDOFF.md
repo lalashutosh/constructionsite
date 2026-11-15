@@ -1,6 +1,143 @@
 # Handoff — where the build stands and how to continue
 
-## UPDATE 2026-11-14 ~19:00 (`a24226f`) — START HERE
+> **NEWEST (23:10): judges want deep reading of the dorm sheet (every room + furniture node + checklist, layers, 2D/3D view). Plan + status: docs/handoff/deep-sheets.md**
+
+## UPDATE 2026-11-14 ~22:45 (Abhinav's session: big Stoa sheets at full resolution) — START HERE
+
+Stress set = the 3 Stoa example sheets at FULL resolution (10200x6600 / 9934x7017; `cache/stress/{m101a,s100f,a2dorm}.png`,
+manifest with printed truth `cache/stress/manifest.json`, harness `scripts/stress_big.py` now grades each answer).
+Score: r0 1/18 -> r1 13/18 -> **r3 17/18** (`docs/stress-report-r3.md`, LLM off, 10-19 s/sheet). Gate holds: CubiCasa DEV
+400q 81.5%, Swiss 300q counts 91.3% / area 18.1% (same as before).
+- **Scale** (`engine/scale/sheet_scale.py` v2): reading-order line merge (the dorm's "SCALE : 1" = 40'-0"" was split),
+  RANSAC bar fit (a misread "38" for 8' no longer bends it), outer-tick alt readings for dimension lines crossed by
+  extension lines, ambiguous paper sizes as weaker alternatives (A-2 is a HALF-SIZE print: true 49.2 px/m, not 24.6),
+  OCR repair 55'.8" -> 55'-8". All 3 sheets within 2%.
+- **What the sheet prints** (`engine/sheet_lookup.py`, wired in `PipelineEngine._printed`): notes/tables lookup
+  ("MCC trench length" -> 4275, "west wing SF" -> 7,009 SF, "dorm rooms on this floor" -> 48 via the sheet title
+  SECOND FLOOR), equipment tags with sheet-defined abbreviations + targeted re-OCR + OCR look-alike merge (FSL-2 = FSI-2),
+  printed total area as an exact voter, overall dims VERIFIED (line measures true / equals a printed chain / a drawn line
+  of that length runs beside it), garbled notes re-read at 2x.
+- **Outline** (`engine/outline.py`): screened MEP background layer (grey 170 under black piping) or paired wall/slab-edge
+  lines; replaces the line-geometry regions/footprint in `bigsheet.extract_facts`; dropped when it contradicts verified
+  printed overall dims. 3D for construction sheets = one outline ring + labelled zones.
+- **Findings** on construction sheets (`/api/findings`, `engine/sheet_findings.py` written by the Verda worker from
+  `cache/verda/tasks/sheet_findings.md`): scale, size, area + printed area/count tables, tagged equipment, pipe sizes,
+  slab types. Grey and zero rows are never shown.
+- **Root-cause fixes**: facts + 3D caches carry `engine/cache.READER_VERSION` (uploads were stuck on stale residential
+  reads: notes as walls, "garage", CubiCasa credit); CubiCasa licence only on CubiCasa files; geometry carries
+  `px_per_m` when printed evidence solved the scale so sizes show without "Set real size"; inspector crash
+  (`size_m.area` vs API `area_m2`) fixed. Element overrides + inspector committed (`b4693e5`).
+- **Open**: slab area BY TYPE (zones inside the S-100F slab are not split reliably by isolation joints; the slab types
+  are listed from print but not measured per type); "how long is the north wing" (dimension-to-wing association);
+  per-zone legend labels on A-2 use the colour modules (kept), outline there is dropped; door/window counts on
+  construction sheets still refused; the user's DfE special-school PDF was not on disk (add to cache/stress/).
+  Bump `READER_VERSION` whenever a reader changes what facts are.
+
+## UPDATE 2026-11-14 ~23:30 (Ashutosh's session: big sheets, scale, confidence) — START HERE
+
+Goal of this round (user): judges will use BIG, complex blueprints. (1) If a sheet has a scale, USE it so room sizes
+are right. (2) When unsure, show a confidence meter and ask the user yes/no. (3) Adapt processing to the image
+(size/type/complexity) instead of going haywire. Stress-test, iterate to GOOD (not perfect, no spiral).
+
+**Stress set** (local, gitignored): `cache/stress/` — stoa1-3.png (the 3 Stoa example sheets, 768 px; source
+`stoa*.webp` in repo root) + USACE 34x22 sheets rendered at 150 dpi (5100x3300) and as vector PDFs, from the public
+WBDG set STD 123-335-03 (https://www.wbdg.org/FFC/DOD/COS/STD_123-335-03.pdf, pages 1, 13, 14, 33). Rebuild:
+render those pages with PyMuPDF at dpi=150. Truth: `cache/stress/truth.json`. Harness: `scripts/stress_big.py`
+(on branch wip/big-sheets). Last report: `docs/stress-report-wip.md` (on that branch).
+
+**Done + committed on `p2-finish` (lead-verified):**
+- `884ac2f` scale from the sheet itself: `engine/scale/sheet_text.py` (PDF text layer / tiled OCR),
+  `engine/scale/sheet_scale.py` (scale notes 1/2"=1'-0", 1"=40'-0", 1:50, NTS; graphic scale bars; ft-in + mm dimension
+  strings matched to dimension lines; paper size from aspect). px/m vs truth: S-101 246.02/246.06 (was 610.7 falsely
+  'specified'), S-102 123.09/123.03, stoa3 3.67/3.71 (half-size print), no-scale sheets ask. 6-11 s, <150 MB.
+- `884ac2f` + `f90cc62` confidence meter + yes/no questions: `GET /api/checks`, `POST /api/checks/answer`
+  (contract `docs/decisions/checks-api.md`, engine `engine/scale/checks.py`), UI `web/src/checks.tsx` (meter with word +
+  icon, max 3 open questions, evidence pins on hover, answer -> sizes refresh). Live-verified on stoa3:
+  "Is the depth 137'-4" (41.9 m)?" 0.79 -> yes -> 0.99.
+- `5346352` derived quantities: `engine/takeoff/derive.py` ("how many 3x3 metre tiles for my living room" ->
+  ceil(A*1.1/9) in code; paint/carpet/lights/skirting; en/fi/de/fr/it; missing size -> asks). 22 tests.
+  **Its hook in `PipelineEngine.ask` is only on branch `wip/big-sheets`** (mixed with the routing WIP) — the live UI
+  does not answer tile questions until that block is moved to p2-finish (it is the clearly delimited `derive` block at
+  the top of `ask`; cherry-pick just that hunk).
+- `5346352` + `f31dce6` + `662aeab` Verda worker: `scripts/verda_task.py` (Verda writes ONE file from a spec, check
+  runs, errors fed back, retries, output STAGED for Claude review). Division of labour in ORCHESTRATOR.md: Opus decides
+  + judges, sonnet specs/integrates/verifies, haiku chores, Verda types. ALWAYS `--no-think` on verda.py reviews
+  (thinking models otherwise return empty output and still bill).
+- `1faa0e4` .dxf/.ifc without a sibling image render + build 3D from their own entities.
+
+**UPDATE ~00:30 — big-sheets MERGED into p2-finish (`366fec1`, merge `268eade`, footprint `89770ae`):**
+- Merge blockers fixed: profiler needs >= 150 words for a framed sheet <= 1200 px to be `cad_sheet` (framed CubiCasa plans
+  carry 40-110); the "not read on construction sheets" refusal now yields to exact vector voters (Swiss PDF counts were
+  59.2% on the branch -> 91.3%). DEV --no-siblings, LLM off, vs pre-merge: CubiCasa 400q 77.0% = 77.0%; Swiss 300q
+  count 91.3% vs 92.2%, area 18.1% vs 19.1% (within CI). Tiles answers are live (derive hook merged).
+- Stress round 1 (`docs/stress-report-r1.md`, LLM off): 2-3.4 s, < 450 MB per sheet, no haywire. Scale exact on S-101/S-102;
+  stoa3 total area 2262 m² vs printed 26,562 SF = 2468 m² (8% low), largest zone 597 vs 566 m²; stoa3 overall length
+  93.2 m vs 98.6 m (footprint now unions all sizeable components), depth 38.6 vs 87.2 m WRONG (north wing split into its
+  own view; overall dims unreadable at 768 px); S-101 PNG 4.68x3.66 m vs PDF 5.79x4.84 m DISAGREE; rooms on S-101 are
+  slivers (total 1.0 m²); doors/windows on construction sheets honestly refused.
+- NEXT (handed to teammate ~00:45; agents were stopped before changing any file):
+  (a) overall size from printed overall dimensions (`engine.scale.sheet_scale.analyze(...)['dims']`: largest per
+  direction, angle 0 = width, 90 = depth) + join plan views the profiler split (stoa3 north wing); make S-101 PNG and
+  PDF agree (PDF text layer is truth); room names from `sheet_text.words` + drop sliver rooms; round 2 on 3 more complex
+  sheets from WBDG STD 123-335-03 (`scripts/stress_big.py`), then once with LLM on. Gate: CubiCasa 400q DEV stays 77.0%,
+  Swiss 300q counts >= 90% (`--no-siblings --limit`, fresh PLUMB_CACHE_DIR).
+  (b) the user's two NEW TASKS below. Suggested files: engine/overrides_el.py, `/api/elements/override`, a web inspector;
+  reuse the checks pattern (engine/scale/checks.py, web/src/checks.tsx).
+- `wip/archival-walls` (`7f3ee15`): still unverified wall filter for hand-drawn scans (see the 20:30 section).
+
+**NEW TASKS from the user (not started):**
+1. **Every element must be selectable** (in 3D and on the 2D overlay: rooms, walls, doors, windows, fixtures, stairs,
+   labels). Selecting one shows what it is, its size (via the solved scale), its source/tag (drawn/specified/chosen),
+   confidence, and which answers it feeds. If the element has no instructions/explanation shown yet, show them
+   (e.g. "This is a door, read from the CubiCasa model (82% sure). Counts toward 'How many doors'. Wrong? change it").
+2. **User can change what an element is** (door <-> window <-> wall opening <-> fixture <-> not-an-element, room type
+   bedroom/kitchen/...), when they disagree. Engine side: store per-file element overrides by sha (like
+   `/api/override` and `cache/checks/`), apply them to SheetFacts before voting so every count/area recomputes, tag the
+   element `chosen` (user), keep the original in the receipt, and make the tier say a user decided it. UI: an element
+   inspector with a type picker + "Not a door / remove" + undo; findings refresh in place. Reuse the checks pattern
+   (`engine/scale/checks.py`, `web/src/checks.tsx`) for storage/invalidation.
+3. Finish the WIP branches above (big-sheets blocker first, then the derive hook, then archival walls).
+4. Scale follow-ups: per-view scales on multi-view sheets, OCR digit repair (133'-10" read as 139'-10"), distinct
+   evidence labels per box in /api/checks, plan_view / sheet_type / units checks.
+
+**Known:** `tests/test_count_rules_finetune.py::test_colorful_2002_has_two_bedrooms` fails (pre-existing, raster
+finetune). Verda spend this round ≈ $0.7. Push (human): `git push origin p2-finish wip/big-sheets wip/archival-walls`.
+
+**~23:00 follow-up (user tests in the UI):** valves = every valve-type tag series (sheet "(CV)" definitions >
+glossary > ISA-5.1 letters; printed "TYP. OF n" wins over legibility) -> 12-13 on M-101A; "length of the walls of the
+garage" = new query aggregate `perimeter` (`engine/query/measure.py`, LLM off too; planner schema documents it);
+sub-rooms inside big sheets (`engine/outline.subrooms`, named from space words / legend zone / slab note; dorm 58 rooms,
+pump house main hall, slab panels); legend zones masked to the plan and real-word text blocks rejected; doors on fine-line
+scans: weak CNN detections confirmed by the arc voter (4855: 4 -> 7, DEV doors unchanged 85.7%); construction sheets
+get the two-reviewer vision audit (~$0.04-0.08/sheet, once). Raster cache now versioned too. Stress 19/20.
+Still open: slab area BY TYPE (panels exist, most unlabelled), wing lengths, doors/windows on construction sheets.
+
+## UPDATE 2026-11-14 ~19:30 — START HERE: open problems and how to fix each
+
+Live log: https://github.com/lalashutosh/constructionsite/issues/1 . Restart the API after engine edits
+(`LLM_PROVIDER=verda .venv/bin/python -m uvicorn api.main:app --port 8000`) and delete the drawing's
+`cache/geometry/<sha>-pixels.json` to rebuild its 3D (audit, stairs and floor split run at build time).
+Test drawings: colorful-2194 (fake rooms + balcony), colorful-11400 (two plans side by side), colorful-13685
+(upload a7654…, two floors + stairs), high_quality_architectural-1967 ("Faint two-floor scan", printed areas).
+Deep link: `http://localhost:5173/?open=data/cubicasa5k/colorful-11400.png`.
+
+| # | Problem (user report) | Status | Where / next step |
+|---|---|---|---|
+| 1 | Duplicate door pins (two detections on one swing, "4th should not exist") | DONE (c8a3aa6): collinear door fragments merged; 11553: 11 -> 9 = key; DEV exact 63 -> 64 of 147 | `engine/count/rules.py` `_icon_count`: merge doors whose box centres are closer than ~0.45 x door length; measure on DEV doors before/after (cached facts), keep only if not worse |
+| 2 | CRACI egress-proof job red: example.com reachable with `network: {}` | OPEN, needs a human: explicit `default: deny` also lets example.com through; the setup step is applied by the CRACI platform before the job (not in the log). Ask CRACI / check project network settings at platform.craci.com. README no longer claims the lock. Turning the failing check into a warning was NOT done (security check; owner's call) | `.github/workflows/ci.yml`: switch to explicit `network: \| default: deny / presets: [pypi, npm, github, ubuntu, debian]`; if still reachable, say so in README (do not claim the lock) |
+| 3 | Stairs on scans + link between floors | DONE (uncommitted -> committed now) | `engine/raster/stairs.py` (tread-line detector, ~70% precision on 40 hand-checked), filtered by walls (`geometry3d._drop_stairs_in_walls`) and by the AI audit (`S1..` boxes, both reviewers must reject). Viewer draws a dashed link between stairs on stacked floors (`viewer3d.linkStairs`). Verified in browser on colorful-13685 (2 flights + ghost steps between floors). Wall filter bug (holes) fixed |
+| 4 | "size of both the bedrooms respectively" answered with the bedroom COUNT | DONE | `engine/router.py` COUNT_CUE: count answers only for counting wording; `each_area` aggregate lists each room's m² |
+| 5 | "more doors or more windows" answered as the windows count | DONE | router COMPLEX + answer_text names the winner |
+| 6 | 117.7 m² living room on the faint scan (wrong scale) | DONE | printed room areas in labels (MH 10.5) are a scale anchor (`scale/anchors._label_area_anchor`); a hand measurement >30% off printed sizes is refused with "Use 2.94 m" |
+| 7 | Three rooms all named K (overlapping outlines) | DONE | one label names one room (smallest outline) |
+| 8 | Fake rooms on legend/logo/text, missing balcony | DONE | `engine/room_audit.py` (2 reviewers, code verifies) |
+| 9 | Two plans side by side not split (colorful-11400) | DONE | reviewer proposes a cut, `scancheck.verify_cut` checks the gutter |
+| 10 | "Use better models, build is too cheap" | DONE | strong reviewer now THINKS (8-9k tokens, 1800 px images) in scan check + audit; fast reviewer stays as the independent 2nd opinion. Build reviewers run in parallel; only the audit thinks: 47 s / $0.063 first open on the two-floor sheet (was 141 s / $0.155) |
+| 11 | Proof not prominent | DONE | inline proof card under the selected finding (`web/src/proofview.tsx`) |
+| 12 | Windows 14 vs 16, sinks 3 vs 4 on CubiCasa | OPEN (model limit) | CNN icon classes; no quick fix. Do not let an LLM produce counts |
+| 13 | Measured accuracy after today's changes not re-run | OPEN | run the DEV eval (`evalkit`) before claiming numbers in README |
+
+## UPDATE 2026-11-14 ~19:00 (`a24226f`)
 
 Live log: https://github.com/lalashutosh/constructionsite/issues/1
 - **Several floor plans on one sheet** -> floors. `engine/scancheck.py` already returns `check.floors` (box + level read

@@ -13,6 +13,9 @@ from contracts.proof import SheetFacts
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 CACHE_DIR = pathlib.Path(os.environ.get("PLUMB_CACHE_DIR", str(ROOT / "cache"))) / "pipeline"
 _MEM: dict = {}
+# Bump when a reader or the routing changes what a drawing's facts are (e.g. construction sheets stopped going through
+# the residential CNN). Facts / 3D built by an older reader are re-read instead of being served forever.
+READER_VERSION = "2026-11-15.no-tile-stairs"
 MEM_MAX = 256
 
 
@@ -38,12 +41,15 @@ def get(sha: str, allow: bool) -> Optional[SheetFacts]:
             facts = SheetFacts.model_validate_json(f.read_text())
         except Exception:  # corrupt entry: recompute
             return None
+        if facts.extras.get("reader_version") != READER_VERSION:
+            return None                  # read by an older reader: read again
         _remember(key, facts)
         return facts.model_copy(deep=True)
     return None
 
 
 def put(sha: str, allow: bool, facts: SheetFacts) -> None:
+    facts.extras["reader_version"] = READER_VERSION
     _remember((sha, allow), facts)
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=str(CACHE_DIR), suffix=".tmp")

@@ -5,6 +5,9 @@ voting make no network calls; the LLM (LLM_PROVIDER != none) only classifies tem
 from __future__ import annotations
 
 import hashlib
+import math
+
+import numpy as np
 import importlib
 import json
 import logging
@@ -27,6 +30,8 @@ from engine.router import Route, TemplateClassifier, route as route_question
 log = logging.getLogger("plumb.pipeline")
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 AREA_TOL = 0.02
+_DETECTOR_KINDS = {"doors": "door", "windows": "window", "toilets": "toilet", "sinks": "sink", "showers_baths": "bath",
+                   "washbasins": "washbasin", "bathtubs": "bathtub", "showers": "shower"}
 STAGES = ("triage", "resolve", "extract", "vote", "finalize")
 VECTOR_EXT = {".pdf", ".dxf", ".ifc", ".svg"}
 _DISCOVERED = False
@@ -166,22 +171,122 @@ class PipelineEngine:
         except ImportError:
             pass
         err = "no extractor available"
+        prof = self._profile(use_abs)
+        is_cad = bool(prof) and prof.get("sheet_type") == "cad_sheet" and ext in (".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff", ".bmp", ".pdf")
+        if is_cad and ext != ".pdf":
+            # a CAD / construction sheet is NOT a CubiCasa apartment scan: read line geometry of the main plan view
+            try:
+                from engine import bigsheet
+                f = bigsheet.extract_facts(path, use_abs, prof)
+                return f
+            except Exception as e:  # noqa: BLE001
+                err = f"bigsheet: {type(e).__name__}: {e}"
         for fn in fns:
             try:
+                if is_cad and fn.__module__.startswith("engine.raster"):
+                    continue                     # never run the CubiCasa CNN over a whole construction sheet
                 f = fn(use_path if fn.__module__.startswith("engine.vector") else use_abs, allow_siblings=allow)
                 f.provenance.file = path
+                if is_cad and not f.elements:     # exact vector readers (Swiss PDF, ...) win whenever they read anything
+                    try:                         # vector reader found nothing drawable: read the rendered page instead
+                        from engine import bigsheet
+                        g = bigsheet.extract_facts(path, use_abs, prof)
+                        g.extras.update({k: v for k, v in f.extras.items() if k not in g.extras and k != "vector"})
+                        return g
+                    except Exception as e:  # noqa: BLE001
+                        err = f"bigsheet: {type(e).__name__}: {e}"
+                if prof:
+                    f.extras.setdefault("profile", {k: v for k, v in prof.items() if k != "sha256"})
                 return f
             except Exception as e:  # noqa: BLE001
                 err = f"{fn.__module__}: {type(e).__name__}: {e}"
+        if is_cad and ext == ".pdf":
+            try:
+                from engine import bigsheet
+                return bigsheet.extract_facts(path, use_abs, prof)
+            except Exception as e:  # noqa: BLE001
+                err = f"bigsheet: {type(e).__name__}: {e}"
         return SheetFacts(provenance=Provenance(file=path), sheet_type="unknown", legible=False,
                           legibility_note=f"extraction failed ({err})")
+
+    @staticmethod
+    def _profile(abs_path: str) -> Optional[dict]:
+        """Cheap sheet profile (engine/profile.py), cached by sha256; None when the file is not an image/PDF."""
+        if not abs_path.lower().endswith((".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff", ".bmp", ".pdf")):
+            return None
+        if os.environ.get("PLUMB_NO_PROFILE") == "1":          # A/B switch: the pre-profile behaviour
+            return None
+        try:
+            from engine import profile as P
+            prof = P.profile(abs_path)
+            if prof.get("sheet_type") == "cad_sheet" and "/cubicasa5k/" in abs_path.replace("\\", "/"):
+                # the dataset says what this file is: a CubiCasa residential scan (dimension lines can look like a frame)
+                prof = {**prof, "sheet_type": "residential_scan", "route": "cubicasa_cnn", "views": [],
+                        "note": "profile said cad_sheet; overridden by the dataset source"}
+            return prof
+        except Exception as e:  # noqa: BLE001
+            log.warning("profile failed for %s: %s", abs_path, e)
+            return None
 
     # ------------------------------------------------------------------ ask
     def ask(self, path: str, question: str, *, allow_siblings: bool = True, benchmark: bool = True,
             progress: Optional[Callable[[str], None]] = None) -> ProofObject:
         t0 = time.perf_counter()
         stage = progress or (lambda s: None)
+        # --- derived quantities ('how many 3x3 m tiles ...'): engine/takeoff/derive.py runs the base area through ask() ---
+        from engine.takeoff import derive
+        _dspec = derive.parse(question)
+        if _dspec is not None:
+            return derive.answer(self, path, question, _dspec, allow_siblings=allow_siblings, benchmark=benchmark, progress=progress)
+        # --- end derived quantities ---
+        # --- the deep read of this drawing (engine/symbols.py checklist) answers 'how many beds / sinks / stairs' ---
+        try:
+            from engine import symbols as _sym
+            _sha = facts_cache.sha256_file(_abs(path))
+            # construction sheets, and EVERY image a user uploads (unknown drawings): the deep read answers counts.
+            # Dataset plans keep their measured residential readers (benchmark protected).
+            _upload = "/cache/uploads/" in _abs(path).replace("\\", "/") and not benchmark
+            _cad = _upload or (self.analyze(path, allow_siblings=allow_siblings).extras.get("route") == "cad")
+            _ck = None if (not _cad or self._printed_first(path, question)) else _sym.answer(_sha, question)
+        except Exception:  # noqa: BLE001
+            _ck = None
+        if _ck is not None:
+            return self._checklist_answer(path, question, _sha, _ck, t0)
+        _sv = self._services_answer(path, question, t0) if _ck is None and locals().get("_cad") else None
+        if _sv is not None:
+            return _sv
+        try:                                                  # 'more doors or the sum of toilets and sinks?'
+            _cmp = _sym.compare(_sha, question) if locals().get("_cad") else None
+        except Exception:  # noqa: BLE001
+            _cmp = None
+        _cad_sheet = locals().get("_cad") and self.analyze(path, allow_siblings=allow_siblings).extras.get("route") == "cad"
+        if _cmp is None and _cad_sheet:                       # a count of something the deep read did not find
+            try:
+                _miss = (_sym.missing_note(_sha, question) if _sym.cached(_sha) and not self._printed_first(path, question)
+                         else None)
+            except Exception:  # noqa: BLE001
+                _miss = None
+            if _miss:
+                po = ProofObject(id=hashlib.sha1(f"{path}|{question}|miss".encode()).hexdigest()[:12], question=question,
+                                 intent="deep_read_missing", kind="count", provenance=Provenance(file=path, sha256=_sha))
+                po = self._grey(po, _miss)
+                po.answer_text = f"Not found: {_miss}."
+                po.cost.ms = (time.perf_counter() - t0) * 1000
+                return po
+        if _cmp is not None:
+            po = ProofObject(id=hashlib.sha1(f"{path}|{question}|cmp".encode()).hexdigest()[:12], question=question,
+                             intent="deep_read_compare", kind="text", value=str(_cmp["value"]), unit="label",
+                             tier=Tier.amber, provenance=Provenance(file=path, sha256=_sha),
+                             voters=[Voter(name="deep_read", value=str(_cmp["value"]), note=_cmp["text"])])
+            po.answer_text = _cmp["text"]
+            po.notes.append("both sides counted from the deep read of this sheet; compared by code")
+            po.cost.ms = (time.perf_counter() - t0) * 1000
+            return po
+        # --- end deep read ---
         rt = route_question(question, path, classifier=self.classifier)
+        from engine.query import measure as _measure
+        if _measure.PERIM.search(question) and rt.kind == "count":
+            rt = Route("unknown", {}, "length", rt.lang, "measure")   # 'perimeter of the kitchen' is not the kitchen COUNT
         po = self._ask(path, question, rt, allow_siblings, benchmark, stage)
         try:                                  # "... on floor 2" on a sheet with several floor plans
             from engine import sheetfloor
@@ -200,6 +305,9 @@ class PipelineEngine:
         try:
             from engine.answer_text import sentence
             po.answer_text = sentence(po)
+            pa = next((n[len("printed answer: "):] for n in po.notes if n.startswith("printed answer: ")), None)
+            if pa and po.value is not None:          # read from the sheet's own print: say exactly what it prints
+                po.answer_text = pa[0].upper() + pa[1:]
             if on_floor:
                 po.answer_text = sheetfloor.name_floor(po.answer_text, on_floor)
         except Exception:  # noqa: BLE001  (the sentence is a convenience; never fail an answer over it)
@@ -277,6 +385,10 @@ class PipelineEngine:
         if ctx.facts is None:
             ctx.facts = self.analyze(path, allow_siblings=allow, _ctx=ctx)
         facts = ctx.facts
+        # --- element overrides (user) ---
+        from engine import overrides_el
+        facts = ctx.facts = overrides_el.apply(facts, sha)
+        # --- end element overrides (user) ---
         po.provenance.fmt = facts.provenance.fmt or po.provenance.fmt
         po.provenance.license = facts.provenance.license
         po.provenance.credit = facts.provenance.credit
@@ -291,7 +403,8 @@ class PipelineEngine:
 
         # scale (area/length/volume only; counts never need it)
         scale: Optional[ScaleInfo] = None
-        if kind in ("area", "length", "volume"):
+        sheet_text = rt.layer == "sheet" and kind == "text"
+        if kind in ("area", "length", "volume") or sheet_text:
             scale = self._scale(facts, sha)
             if scale.px_per_m:
                 ctx.params["_px_per_m"] = scale.px_per_m
@@ -299,6 +412,68 @@ class PipelineEngine:
         # vote
         stage("vote")
         results = self._vote(ctx, notes)
+        # --- perimeter / wall length of a named room (engine/query/measure.py; works with the LLM off) ---
+        if rt.intent == "unknown" and not results:
+            from engine.query import measure
+            mspec = measure.parse(ctx.question, facts)
+            if mspec is not None:
+                from engine import query
+                from engine.registry import VoterResult
+                if scale is None:
+                    scale = self._scale(facts, sha)
+                px = scale.px_per_m if scale is not None and scale.px_per_m else None
+                target = mspec.pop("_target", None)
+                if mspec.get("select") == ["footprint"]:          # main outline only (verified one first)
+                    fps = [e for e in facts.elements if e.kind == "footprint"]
+                    best = next((e for e in fps if e.attrs.get("source") == "outline"), fps[0])
+                    mspec["where"] = {"id": best.id}
+                res = query.run(mspec, facts, px)
+                po.query_spec = mspec
+                notes.extend(f"query: {n}" for n in res.notes)
+                if res.value is not None:
+                    by = {e.id: e for e in facts.elements}
+                    kind = po.kind = "length"
+                    po.scale = scale
+                    tgt = target or (mspec.get("where") or {}).get("subtype") or (mspec.get("where") or {}).get("label") or "rooms"
+                    n_r = len(res.evidence_ids)
+                    src = ("the sheet's printed scale" if scale is not None and any(
+                        a.kind in ("dimension", "scale_bar", "printed_ratio", "printed_area", "user") for a in scale.anchors)
+                        else "a scale guessed from standard door widths (give one real length to confirm)")
+                    notes.append(f"printed answer: the walls around the {tgt.replace('_', ' ')}"
+                                 f"{'' if n_r == 1 else f' ({n_r} rooms)'} add up to {float(res.value):.1f} m "
+                                 f"(length of its outline, measured with {src}).")
+                    results = [VoterResult(Voter(name="room_perimeter", value=float(res.value), element_ids=res.evidence_ids,
+                                                 note=f"outline length of {len(res.evidence_ids)} room(s) at the solved scale "
+                                                      "(= the summed lengths of the walls around them)"),
+                                           evidence=[by[i] for i in res.evidence_ids if i in by], unit="m")]
+        # --- end perimeter ---
+        if sheet_text:                                   # largest room / overall size / scale: no registry voter
+            results = self._sheet_text(ctx, rt, facts, scale, po, notes)
+        if rt.layer == "sheet" and kind == "count" and not any(e.kind == "room" for e in facts.elements):
+            results = []                                 # "how many rooms" with no recognised room is not "0 rooms"
+        # --- printed on the sheet (engine/sheet_lookup.py): notes, schedules, tags, overall dimensions ---
+        if facts.extras.get("route") == "cad" or (facts.extras.get("profile") or {}).get("sheet_type") == "cad_sheet":
+            try:
+                got = self._printed(ctx, rt, kind, facts, scale, po, notes, results)
+            except Exception as e:  # noqa: BLE001  (a failed lookup never breaks the answer)
+                got = None
+                notes.append(f"printed-text lookup failed: {type(e).__name__}: {e}")
+            if got is not None:
+                results, kind = got
+                po.kind = kind
+        # --- end printed on the sheet ---
+        if (facts.extras.get("route") == "cad" and kind == "count" and rt.intent in _DETECTOR_KINDS
+                and not any(e.kind == _DETECTOR_KINDS[rt.intent] for e in facts.elements)
+                and not any(getattr(r, "exact", False) for r in results)):   # exact vector voters (Swiss PDF) still count
+            from engine import symbols as _sym
+            _miss = _sym.missing_note(sha, ctx.question)
+            return self._grey(po, _miss or (f"{rt.intent.replace('_', ' ')} are not read on construction sheets yet: the "
+                                            "symbol detectors are trained on small residential scans, so a '0' would be a guess"))
+        if not results and rt.layer == "sheet":          # a sheet-level question is never handed to a count or the prior
+            return self._sheet_grey(po, rt, facts, scale, notes)
+        if kind == "count" and rt.intent == "doors":
+            self._door_fusion(results, facts, notes)
+            self._door_audit(results, ctx, facts, notes)
         if kind == "count":
             self._label_vote(results, ctx, facts, notes)
             self._apply_overrides(results, sha, rt.intent, po, notes)
@@ -327,6 +502,9 @@ class PipelineEngine:
                                                      tag=Tag.defaulted, source="dev-median prior"))
                 tier = Tier.amber
             else:
+                loose = self._loose_printed(ctx, po)          # last resort: the sheet prints something that matches
+                if loose is not None:
+                    return loose
                 return self._grey(po, po.refusal or "no reader or query could answer this question from the drawing")
         if capped and tier == Tier.green:
             tier = Tier.amber
@@ -380,6 +558,9 @@ class PipelineEngine:
                         seen.add(i)
                         po.evidence.append(by[i])
 
+        # --- element overrides (user): receipt ---
+        overrides_el.annotate(po, facts)
+        # --- end element overrides (user): receipt ---
         for e in po.evidence:                 # voters may leak numpy scalars into attrs (JSON can't encode them)
             e.attrs = _native(e.attrs)
         unit = next((r.unit for r in results if r.unit), None)
@@ -387,6 +568,11 @@ class PipelineEngine:
         po.value = value
         po.tier = Tier.amber if (capped and tier != Tier.grey) else tier
         if kind in ("area", "length", "volume") and value is not None:
+            if scale is None and "vector" not in facts.extras and po.provenance.resolved_from not in ("dxf", "ifc"):
+                # planner-built area on a raster: the question was not 'area' when the scale was solved; use the engine's
+                # real scale (what the planner fallback set, else solve now) instead of the metre placeholder
+                prev = po.scale
+                scale = prev if (prev is not None and prev.px_per_m and prev.px_per_m != 1.0) else self._scale(facts, sha)
             self._attach_scale(po, scale, facts, value)
         for name, fn in registry.calibrators():
             try:
@@ -406,6 +592,208 @@ class PipelineEngine:
     # intents where the vision label reader beat the current reader on DEV (40 scans, 350 questions, cache/proto/
     # labeleval.py): bedrooms 88% vs 71%, wc_rooms 91% vs 74%. Elsewhere it is a second opinion (tier only).
     LABEL_PRIMARY = {"bedrooms", "wc_rooms"}
+
+    @staticmethod
+    def _door_fusion(results: list, facts: SheetFacts, notes: list[str]) -> None:
+        """Doors the network saw only weakly (0.35 <= p < 0.5) count when the independent arc-geometry voter found a
+        door swing at the same place (two weak, independent signals on ONE element). Fine-line scans draw thin swings
+        the network is unsure about; the arc voter alone over-counts (no wall-gap test). Neither signal alone adds."""
+        weak = [w for w in (facts.extras.get("weak_icons") or []) if w.get("kind") == "door"]
+        det = next((r for r in results if r.voter.name == "detector"), None)
+        arc = next((r for r in results if r.voter.name == "doors_arc"), None)
+        if not weak or det is None or arc is None or not arc.evidence:
+            return
+
+        def centre(poly):
+            xs = [p[0] for p in poly]; ys = [p[1] for p in poly]
+            return (sum(xs) / len(xs), sum(ys) / len(ys)), max(max(xs) - min(xs), max(ys) - min(ys))
+        strong = [centre([(pt[0], pt[1]) for pt in e.polygon]) for e in facts.elements if e.kind == "door" and e.polygon]
+        arcs = []
+        for e in arc.evidence:
+            c, size = centre([(pt[0], pt[1]) for pt in e.polygon])
+            r = float(e.attrs.get("radius_px") or size)
+            if not any(math.hypot(c[0] - s[0][0], c[1] - s[0][1]) < max(r, s[1]) for s in strong):
+                arcs.append((c, r))              # an arc no counted door explains
+        used, added = set(), []
+        for i, w in enumerate(weak):
+            c, size = centre(w["polygon"])
+            j = next((k for k, (ac, r) in enumerate(arcs) if k not in used
+                      and math.hypot(c[0] - ac[0], c[1] - ac[1]) < 1.2 * max(r, size)), None)
+            if j is None:
+                continue
+            used.add(j)
+            added.append(Element(id=f"door_weak_{i}", kind="door", polygon=[tuple(p) for p in w["polygon"]],
+                                 conf=round(w["p"], 2), attrs={"confirmed_by": "doors_arc", "cnn_p": w["p"]}))
+        if not added:
+            return
+        old = det.voter.value
+        det.voter.value = int(old) + len(added)
+        det.voter.element_ids = list(det.voter.element_ids) + [e.id for e in added]
+        det.voter.runs = [int(v) + len(added) for v in det.voter.runs] if det.voter.runs else [det.voter.value]
+        det.evidence = list(det.evidence) + added
+        det.voter.note = ((det.voter.note or "") + f" +{len(added)} doors the network saw weakly (p 0.35-0.5) and the arc "
+                          "voter confirmed at the same spot").strip()
+        notes.append(f"door fusion: {old} confident detections + {len(added)} weak detections confirmed by a door "
+                     "swing arc at the same place")
+
+    def _loose_printed(self, ctx, po: ProofObject) -> Optional[ProofObject]:
+        """Instead of refusing: the printed row that best matches the question (>= half of its content words),
+        quoted as written and boxed, tier amber. Says plainly that it is the printed text, not a computed answer."""
+        from engine import sheet_lookup as L
+        try:
+            kws = L.keywords(ctx.question)
+            if not kws:
+                return None
+            rs = L.blocks(L.rows(L._words(ctx.abs_path, po.provenance.sha256)))
+            best = None
+            for b in rs:
+                hit = [k for k in kws if L._tok_match(k, b["text"])]
+                cov = len(hit) / len(kws)
+                if cov >= 0.5 and (best is None or (cov, -len(b["text"])) > (best[0], -len(best[1]["text"]))):
+                    best = (cov, b)
+            if best is None:
+                return None
+            b = best[1]
+            ev = L.element_boxes("printed_loose", [r["box"] for r in b["rows"]], b["text"])
+            po.kind, po.value, po.unit, po.tier = "text", b["text"], "label", Tier.amber
+            po.refusal = None
+            po.evidence = ev
+            po.voters = [Voter(name="printed_text", value=b["text"], element_ids=[e.id for e in ev],
+                               note="the printed text that best matches the question")]
+            po.notes.append(f"printed answer: the sheet prints '{b['text'][:240]}' (closest printed match, boxed on the drawing).")
+            return po
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _printed_first(self, path: str, question: str) -> bool:
+        """The sheet PRINTS this count ('TYP. OF 5', '48 DORMS') or tags it (FSI-1..5): that answer beats the deep read."""
+        import re as _re
+        if not _re.search(r"\bhow\s+many\b|\bnumber\s+of\b|\bno\.?\s+of\b", question, _re.I):
+            return False
+        from engine import sheet_lookup as L
+        ap = _abs(path)
+        try:
+            facts = self.analyze(path)
+            if facts.extras.get("route") != "cad":
+                return False
+            sha = facts.provenance.sha256 or facts_cache.sha256_file(ap)
+            lk = L.lookup(ap, sha, question)
+            if lk and lk["kind"] == "count":
+                return True
+            noun = L._noun(question) or ""
+            return bool(noun and (L.class_count(ap, sha, noun) or L.tag_count(ap, sha, question)))
+        except Exception:  # noqa: BLE001
+            return False
+
+    def _services_answer(self, path: str, question: str, t0: float) -> Optional[ProofObject]:
+        """Estimated pipework / electrical (engine/layers.estimate_services) when the set has no MEP sheet."""
+        import re as _re
+        q = question.lower()
+        key = ("waste_flow_ls" if _re.search(r"\b(waste|drain|drainage|sewer)\b", q) else
+               "loading_units" if _re.search(r"loading units?|supply load|water demand", q) else
+               "pipe_m" if _re.search(r"\b(pipe|pipes|piping|pipework|plumbing)\b", q) else
+               "cable_m" if _re.search(r"\b(cable|cabling|wiring|wire|electrical)\b", q) and not _re.search(r"socket|light", q) else
+               "sockets" if _re.search(r"\bsockets?|outlets?\b", q) else
+               "lights" if _re.search(r"\blights?|light fittings?|luminaires?\b", q) else None)
+        if key is None or not _re.search(r"how\s+(much|many|long|big)|length|metres|meters|total|estimate|flow|load|size", q):
+            return None
+        from engine import symbols as _sym
+        from engine.layers import estimate_services
+        facts = self.analyze(path)
+        fp = next((e for e in facts.elements if e.kind == "footprint" and e.attrs.get("px_per_m")), None)
+        if fp is None or facts.extras.get("route") != "cad":
+            return None
+        est = estimate_services(facts, _sym.cached(facts.provenance.sha256), float(fp.attrs["px_per_m"]))
+        qv = est["quantities"].get(key)
+        if not qv:
+            return None
+        po = ProofObject(id=hashlib.sha1(f"{path}|{question}|svc".encode()).hexdigest()[:12], question=question,
+                         intent=f"estimated_{key}", kind="length" if key.endswith("_m") else "count", value=qv["value"],
+                         unit=qv["unit"], tier=Tier.amber, provenance=Provenance(file=path, sha256=facts.provenance.sha256),
+                         voters=[Voter(name="services_estimate", value=qv["value"], note=qv["basis"])])
+        po.assumptions.append(Assumption(key=f"estimate:{key}", value=qv["value"], tag=Tag.defaulted, source=qv["basis"]))
+        what = {"pipe_m": "of pipework", "cable_m": "of cable", "sockets": "sockets", "lights": "light fittings",
+                "loading_units": "of water supply load", "waste_flow_ls": "peak waste water flow"}[key]
+        unit = "" if key in ("sockets", "lights") else qv["unit"] + " "
+        plumbing = key in ("pipe_m", "loading_units", "waste_flow_ls")
+        po.answer_text = (f"About {qv['value']:g} {unit}{what} (ESTIMATE: this set has no "
+                          f"{'plumbing' if plumbing else 'electrical'} sheet; {qv['basis']}).")
+        po.notes.append("estimated services (engine/layers.estimate_services); upload the MEP sheet for drawn quantities")
+        po.cost.ms = (time.perf_counter() - t0) * 1000
+        return po
+
+    def _checklist_answer(self, path: str, question: str, sha: str, ck: dict, t0: float) -> ProofObject:
+        ev = [Element(id=f"ck_{i}", kind=ck["label"].rstrip("s") or "symbol", polygon=[(q[0], q[1]) for q in poly], conf=0.8,
+                      attrs={"source": "deep read (symbol found by repetition + template match)"})
+              for i, poly in enumerate(ck["polys"][:400])]
+        po = ProofObject(id=hashlib.sha1(f"{path}|{question}|ck".encode()).hexdigest()[:12], question=question,
+                         intent="deep_read_count", kind="count", value=int(ck["value"]),
+                         tier=Tier.green if ck["tier"] == "green" else Tier.amber,
+                         provenance=Provenance(file=path, sha256=sha), evidence=ev,
+                         voters=[Voter(name="deep_read", value=int(ck["value"]), element_ids=[e.id for e in ev], note=ck["note"])])
+        zones = ck.get("zones") or {}
+        where = ("; " + ", ".join(f"{n} in {z}" for z, n in zones.items())) if zones else ""
+        po.answer_text = (f"There are {int(ck['value'])} {ck['label']} on this sheet"
+                          + (f" ({ck['note']})" if ck.get("parts") else "") + f"{where}.")
+        po.notes.append(f"deep read: {ck['note']}")
+        po.cost.ms = (time.perf_counter() - t0) * 1000
+        return po
+
+    def _door_audit(self, results: list, ctx, facts: SheetFacts, notes: list[str]) -> None:
+        """Hand-drawn scans: vision reviewers propose door positions, code verifies each is a wall opening (cached)."""
+        from engine import door_audit as DA
+        det = next((r for r in results if r.voter.name == "detector"), None)
+        arc = next((r for r in results if r.voter.name == "doors_arc"), None)
+        if det is None or facts.extras.get("route") == "cad":
+            return
+        n_rooms = sum(1 for e in facts.elements if e.kind == "room")
+        if not DA.needed(int(det.voter.value or 0), n_rooms, int(arc.voter.value) if arc and arc.voter.value is not None else None):
+            return
+        import json as _json
+        import cv2
+        cf = pathlib.Path(__file__).resolve().parents[1] / "cache" / "door_audit" / f"{facts.provenance.sha256}.json"
+        if cf.exists():
+            aud = _json.loads(cf.read_text())
+        else:
+            img = cv2.imread(ctx.abs_path)
+            if img is None:
+                return
+            boxes = []
+            for e in list(det.evidence) or [e for e in facts.elements if e.kind == "door"]:
+                xs = [p[0] for p in e.polygon]; ys = [p[1] for p in e.polygon]
+                boxes.append([min(xs), min(ys), max(xs), max(ys)])
+            sizes = sorted(max(b[2] - b[0], b[3] - b[1]) for b in boxes)
+            door_px = 0.07 * max(img.shape[:2]) if not sizes else max(sizes[len(sizes) // 2], 0.05 * max(img.shape[:2]))
+            aud = {"added": [], "cost_usd": 0.0, "used": True}
+            gf = pathlib.Path(__file__).resolve().parents[1] / "cache" / "geometry" / f"{facts.provenance.sha256}-pixels.json"
+            if gf.exists():                         # code-only: interior wall openings of the 3D wall model
+                geo = _json.loads(gf.read_text())
+                floor = np.zeros(img.shape[:2], np.uint8)
+                for e in facts.elements:
+                    if e.kind in ("floor_blob", "room") and len(e.polygon) >= 3:
+                        cv2.fillPoly(floor, [np.array([(p[0], p[1]) for p in e.polygon], np.int32)], 1)
+                have = [((b[0] + b[2]) / 2, (b[1] + b[3]) / 2) for b in boxes]
+                for bx in DA.openings(geo.get("walls", []), floor, img.shape, max(12.0, float(door_px))):
+                    c = ((bx[0] + bx[2]) / 2, (bx[1] + bx[3]) / 2)
+                    if all(np.hypot(c[0] - a, c[1] - b) > door_px for a, b in have):
+                        aud["added"].append(bx)
+                        have.append(c)
+            cf.parent.mkdir(parents=True, exist_ok=True)
+            cf.write_text(_json.dumps(aud))
+        added = [Element(id=f"door_op_{i}", kind="door", polygon=[(b[0], b[1]), (b[2], b[1]), (b[2], b[3]), (b[0], b[3])],
+                         conf=0.5, attrs={"source": "interior wall opening of door width (no door symbol read)"})
+                 for i, b in enumerate(aud.get("added", []))]
+        if not added:
+            return
+        old = det.voter.value
+        det.voter.value = int(old) + len(added)
+        det.voter.runs = [int(v) + len(added) for v in det.voter.runs] if det.voter.runs else [det.voter.value]
+        det.voter.element_ids = list(det.voter.element_ids) + [e.id for e in added]
+        det.evidence = list(det.evidence) + added
+        det.voter.note = ((det.voter.note or "") + f" +{len(added)} interior wall openings of door width (floor on both "
+                          "sides) where no door symbol was read").strip()
+        notes.append(f"door openings: {old} door symbols + {len(added)} interior wall openings of door width "
+                     "(hand-drawn / faint scan: the symbols are not readable; each opening is boxed for checking)")
 
     def _label_vote(self, results: list, ctx, facts: SheetFacts, notes: list[str]) -> None:
         """Vision LLM transcribes the room labels; code maps them through engine/glossary.yaml and counts."""
@@ -444,6 +832,54 @@ class PipelineEngine:
             notes.append("labels read by a vision model, counted by code" + (" (decides this answer)" if primary else ""))
         except Exception as e:  # noqa: BLE001  (the label reader is optional)
             notes.append(f"label reader unavailable: {type(e).__name__}")
+
+    def _named_rooms(self, facts: SheetFacts, ctx, notes: list[str]) -> SheetFacts:
+        """Rooms named from the printed labels (vision label reader + glossary) and tagged with their floor, so planner
+        queries like 'which bedroom is the smallest' or 'bedrooms on 2. KERROS' select the right rooms."""
+        if self.llm is None or not hasattr(self.llm, "complete_vision") or not ctx.abs_path.lower().endswith(
+                (".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff", ".bmp")) or not any(e.kind == "room" for e in facts.elements):
+            return facts
+        try:
+            import cv2
+            from engine import label_reader as LR, sheetfloor
+            img = cv2.imread(ctx.abs_path, cv2.IMREAD_COLOR)
+            sha = facts_cache.sha256_file(ctx.abs_path)
+            labels = LR.read_labels(img, self.llm, sha)
+            h, w = img.shape[:2]
+            facts = self._audited(facts, sha, notes)
+            out = LR.name_rooms(facts, labels, w, h, sheetfloor.sheet_floors(sha))
+            n = sum(1 for e in out.elements if e.attrs.get("named_by"))
+            if n:
+                notes.append(f"{n} rooms named from their printed labels (AI read the text, code matched label to room)")
+            return out
+        except Exception as e:  # noqa: BLE001
+            notes.append(f"room naming skipped: {type(e).__name__}")
+            return facts
+
+    @staticmethod
+    def _audited(facts: SheetFacts, sha: str, notes: list[str]) -> SheetFacts:
+        """Apply the 3D build's AI audit (engine/room_audit.py): rooms both reviewers placed on text/legend/outside are
+        dropped, verified missing rooms (e.g. a balcony) are added. Read from the cached geometry of this drawing."""
+        f = pathlib.Path(__file__).resolve().parents[1] / "cache" / "geometry" / f"{sha}-pixels.json"
+        if not f.exists():
+            return facts
+        try:
+            g = json.loads(f.read_text())
+        except (OSError, json.JSONDecodeError):
+            return facts
+        aud = (g.get("check") or {}).get("audit") or {}
+        drop, added = set(aud.get("drop") or []), set(aud.get("added") or [])
+        if not drop and not added:
+            return facts
+        out = facts.model_copy(deep=True)
+        out.elements = [e for e in out.elements if e.id not in drop]
+        for r in g.get("rooms") or []:
+            if r.get("id") in added:
+                out.elements.append(Element(id=r["id"], kind="room", subtype=r.get("subtype"), label=r.get("label"),
+                                            polygon=[tuple(p) for p in r["polygon"]],
+                                            attrs={"added_by": "AI audit, region verified by code"}))
+        notes.append(f"AI audit applied: {len(drop)} non-rooms removed, {len(added)} labelled rooms added")
+        return out
 
     READER_Q = {"window": "How many windows are shown on this floor plan?",
                 "door": "How many doors are shown on this floor plan? Count doorways fitted with a door; open doorways without a door leaf do not count.",
@@ -565,6 +1001,202 @@ class PipelineEngine:
         notes.append(f"user verdicts applied: {sum(v['keep'] for v in verdicts)} confirmed, "
                      f"{sum(not v['keep'] for v in verdicts)} rejected")
 
+    def _sheet_text(self, ctx, rt: Route, facts: SheetFacts, scale: Optional[ScaleInfo], po: ProofObject, notes: list[str]) -> list:
+        """Sheet-level text answers computed by code: largest/smallest room, overall size (query engine), scale."""
+        from engine import query
+        from engine.registry import VoterResult
+        px = ctx.params.get("_px_per_m")
+        if rt.intent == "scale_info":
+            if scale is not None and scale.px_per_m and not scale.needs_user:
+                src = "; ".join(a.note or a.kind for a in scale.anchors if a.kind != "door_prior") or "solved scale"
+                v = f"1 m = {scale.px_per_m:.1f} px on this image ({src})"
+                po.assumptions.append(_scale_assumption(scale))
+                po.scale = scale
+                ev = []
+                try:                               # the printed note / bar / dimensions it was read from, boxed
+                    from engine.scale import sheet_scale as _SS
+                    from engine import sheet_lookup as _SL
+                    st = _SS.sheet_state(ctx.abs_path, po.provenance.sha256)
+                    w = st["cons"]["winner"]
+                    boxes = [b for c in (w["items"] if w else []) for b in c.get("boxes", [])][:12]
+                    ev = _SL.element_boxes("scale", boxes, "scale evidence")
+                    lab = next((c["label"] for c in (w["items"] if w else []) if c["family"] == "ratio"), None)
+                    if lab:
+                        v = f"The sheet prints the scale {lab}; it reads as 1 m = {scale.px_per_m:.1f} px ({src})"
+                except Exception:  # noqa: BLE001
+                    pass
+                return [VoterResult(Voter(name="scale_solver", value=v, note=src, element_ids=[e.id for e in ev]),
+                                    evidence=ev, unit="label")]
+            return []
+        spec = query.spec_for(rt.intent, {}, None)
+        if rt.intent == "overall_size":
+            fps = sorted((e.id for e in facts.elements if e.kind == "footprint"),
+                         key=lambda i: (not next(x for x in facts.elements if x.id == i).attrs.get("from_walls"),
+                                        next(x for x in facts.elements if x.id == i).attrs.get("source") != "outline",
+                                        int(i.rsplit("_", 1)[-1]) if i.rsplit("_", 1)[-1].isdigit() else -1))
+                                         # verified outline first, then wall-network outlines, then main view first
+            if fps:                                  # several plan views (foundation + roof): the main view's outline
+                spec = {**spec, "where": {"id": fps[0]}}
+                if len(fps) > 1:
+                    notes.append(f"{len(fps)} plan views on the sheet; the outline of the main one is measured")
+            else:
+                spec = {**spec, "select": ["room"]}
+        if spec is None:
+            return []
+        res = query.run(spec, facts, px)
+        po.query_spec = spec
+        for n in res.notes:
+            notes.append(f"query: {n}")
+        if res.value is None:
+            return []
+        by = {e.id: e for e in facts.elements}
+        if scale is not None and px:
+            po.scale = scale
+        return [VoterResult(Voter(name="sheet_query", value=res.value, element_ids=res.evidence_ids, runs=[],
+                                  note="computed from the sheet's recognised outline / rooms"),
+                            evidence=[by[i] for i in res.evidence_ids if i in by], unit=res.unit)]
+
+    def _printed(self, ctx, rt: Route, kind: str, facts: SheetFacts, scale: Optional[ScaleInfo], po: ProofObject,
+                 notes: list[str], results: list):
+        """Answers the sheet PRINTS (tag `specified`, evidence = the printed words). Returns (results, kind) or None."""
+        import re as _re
+        from engine import sheet_lookup as L
+        from engine.registry import VoterResult
+        q, ap, sha = ctx.question, ctx.abs_path, po.provenance.sha256
+
+        def vr(name, value, boxes, label, note, unit=None, exact=True, second=False, prefix="printed"):
+            ev = L.element_boxes(f"{prefix}_{name}", boxes, label)
+            return VoterResult(Voter(name=name, value=value, element_ids=[e.id for e in ev], note=note), evidence=ev,
+                               unit=unit, exact=exact, second_opinion=second)
+
+        if rt.intent == "overall_size":
+            sc = scale if scale is not None and scale.px_per_m else self._scale(facts, sha)
+            od = L.overall_dims(ap, sha, sc.px_per_m if sc else None)
+            if not (od and "w" in od and "d" in od):
+                return None
+            v = f"{od['w']['m']:.2f} m x {od['d']['m']:.2f} m"
+            why = f"width {od['w']['text']}: {od['w']['how']}; depth {od['d']['text']}: {od['d']['how']}"
+            notes.append(f"printed answer: {v} ({od['w']['text']} x {od['d']['text']} printed on the sheet; {why}).")
+            po.scale = sc
+            for r in results:
+                r.second_opinion = True
+            return [vr("printed_dimensions", v, [od["w"]["box"], od["d"]["box"]], None, why, unit="label")] + results, "text"
+
+        want_count = bool(_re.search(r"\bhow\s+many\b|\bnumber\s+of\b", q, _re.I))
+        if want_count and (rt.intent == "unknown" or (rt.intent in _DETECTOR_KINDS and not results)):
+            noun = L._noun(q) or ""
+            cc = L.class_count(ap, sha, noun) if noun else None     # 'how many valves': every valve-type series
+            tc = None if cc else L.tag_count(ap, sha, q)
+            lk = L.lookup(ap, sha, q)
+            res = []
+            if cc:
+                parts = "; ".join(f"{g['n']} {g['series']} ({g['meaning']}; {g['why']}"
+                                  + (f": {', '.join(g['tags'][:8])}" if g["tags"] else "") + ")" for g in cc["groups"])
+                boxes = [b for g in cc["groups"] for b in g["boxes"]]
+                res.append(vr("tag_classes", cc["total"], boxes, None, f"{cc['total']} {noun} tagged on the sheet: {parts}",
+                              exact=False, prefix="tag"))
+                notes.append(f"printed answer: {cc['total']} {noun} tagged on the sheet — {parts}.")
+                return res, "count"
+            if lk and lk["kind"] == "count":
+                res.append(vr("printed_count", lk["value"], lk["boxes"], lk["text"], f"the sheet prints '{lk['text']}'"))
+            if tc:
+                val = tc["numbered"] if tc["missing"] else tc["read"]
+                nt = (f"{tc['read']} distinct {tc['prefix']} tags read on the sheet ({', '.join(tc['tags'])}); "
+                      f"{tc['prefix']} = {tc['noun']} from {tc['why']}")
+                if tc["missing"]:
+                    nt += f"; the numbering implies {tc['numbered']} (not read: {', '.join(tc['missing'])})"
+                res.append(vr("equipment_tags", val, tc["boxes"], None, nt, exact=False, second=bool(res), prefix="tag"))
+            if not res:
+                return None
+            v = res[0].voter.value
+            src = res[0].voter.note
+            other = [r.voter for r in res[1:] if r.voter.value != v]
+            notes.append(f"printed answer: {v} ({src}" + (f"; but {other[0].note}" if other else "") + ").")
+            return res, "count"
+
+        fp = next((e for e in facts.elements if e.kind == "footprint" and e.attrs.get("source") == "outline"), None)
+        area_q = kind == "area" or (rt.intent == "unknown" and bool(L.AREA_CUE.search(q)))
+
+        def outline_area():
+            if fp is None:
+                return None
+            a = float(fp.attrs["area_m2"])
+            notes.append(f"printed answer: {a:.1f} m² measured inside the building outline "
+                         f"({fp.attrs.get('bbox_m', ['?', '?'])[0]} x {fp.attrs.get('bbox_m', ['?', '?'])[1]} m, "
+                         f"{fp.attrs.get('method')}; scale {fp.attrs.get('px_per_m', 0):.1f} px/m from the sheet).")
+            return [VoterResult(Voter(name="outline_area", value=a, element_ids=[fp.id],
+                                      note=f"area inside the building outline read from {fp.attrs.get('method')}"),
+                                evidence=[fp], unit="m2")], "area"
+
+        if area_q and kind != "area":
+            lk = L.lookup(ap, sha, q)
+            if lk and lk["kind"] == "area" and lk["coverage"] >= 0.99:
+                kind = "area"
+            else:
+                return outline_area()
+        if kind == "area":
+            lk = L.lookup(ap, sha, q)
+            generic = {"building", "room", "floor", "plan", "house", "structure", "space", "sheet", "drawing", "everything"}
+            if (lk and lk["kind"] == "text" and lk["coverage"] >= 0.99
+                    and not set(lk["keywords"]) <= generic and rt.intent == "total_room_area"):
+                # 'how big is the SUMP?' names a printed thing: its note answers, not the building's total area
+                notes.append(f"printed answer: the sheet prints '{lk['printed']}'.")
+                return [vr("printed_note", lk["printed"], lk["boxes"], lk["text"], f"the sheet prints '{lk['text']}'",
+                           unit="label")], "text"
+            if lk and lk["kind"] == "area" and lk["coverage"] >= 0.99:
+                notes.append(f"printed answer: {lk['printed']} = {lk['value']:.1f} m² (the sheet prints '{lk['text']}').")
+                return [vr("printed_area", float(lk["value"]), lk["boxes"], lk["text"], f"the sheet prints '{lk['text']}'",
+                           unit="m2")], "area"
+            gross = bool(_re.search(r"\b(slab|footprint|building|gross|pad|foundation|plot|whole\s+floor)\b", q, _re.I))
+            if rt.intent == "total_room_area" and gross and fp is not None and not L.printed_total_area(ap, sha):
+                return outline_area()             # 'total SLAB area' = the outline, not the sum of the panels in it
+            if rt.intent == "total_room_area":
+                pt = L.printed_total_area(ap, sha)
+                if pt:
+                    for r in results:
+                        r.second_opinion = True
+                    meas = next((r.voter.value for r in results if isinstance(r.voter.value, (int, float))), None)
+                    cmp = (f"; measured from the drawing: {meas:.0f} m² ({(meas / pt['m2'] - 1) * 100:+.0f}%)"
+                           if meas else "")
+                    notes.append(f"printed answer: {pt['printed']} = {pt['m2']:.1f} m² (the sheet prints '{pt['text']}'{cmp}).")
+                    return [vr("printed_total_area", float(pt["m2"]), [pt["box"]], pt["text"],
+                               f"the sheet prints '{pt['text']}'", unit="m2")] + results, "area"
+                if not results:
+                    return outline_area()
+            return None
+
+        if rt.intent == "unknown" or (kind == "text" and not results):
+            lk = L.lookup(ap, sha, q)
+            if not lk:
+                return None
+            k = lk["kind"]
+            val = lk["value"] if k != "text" else lk["printed"]
+            alts = "".join(f"; also printed: '{a['text']}'" for a in lk.get("alts", [])[:2])
+            shown = lk["printed"] if k == "text" else f"{lk['printed']}"
+            notes.append(f"printed answer: the sheet prints '{shown}'{alts}.")
+            unit = "m2" if k == "area" else ("label" if k == "text" else None)
+            return [vr("printed_note", val, lk["boxes"], lk["text"], f"the sheet prints '{lk['text']}'", unit=unit)], k
+        return None
+
+    def _sheet_grey(self, po: ProofObject, rt: Route, facts: SheetFacts, scale: Optional[ScaleInfo], notes: list[str]) -> ProofObject:
+        prof = facts.extras.get("profile") or {}
+        kinds = {e.kind for e in facts.elements}
+        why = None
+        if rt.intent in ("rooms_count", "total_room_area", "largest_room", "smallest_room") and "room" not in kinds and (
+                rt.intent == "rooms_count" or "zone" not in kinds):
+            why = "no enclosed rooms or colour-filled zones were recognised on this sheet"
+            if prof.get("sheet_type") == "cad_sheet":
+                why += f" ({prof.get('sheet_type').replace('_', ' ')}: {len(prof.get('views') or [])} views, main plan view read from line geometry)"
+        elif rt.intent == "overall_size" and scale is not None and scale.px_per_m:
+            why = "no building outline could be recognised in the main plan view"
+        elif rt.intent in ("total_room_area", "overall_size", "scale_info") or any("scale" in n for n in notes):
+            why = "the drawing's scale is not known yet: give one real length (a printed dimension or a known door width)"
+            if scale is not None:
+                po.decisions_open.append(self._scale_decision(facts, scale if scale.px_per_m else ScaleInfo(needs_user=True)))
+        elif rt.intent == "rooms_count":
+            why = "no individual rooms recognised (only colour-filled zones or none)"
+        return self._grey(po, why or "the sheet has nothing this question can be computed from")
+
     @staticmethod
     def _grey(po: ProofObject, reason: str) -> ProofObject:
         po.tier, po.value, po.refusal = Tier.grey, None, reason
@@ -640,6 +1272,7 @@ class PipelineEngine:
         if re.search(r"\bwall|partition|seinä|wand|mur\b|parete", question, re.I) and \
                 not any(e.kind == "wall" for e in facts.elements) and "vector" not in facts.extras:
             facts = self._with_walls(facts, ctx, po, notes)
+        facts = self._named_rooms(facts, ctx, notes)
         try:
             try:
                 plan = planner.plan(question, facts, self.planner_llm or self.llm)

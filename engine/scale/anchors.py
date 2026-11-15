@@ -314,6 +314,104 @@ def _printed_dims_anchor(facts: SheetFacts) -> Optional[ScaleAnchor]:
         return None
 
 
+def _sheet_anchors(facts: SheetFacts) -> tuple[list[ScaleAnchor], bool]:
+    """Anchors read from the sheet's own notes / scale bar / dimension strings (engine/scale/sheet_scale.py)."""
+    try:
+        import pathlib
+        from engine import cache as facts_cache
+        from engine.pipeline import _abs
+        from engine.scale import sheet_scale
+        if "vector" in facts.extras or not facts.provenance.file:
+            return [], False
+        ap = _abs(facts.provenance.file)
+        if pathlib.Path(ap).suffix.lower() not in (".png", ".jpg", ".jpeg", ".webp", ".pdf"):
+            return [], False
+        if max(facts.width_px or 0, facts.height_px or 0) < 700 and pathlib.Path(ap).suffix.lower() != ".pdf":
+            return [], False                      # small floor-plan scans: handled by printed_dims / label areas
+        out, st = sheet_scale.anchors_for(ap, facts.provenance.sha256 or facts_cache.sha256_file(ap))
+        return out, bool(st["cons"]["winner"] or st["users"])
+    except Exception:  # noqa: BLE001
+        return [], False
+
+
+def label_area_candidates(facts: SheetFacts) -> list[dict]:
+    """Room areas printed in the room labels ('MH 10.5', 'TUPA 18.5'), as read by the vision label reader
+    (cache/labels/<sha>.json; no network here). Each label inside exactly one room polygon gives
+    px_per_m = sqrt(polygon px^2 / printed m^2)."""
+    import json as _json
+    import math as _math
+    import pathlib
+    import re as _re
+    sha = facts.provenance.sha256
+    if not sha or not facts.width_px or not facts.height_px:
+        return []
+    f = pathlib.Path(__file__).resolve().parents[2] / "cache" / "labels" / f"{sha}.json"
+    if not f.exists():
+        return []
+    try:
+        labels = _json.loads(f.read_text())
+        from shapely.geometry import Point, Polygon
+    except Exception:  # noqa: BLE001
+        return []
+    rooms = []
+    for e in facts.elements:
+        if e.kind == "room" and len(e.polygon) >= 3:
+            try:
+                P = Polygon(e.polygon)
+                if P.is_valid and P.area > 0:
+                    rooms.append((e, P))
+            except Exception:  # noqa: BLE001
+                pass
+    out = []
+    for l in labels:
+        m = _re.search(r"(\d{1,3}(?:[.,]\d{1,2})?)\s*(?:m2|m²|m\^2)?\s*$", str(l.get("text", "")))
+        if not m or not isinstance(l.get("x"), (int, float)) or not isinstance(l.get("y"), (int, float)):
+            continue
+        if not _re.search(r"[A-Za-zÄÖÅäöå]", l["text"]):          # a bare number is a dimension, not a room area
+            continue
+        a = float(m.group(1).replace(",", "."))
+        raw = m.group(0)
+        unit = bool(_re.search(r"m2|m²|m\^2", raw))
+        decimal = bool(_re.search(r"\d[.,]\d", raw))
+        if not (unit or decimal or a >= 4):
+            continue                      # 'MH 1', 'MAKUUHUONE 2': a room NUMBER, not an area
+        if not (0.8 <= a <= 400):
+            continue
+        pt = Point(l["x"] / 100 * facts.width_px, l["y"] / 100 * facts.height_px)
+        hit = [(e, P) for e, P in rooms if P.contains(pt)]
+        if len(hit) != 1:
+            continue
+        e, P = hit[0]
+        typ = f"{e.subtype or ''} {l['text']}".lower()
+        floor_m2 = 5.0 if _re.search(r"bed|makuu|mh\b|sov|living|olohuone|oh\b|kitchen|keitti", typ) else 1.5
+        if a < floor_m2:
+            continue                      # a 1 m2 bedroom is a misread, not a scale anchor
+        out.append({"px_per_m": _math.sqrt(P.area / a), "text": l["text"], "id": e.id, "m2": a})
+    return out
+
+
+def _label_area_anchor(facts: SheetFacts) -> Optional[ScaleAnchor]:
+    """Printed room areas that agree (>= 2 rooms within 15%) -> one 'printed_area' anchor, tag specified."""
+    import statistics as _st
+    c = label_area_candidates(facts)
+    if len(c) < 2:
+        return None
+    best = []
+    for v in sorted(x["px_per_m"] for x in c):
+        grp = [x for x in c if abs(x["px_per_m"] / v - 1) <= 0.15]
+        if len(grp) > len(best):
+            best = grp
+    if len(best) < 2 or len(best) < 0.34 * len(c):
+        return None
+    pv = _st.median(x["px_per_m"] for x in best)
+    spread = max(x["px_per_m"] for x in best) / min(x["px_per_m"] for x in best) - 1
+    return ScaleAnchor(kind="printed_area", px_per_m=pv, rel_sigma=max(0.03, spread / 2), tag=Tag.specified,
+                       note=f"room areas printed on the drawing ({', '.join(x['text'] for x in best)}) agree within "
+                            f"{spread:.0%} across {len(best)} rooms; {len(c) - len(best)} rooms disagreed "
+                            "(merged or split outlines)",
+                       element_ids=[x["id"] for x in best])
+
+
 def solve(facts: SheetFacts, user_anchors: tuple[dict[str, Any], ...] = ()) -> ScaleInfo:
     """Combine every scale anchor derivable from `facts` (+ optional user taps) into one ScaleInfo."""
     anchors: list[ScaleAnchor] = []
@@ -325,14 +423,28 @@ def solve(facts: SheetFacts, user_anchors: tuple[dict[str, Any], ...] = ()) -> S
     pd = _printed_dims_anchor(facts)
     if pd is not None:
         anchors.append(pd)
+    la = _label_area_anchor(facts)
+    if la is not None:
+        anchors.append(la)
+    sa, has_sheet = _sheet_anchors(facts)
+    anchors += sa
     dp = _door_prior_anchor(facts)
     # a measurement printed on the drawing beats the 0.9 m door guess; the guess is kept only as a fallback
-    if dp is not None and pd is None:
+    if dp is not None and pd is None and la is None and not has_sheet:
         anchors.append(dp)
     for ua in user_anchors:
         anchors.append(_user_anchor(ua))
 
-    combined = _combine(anchors)
+    live = [a for a in anchors if "REJECTED:" not in (a.note or "")]   # sheet consensus rejects stay on the receipt only
+    users = [a for a in live if a.kind == "user"]
+    if users:                                   # a length the user measured decides; the rest stays on the receipt
+        u = users[-1]
+        for a in anchors:
+            if a.kind != "user" and "REJECTED" not in (a.note or ""):
+                a.note = (a.note or a.kind) + "; not used: your measurement decides"
+        return ScaleInfo(px_per_m=u.px_per_m, rel_sigma=u.rel_sigma, anchors=anchors, widths_relative=False,
+                         needs_user=False)
+    combined = _combine(live)
     if combined.px_per_m is None:
         return ScaleInfo(px_per_m=None, rel_sigma=None, anchors=[], widths_relative=False, needs_user=True)
 

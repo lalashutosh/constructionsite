@@ -24,6 +24,8 @@ export interface PinInput {
 interface Callbacks {
   onHoverPin: (idx: number | null) => void;
   onDimInfo?: (tip: { text: string; x: number; y: number } | null) => void;
+  /** pointer over/click on a floor plane: floor key + floor-local drawing pixels (null = nothing) */
+  onElementPoint?: (kind: "hover" | "click", hit: { floor: string; x: number; y: number } | null) => void;
 }
 
 export type Phase = "site" | "foundation" | "floor" | "walls" | "openings" | "services" | "finishes" | "roof";
@@ -190,6 +192,9 @@ export class PlumbViewer {
   private dimGroup = new THREE.Group();
   private dims: { sprite: THREE.Sprite; born: number; hover?: DimHover; wpx: number; hpx: number }[] = [];
   private hlGroup = new THREE.Group();
+  private elGroup = new THREE.Group();
+  private elPicking = false;
+  private lastElHover = 0;
   private hoverDim = -1;
   private measureHover: { a: THREE.Vector3; b: THREE.Vector3; px: number } | null = null;
   private measureTyped: string | null = null;
@@ -212,6 +217,7 @@ export class PlumbViewer {
     this.T = theme;
     this.el = el;
     this.cb = cb;
+    if (import.meta.env.DEV) (window as unknown as { __plumbViewer?: PlumbViewer }).__plumbViewer = this; // demo recorder hook
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: "high-performance" });
     this.renderer.setPixelRatio(Math.min(2, window.devicePixelRatio));
     this.renderer.setClearColor(theme.bg, 1);
@@ -222,9 +228,12 @@ export class PlumbViewer {
     this.scene.add(this.pinGroup);
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true;
-    this.controls.dampingFactor = 0.08;
-    this.controls.autoRotate = !this.reduce;
-    this.controls.autoRotateSpeed = 1.0; // one turn per 60 s
+    this.controls.dampingFactor = 0.07;
+    this.controls.zoomToCursor = true;          // wheel zooms towards the point under the cursor
+    this.controls.zoomSpeed = 1.1;
+    this.controls.screenSpacePanning = true;
+    this.controls.autoRotate = false;          // idle drift only after a long pause (see IDLE_MS), and slowly
+    this.controls.autoRotateSpeed = 0.25;      // one turn per 4 min
     this.controls.maxPolarAngle = Math.PI * 0.49;
     this.controls.addEventListener("start", () => {
       this.controls.autoRotate = false;
@@ -234,17 +243,23 @@ export class PlumbViewer {
     this.controls.addEventListener("end", () => {
       this.lastInteract = performance.now();
       window.clearTimeout(this.resumeTimer);
-      this.resumeTimer = window.setTimeout(() => (this.controls.autoRotate = !this.reduce), 3000);
+      this.resumeTimer = window.setTimeout(() => (this.controls.autoRotate = !this.reduce), 45000);
     });
     this.scene.add(this.measureGroup);
     this.scene.add(this.dimGroup);
     this.scene.add(this.hlGroup);
+    this.scene.add(this.elGroup);
     this.camera.position.set(95, 100, 125);
     const dom = this.renderer.domElement;
     dom.addEventListener("pointermove", (e) => {
       const r = dom.getBoundingClientRect();
       this.mouse.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
       this.mousePx = { x: e.clientX - r.left, y: e.clientY - r.top };
+      const now = performance.now();
+      if (this.elPicking && !this.measureKey && now - this.lastElHover > 60 && e.buttons === 0) {
+        this.lastElHover = now;
+        this.cb.onElementPoint?.("hover", this.floorPoint());
+      }
     });
     dom.addEventListener("pointerleave", () => {
       this.mouse.set(9, 9);
@@ -256,7 +271,13 @@ export class PlumbViewer {
       this.skipIntro();
     });
     dom.addEventListener("pointerup", (e) => {
-      if (!this.measureKey) return;
+      if (!this.measureKey) {
+        if (!this.elPicking || Math.hypot(e.clientX - this.downAt.x, e.clientY - this.downAt.y) > 5 || performance.now() - this.downAt.t > 500) return;
+        const r = dom.getBoundingClientRect();
+        this.mouse.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+        this.cb.onElementPoint?.("click", this.floorPoint());
+        return;
+      }
       if (Math.hypot(e.clientX - this.downAt.x, e.clientY - this.downAt.y) > 5 || performance.now() - this.downAt.t > 500) return;
       // aim from THIS click, not the last pointermove (taps and clicks without a prior move missed the drawing)
       const r = dom.getBoundingClientRect();
@@ -339,6 +360,15 @@ export class PlumbViewer {
       this.cb.onHoverPin(hit);
       this.applyHot();
     }
+  }
+
+  /** Page position of a drawing pixel on the first floor (dev only: the demo recorder clicks real doors with it). */
+  screenOfPixel(x: number, y: number) {
+    const fl = [...this.floorGroups.values()][0];
+    if (!fl) return null;
+    const s = this.toScreen(fl.group.localToWorld(new THREE.Vector3(x - fl.w / 2, 0, y - fl.h / 2)));
+    const r = this.el.getBoundingClientRect();
+    return { x: s.x + r.left, y: s.y + r.top };
   }
 
   private toScreen(v: THREE.Vector3) {
@@ -581,12 +611,12 @@ export class PlumbViewer {
     const tw = this.tween;
     if (!tw) return;
     const u = Math.min(1, (performance.now() - tw.start) / tw.dur);
-    const e = 1 - Math.pow(1 - u, 3);
+    const e = u < 0.5 ? 4 * u * u * u : 1 - Math.pow(-2 * u + 2, 3) / 2;   // easeInOutCubic: soft start and landing
     this.camera.position.lerpVectors(tw.p0, tw.p1, e);
     this.controls.target.lerpVectors(tw.t0, tw.t1, e);
     if (u >= 1) {
       this.tween = null;
-      if (!this.measureKey) this.controls.autoRotate = !this.reduce;
+      if (!this.measureKey) this.armIdle();
       tw.done?.();
     }
   }
@@ -714,9 +744,10 @@ export class PlumbViewer {
           const nm = r.label ?? (r.subtype && r.subtype !== "room" ? r.subtype : null);
           return { px: Math.abs(a2 / 2), cx: cx / r.polygon.length, cy: cy / r.polygon.length, bw: x1 - x0, nm, poly: r.polygon as Ring };
         })
-        .filter((r) => r.bw >= long * 0.07 && (scaled || r.nm))
+        .filter((r) => r.bw >= long * 0.05 && (scaled || r.nm))
+        .filter((r) => !r.nm || !/^(space|zone|region)$/i.test(r.nm))
         .sort((a, b) => b.px - a.px)
-        .slice(0, 10);
+        .slice(0, 12);
       for (const r of rooms) {
         const area = scaled && ppm ? r.px / (ppm * ppm) : null;
         if (area !== null && area < 2 && !r.nm) continue;
@@ -757,6 +788,207 @@ export class PlumbViewer {
     window.clearTimeout(this.resumeTimer);
     this.controls.autoRotate = floorKey ? false : !this.reduce;
     this.controls.enableRotate = !floorKey;
+  }
+
+  /** Nearest floor plane under the pointer, as floor-local drawing pixels. Planes are raycast even when the drawing is hidden. */
+  private floorPoint(): { floor: string; x: number; y: number } | null {
+    this.ray.setFromCamera(this.mouse, this.camera);
+    let best: { floor: string; x: number; y: number; d: number } | null = null;
+    for (const [key, fl] of this.floorGroups) {
+      const hit = this.ray.intersectObject(fl.plane, false)[0];
+      if (!hit || (best && hit.distance >= best.d)) continue;
+      const l = fl.group.worldToLocal(hit.point.clone());
+      best = { floor: key, x: l.x + fl.w / 2, y: l.z + fl.h / 2, d: hit.distance };
+    }
+    return best ? { floor: best.floor, x: best.x, y: best.y } : null;
+  }
+
+  /** Turn element picking (hover + click on the model) on or off. */
+  setElementPicking(on: boolean) {
+    this.elPicking = on;
+    if (!on) this.clear(this.elGroup);
+  }
+
+  /** Outline one element on its floor (floor-local drawing pixels); null clears. `hot` = selected, else hover. */
+  setElementOutline(floorKey: string | null, polygon: [number, number][] | null, hot: boolean) {
+    this.clear(this.elGroup);
+    const fl = floorKey ? this.floorGroups.get(floorKey) : undefined;
+    if (!fl || !polygon || polygon.length < 2) return;
+    const y = fl.H * 0.55;
+    const pts = polygon.map(([x, z]) => fl.group.localToWorld(new THREE.Vector3(x - fl.w / 2, y, z - fl.h / 2)));
+    const mat = new THREE.LineBasicMaterial({ color: hot ? this.T.pin : this.T.accent, depthTest: false, transparent: true, opacity: hot ? 1 : 0.8 });
+    const line = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(pts), mat);
+    line.renderOrder = 11;
+    this.elGroup.add(line);
+  }
+
+  /** slow idle drift, only after 45 s without any interaction */
+  private armIdle() {
+    window.clearTimeout(this.resumeTimer);
+    this.controls.autoRotate = false;
+    this.resumeTimer = window.setTimeout(() => (this.controls.autoRotate = !this.reduce && !this.measureKey), 45000);
+  }
+
+  // ---- view cube: preset views, orbit by drag, re-centre (eased, damped)
+  private viewMode: "3d" | "top" | "front" | "side" = "3d";
+  get view() { return this.viewMode; }
+  private bounds(): { c: THREE.Vector3; r: number } {
+    const box = new THREE.Box3();
+    for (const fl of this.floorGroups.values()) box.expandByObject(fl.plane);
+    if (box.isEmpty()) return { c: new THREE.Vector3(), r: 100 };
+    const sph = box.getBoundingSphere(new THREE.Sphere());
+    return { c: sph.center, r: Math.max(10, sph.radius) };
+  }
+  setView(mode: "3d" | "top" | "front" | "side", dur = 650) {
+    this.viewMode = mode;
+    const { c, r } = this.bounds();
+    const d = r * 2.1;
+    const dir = mode === "top" ? new THREE.Vector3(0, 1, 0.0001)
+      : mode === "front" ? new THREE.Vector3(0, 0.18, 1)
+      : mode === "side" ? new THREE.Vector3(1, 0.18, 0)
+      : new THREE.Vector3(0.62, 0.72, 0.85);
+    this.controls.maxPolarAngle = mode === "top" ? 0.0001 : Math.PI * 0.49;
+    this.controls.enableRotate = mode !== "top";
+    this.controls.autoRotate = false;
+    this.flyTo(c.clone().add(dir.normalize().multiplyScalar(d)), c.clone(), dur);
+  }
+  recenter(dur = 600) { this.setView(this.viewMode, dur); }
+  /** drag on the view cube: orbit around the target */
+  orbitBy(dxPx: number, dyPx: number) {
+    if (this.viewMode === "top") { this.setView("3d", 450); return; }
+    const off = this.camera.position.clone().sub(this.controls.target);
+    const sph = new THREE.Spherical().setFromVector3(off);
+    sph.theta -= dxPx * 0.008;
+    sph.phi = Math.min(Math.PI * 0.49, Math.max(0.05, sph.phi - dyPx * 0.008));
+    off.setFromSpherical(sph);
+    this.camera.position.copy(this.controls.target.clone().add(off));
+    this.controls.autoRotate = false;
+    this.controls.update();
+  }
+  /** camera azimuth in radians (the view cube rotates with it) */
+  azimuth(): number {
+    const off = this.camera.position.clone().sub(this.controls.target);
+    return Math.atan2(off.x, off.z);
+  }
+
+  // ---- layers (envelope / walls / furniture / piping / electrical) and multi-highlight
+  private layerObjs: Record<string, THREE.Object3D> = {};
+  setLayers(floorKey: string | null, layers: { envelope?: [number, number][][]; rooms?: [number, number][][]; furniture?: { polygon: [number, number][] }[];
+    equipment?: { label?: string | null; polygon: [number, number][] }[];
+    piping?: [number, number][][]; electrical?: [number, number][][] } | null, colours: Record<string, number>) {
+    for (const o of Object.values(this.layerObjs)) o.parent?.remove(o);
+    this.layerObjs = {};
+    const fl = floorKey ? this.floorGroups.get(floorKey) : undefined;
+    if (!fl || !layers) return;
+    // children of the floor group: the same local drawing-pixel frame as the walls (x - w/2, height, z - h/2)
+    const L = (x: number, z: number, y: number) => new THREE.Vector3(x - fl.w / 2, y, z - fl.h / 2);
+    const mk = (name: string, rings: [number, number][][], y: number, closed: boolean) => {
+      const g = new THREE.Group();
+      const mat = new THREE.LineBasicMaterial({ color: colours[name] ?? 0xffffff, transparent: true, opacity: 0.95, depthTest: false });
+      for (const r of rings) {
+        if (r.length < 2) continue;
+        const geo = new THREE.BufferGeometry().setFromPoints(r.map(([x, z]) => L(x, z, y)));
+        const ln = closed ? new THREE.LineLoop(geo, mat) : new THREE.Line(geo, mat);
+        ln.renderOrder = 9;
+        g.add(ln);
+      }
+      this.layerObjs[name] = g;
+      fl.group.add(g);
+    };
+    if (layers.envelope?.length) mk("envelope", layers.envelope, fl.H * 0.03, true);
+    if (layers.rooms?.length) mk("rooms", layers.rooms, fl.H * 0.04, true);       // room boundaries as thin lines
+    if (layers.furniture?.length) {          // furniture: low translucent blocks, about knee height
+      const g = new THREE.Group();
+      const mat = new THREE.MeshBasicMaterial({ color: colours.furniture ?? 0x2dd4bf, transparent: true, opacity: 0.38, depthWrite: false });
+      const hgt = fl.H * 0.08;                  // low blocks: the building reads first, furniture second
+      for (const f of layers.furniture) {
+        const xs = f.polygon.map((q) => q[0]), zs = f.polygon.map((q) => q[1]);
+        const x0 = Math.min(...xs), x1 = Math.max(...xs), z0 = Math.min(...zs), z1 = Math.max(...zs);
+        const m = new THREE.Mesh(new THREE.BoxGeometry(Math.max(1, x1 - x0), hgt, Math.max(1, z1 - z0)), mat);
+        m.position.copy(L((x0 + x1) / 2, (z0 + z1) / 2, hgt / 2));
+        g.add(m);
+      }
+      this.layerObjs.furniture = g;
+      fl.group.add(g);
+    }
+    // services as solid runs (instanced boxes along every segment), not hairlines
+    const runs = (name: string, polys: [number, number][][], y: number, thick: number) => {
+      const segs: [number, number, number, number][] = [];
+      for (const pl of polys) for (let i = 0; i + 1 < pl.length; i++) segs.push([pl[i][0], pl[i][1], pl[i + 1][0], pl[i + 1][1]]);
+      if (!segs.length) return;
+      const mat = new THREE.MeshBasicMaterial({ color: colours[name] ?? 0xffffff, transparent: true, opacity: 0.92 });   // unlit scene
+      const mesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), mat, segs.length);
+      const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), pos = new THREE.Vector3();
+      segs.forEach(([x0, z0, x1, z1], i) => {
+        const len = Math.hypot(x1 - x0, z1 - z0) + thick;
+        pos.copy(L((x0 + x1) / 2, (z0 + z1) / 2, y));
+        q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), -Math.atan2(z1 - z0, x1 - x0));
+        sc.set(len, thick, thick);
+        mesh.setMatrixAt(i, m4.compose(pos, q, sc));
+      });
+      mesh.instanceMatrix.needsUpdate = true;
+      const g = new THREE.Group();
+      g.add(mesh);
+      this.layerObjs[name] = g;
+      fl.group.add(g);
+    };
+    const t = Math.max(2, Math.min(fl.w, fl.h) * 0.0035);
+    if (layers.piping?.length) runs("piping", layers.piping, fl.H * 0.35, t);
+    if (layers.electrical?.length) runs("electrical", layers.electrical, fl.H * 0.55, t * 0.7);
+    // tagged equipment (pumps, valves, supports ...): a marker post + its tag, so the sheet's equipment stands up in 3D
+    if (layers.equipment?.length) {
+      const g = new THREE.Group();
+      const seen = new Set<string>();
+      const postMat = new THREE.MeshBasicMaterial({ color: colours.equipment ?? 0xf472b6 });
+      for (const e of layers.equipment.slice(0, 120)) {
+        const xs = e.polygon.map((q) => q[0]), zs = e.polygon.map((q) => q[1]);
+        const cx = (Math.min(...xs) + Math.max(...xs)) / 2, cz = (Math.min(...zs) + Math.max(...zs)) / 2;
+        const h = fl.H * 0.5;
+        const post = new THREE.Mesh(new THREE.CylinderGeometry(t * 1.2, t * 1.2, h, 10), postMat);
+        post.position.copy(L(cx, cz, h / 2));
+        g.add(post);
+        const key = e.label ?? "";
+        if (key && !seen.has(key)) {
+          seen.add(key);
+          const { t: tex, wpx, hpx } = this.tagTex(key);
+          const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false, sizeAttenuation: false }));
+          sp.scale.set(this.spritePx(wpx), this.spritePx(hpx), 1);
+          sp.position.copy(L(cx, cz, h * 1.15));
+          sp.renderOrder = 14;
+          g.add(sp);
+        }
+      }
+      this.layerObjs.equipment = g;
+      fl.group.add(g);
+    }
+  }
+  setLayerVisible(name: string, on: boolean) {
+    const o = this.layerObjs[name];
+    if (o) o.visible = on;
+    if (name === "walls") for (const fl of this.floorGroups.values()) for (const pt of fl.parts) if ((pt as { kind?: string }).kind === "wall") pt.obj.visible = on;
+  }
+  private multiGroup = new THREE.Group();
+  /** highlight many polygons at once (a checklist row: every bed) and fly to them */
+  setMulti(floorKey: string | null, polys: [number, number][][], fly = true) {
+    this.clear(this.multiGroup);
+    if (!this.multiGroup.parent) this.scene.add(this.multiGroup);
+    const fl = floorKey ? this.floorGroups.get(floorKey) : undefined;
+    if (!fl || !polys.length) return;
+    const y = fl.H * 0.6;
+    const mat = new THREE.LineBasicMaterial({ color: this.T.pin, depthTest: false, transparent: true, opacity: 0.95 });
+    const box = new THREE.Box3();
+    for (const poly of polys) {
+      const pts = poly.map(([x, z]) => fl.group.localToWorld(new THREE.Vector3(x - fl.w / 2, y, z - fl.h / 2)));
+      pts.forEach((q) => box.expandByPoint(q));
+      const ln = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(pts), mat);
+      ln.renderOrder = 12;
+      this.multiGroup.add(ln);
+    }
+    if (fly && !box.isEmpty()) {
+      const sph = box.getBoundingSphere(new THREE.Sphere());
+      const off = this.camera.position.clone().sub(this.controls.target).normalize();
+      this.flyTo(sph.center.clone().add(off.multiplyScalar(Math.max(18, sph.radius * 2.4))), sph.center.clone(), 650);
+    }
   }
 
   private measureClick() {
@@ -848,6 +1080,7 @@ export class PlumbViewer {
       }
     }
     void big;
+    this.linkStairs(floors, gap);
     this.applyStage();
     if (!this.reduce) {
       const t0 = performance.now();
@@ -898,13 +1131,57 @@ export class PlumbViewer {
       this.camera.position.copy(from);
       this.flyTo(homePos, homeTarget, 2600);
     }
-    this.controls.autoRotate = !this.reduce;
+    this.armIdle();
     if (this.topDown) {                       // floors rebuilt while measuring: stay looking straight down
       this.controls.autoRotate = false;
       this.beforeScale = { pos: homePos.clone(), target: homeTarget.clone() };
       this.flyTo(homeTarget.clone().add(new THREE.Vector3(0, homePos.distanceTo(homeTarget) * 1.02, 0.001)), homeTarget, 900);
     }
     this.controls.update();
+  }
+
+  /** Stacked floors: a dashed line joins each staircase to the nearest staircase on the floor above. */
+  private linkStairs(floors: FloorInput[], gap: number) {
+    if (floors.length < 2) return;
+    const at = (f: FloorInput, i: number) => {
+      const s = 100 / Math.max(f.geo.width, f.geo.height);
+      return f.geo.fixtures.filter((e) => /stair/i.test(e.kind) && e.polygon.length).map((e) => {
+        const cx = e.polygon.reduce((a, p) => a + p[0], 0) / e.polygon.length;
+        const cy = e.polygon.reduce((a, p) => a + p[1], 0) / e.polygon.length;
+        return new THREE.Vector3((cx - f.geo.width / 2) * s, i * gap, (cy - f.geo.height / 2) * s);
+      });
+    };
+    const mat = new THREE.LineDashedMaterial({ color: this.T.accent, dashSize: 1.2, gapSize: 0.8, transparent: true, opacity: 0.9 });
+    const stepMat = new THREE.MeshBasicMaterial({ color: this.T.accent, transparent: true, opacity: 0.6, depthWrite: false });
+    const edgeMat = new THREE.LineBasicMaterial({ color: this.T.accent, transparent: true, opacity: 0.85 });
+    for (let i = 0; i + 1 < floors.length; i++) {
+      const lo = at(floors[i], i), hi = at(floors[i + 1], i + 1);
+      for (const a of lo) {
+        if (!hi.length) break;
+        const b = hi.reduce((best, p) => (Math.hypot(p.x - a.x, p.z - a.z) < Math.hypot(best.x - a.x, best.z - a.z) ? p : best), hi[0]);
+        const from = a.clone().setY(a.y + 3.6);
+        const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints([from, b]), mat);
+        line.computeLineDistances();
+        line.userData.stairLink = true;
+        this.root.add(line);
+        // a see-through flight of steps climbing from this staircase to the one on the floor above
+        const n = Math.max(8, Math.round((b.y - from.y) / 1.6));
+        const dir = new THREE.Vector3(b.x - from.x, 0, b.z - from.z);
+        const yaw = Math.atan2(dir.x, dir.z);
+        for (let k = 0; k < n; k++) {
+          const t = (k + 0.5) / n;
+          const g = new THREE.BoxGeometry(4.2, (b.y - from.y) / n, Math.max(0.8, dir.length() / n + 0.4));
+          const step = new THREE.Mesh(g, stepMat);
+          step.position.set(from.x + dir.x * t, from.y + (b.y - from.y) * t, from.z + dir.z * t);
+          step.rotation.y = yaw;
+          step.userData.stairLink = true;
+          const ed = new THREE.LineSegments(new THREE.EdgesGeometry(g), edgeMat);
+          ed.position.copy(step.position);
+          ed.rotation.copy(step.rotation);
+          this.root.add(step, ed);
+        }
+      }
+    }
   }
 
   private buildFloor(f: FloorInput, s: number) {
@@ -1051,6 +1328,7 @@ export class PlumbViewer {
         const plan = v.type === "floor_plan";
         const pts = [[bx0, by0], [bx1, by0], [bx1, by1], [bx0, by1]].map(([x, y]) => new THREE.Vector3(x - w / 2, 0.4, y - h / 2));
         vg.add(new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color: plan ? T.accent : T.tileLine, transparent: true, opacity: plan ? 0.9 : 0.5 })));
+        if (v.type === "other" || views.length === 1) continue;     // no tag for generic regions (clutter, no information)
         const { tex, aspect } = labelTexture(viewName(v.type), plan, T);
         const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, opacity: plan ? 1 : 0.55, depthTest: false, fog: false }));
         const sh = long * 0.05;

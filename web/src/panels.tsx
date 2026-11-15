@@ -1,10 +1,14 @@
+import { ViewCube, LayerToggles, LAYER_COLOURS, ServiceMap, PlanHeadline, FinishesMap } from "./deepui";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ChevronDown, ChevronRight, CircleCheck, CircleMinus, FolderUp, BookOpen, FolderTree, LayoutGrid, Moon, Play, Ruler, Square, Sun, TriangleAlert, Upload, X } from "lucide-react";
+import { ClipboardList, ChevronDown, ChevronRight, CircleCheck, CircleMinus, FolderUp, BookOpen, FolderTree, LayoutGrid, Moon, Play, Ruler, Square, Sun, TriangleAlert, Upload, X } from "lucide-react";
 import { imageUrl, type BuildPlan, type Geometry, type Sample, type ScanCheck } from "./api";
 import { fmtCost, fmtNum, reliabilityWord, sentenceOf, tierSentence, verdict, type FindingSpec } from "./logic";
-import ProofView from "./proofview";
+import ProofView, { ProofCard, SeeProof, verdictLine } from "./proofview";
 import type { ProofObject } from "./types";
-import { PlumbViewer, THEMES, type Phase } from "./viewer3d";
+import { PlumbViewer, THEMES, type FloorInput, type Phase } from "./viewer3d";
+import { pct, sizeKinds } from "./checks";
+import { pickAt } from "./inspector";
+import type { PlanElement } from "./api";
 import { floorOf, sheetFloors, splitSheet } from "./sheetfloors";
 
 export type ThemeName = "dark" | "light";
@@ -175,7 +179,7 @@ export function ViewerPane(p: {
   onScaleStart: () => void;
   onScaleCancel: () => void;
   onMeasured: (px: [number, number][]) => void;
-  onApplyLength: (m: number, typed?: { v: number; unit: string }) => void;
+  onApplyLength: (m: number, typed?: { v: number; unit: string }, force?: boolean) => void;
   onWhyRead: () => void;
   progress: ProgressInfo | null;
   measureTyped: string | null;
@@ -183,6 +187,20 @@ export function ViewerPane(p: {
   onCloseFlat: () => void;
   projectNote: string | null;
   onRetryGeo: () => void;
+  /** evidence boxes of the hovered check (image pixels) */
+  checkEv?: { box: [number, number, number, number]; label: string }[] | null;
+  /** element inspector: elements of the active drawing (original image px), selection + hover ids */
+  elements?: PlanElement[] | null;
+  elSelId?: string | null;
+  elHoverId?: string | null;
+  onElPick?: (id: string | null, how: "hover" | "click") => void;
+  /** the App reaches the 3D viewer through this (checklist highlights, selected room) */
+  vref?: { current: PlumbViewer | null };
+  /** layer contents that arrive later than the 3D (the deep read's furniture nodes) */
+  layerExtra?: Record<string, number>;
+  /** the sheet's own scale, shown by the measuring button, and a jump to where it was read */
+  scaleText?: string | null;
+  onScaleWhere?: () => void;
 }) {
   const [tip, setTip] = useState<{ text: string; x: number; y: number } | null>(null);
   const [len, setLen] = useState("");
@@ -192,12 +210,15 @@ export function ViewerPane(p: {
   const viewer = useRef<PlumbViewer | null>(null);
   const hoverCb = useRef(p.onHover);
   hoverCb.current = p.onHover;
+  const elPointCb = useRef<(how: "hover" | "click", hit: { floor: string; x: number; y: number } | null) => void>(() => {});
   const measCb = useRef(p.onMeasured);
   measCb.current = p.onMeasured;
 
   useEffect(() => {
-    const v = new PlumbViewer(host.current!, { onHoverPin: (i) => hoverCb.current(i), onDimInfo: (t) => setTip(t) }, THEMES[p.theme]);
+    const v = new PlumbViewer(host.current!, { onHoverPin: (i) => hoverCb.current(i), onDimInfo: (t) => setTip(t), onElementPoint: (how, hit) => elPointCb.current(how, hit) }, THEMES[p.theme]);
     viewer.current = v;
+    if (p.vref) p.vref.current = v;
+    if (import.meta.env.DEV) (window as unknown as { __plumb?: PlumbViewer }).__plumb = v;   // debugging only
     return () => {
       v.dispose();
       viewer.current = null;
@@ -207,13 +228,22 @@ export function ViewerPane(p: {
   useEffect(() => viewer.current?.setTheme(THEMES[p.theme]), [p.theme]);
   const ready = p.floors.filter((f) => f.geo);
   // several plans on one sheet ("1. KERROS", "2. KERROS") -> one floor each, stacked; tabs: All · Floor 1 · Floor 2
-  const parts = useMemo(() => ready.flatMap((f) => {
+  type Part = FloorInput & { parent: string; src: string };
+  const parts = useMemo(() => ready.flatMap((f): Part[] => {
     const sp = splitSheet(f.path, f.geo!);
     return sp.length
       ? sp.map((x) => ({ key: x.key, label: x.name, geo: x.geo, imgUrl: imageUrl(f.path), crop: x.box, parent: f.key, src: x.source }))
       : [{ key: f.key, label: f.name, geo: f.geo!, imgUrl: imageUrl(f.path), crop: undefined, parent: f.key, src: "" }];
   }), [ready.map((f) => f.key + (f.geo ? "+" : "")).join("|")]); // eslint-disable-line react-hooks/exhaustive-deps
   const [view, setView] = useState<string>("all");
+  const layerSig = parts.map((x) => x.key + (x.geo.layers ? "L" : "")).join("|");
+  useEffect(() => {                        // body-system layers of the first shown floor (after the floors are built)
+    const t = window.setTimeout(() => {
+      const f = parts.find((x) => x.geo.layers);
+      viewer.current?.setLayers(f ? f.key : null, f ? ({ ...(f.geo.layers as object), rooms: f.geo.rooms.map((r) => r.polygon) } as never) : null, LAYER_COLOURS);
+    }, 900);
+    return () => window.clearTimeout(t);
+  }, [layerSig]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (view !== "all" && !parts.some((x) => x.key === view)) setView("all"); }, [parts, view]);
   const shown = view === "all" ? parts : parts.filter((x) => x.key === view);
   const sig = shown.map((f) => f.key).join("|");
@@ -235,19 +265,50 @@ export function ViewerPane(p: {
   const sf = p.selFloor;
   const mapped = !!(sf?.geo && sf.geo.coords === "pixels" && p.selected && p.selected.path === sf.key);
   const proof = p.selected?.proof;
+    const cev = p.checkEv && p.active?.geo && p.active.geo.coords === "pixels" ? p.checkEv : null;
+  const pinFloor = cev ? p.active : sf;
+  const evPolys: [number, number][][] = cev
+    ? cev.map(({ box: [x0, y0, x1, y1] }) => [[x0, y0], [x1, y0], [x1, y1], [x0, y1]])
+    : mapped && p.showPins && proof ? proof.evidence.map((e) => e.polygon as [number, number][]) : [];
+  const evKey = cev ? "c" + JSON.stringify(cev) : "";
   useEffect(() => {
-    const sub = sf ? shown.filter((x) => x.parent === sf.key && x.crop) : [];
-    const pins = mapped && p.showPins && proof ? proof.evidence.flatMap((e, i) => {
-      const poly = e.polygon as [number, number][];
+    const sub = pinFloor ? shown.filter((x) => x.parent === pinFloor.key && x.crop) : [];
+    const pins = evPolys.flatMap((poly, i) => {
       if (!sub.length) return [{ idx: i + 1, polygon: poly }];
       const [cx, cy] = poly.reduce((a, [x, y]) => [a[0] + x / poly.length, a[1] + y / poly.length], [0, 0]);
       const on = sub.find((x) => cx >= x.crop![0] && cx <= x.crop![2] && cy >= x.crop![1] && cy <= x.crop![3]);
       return on ? [{ idx: i + 1, floor: on.key, polygon: poly.map(([x, y]) => [x - on.crop![0], y - on.crop![1]] as [number, number]) }] : [];
-    }) : [];
-    viewer.current?.setPins(mapped && p.showPins && sf ? sf.key : null, pins);
+    });
+    viewer.current?.setPins(evPolys.length && pinFloor ? pinFloor.key : null, pins);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sig, p.theme, mapped, p.showPins, proof?.id]);
+  }, [sig, p.theme, mapped, p.showPins, proof?.id, evKey]);
   useEffect(() => viewer.current?.setHighlight(p.hoverIdx), [p.hoverIdx]);
+
+  // element picking in 3D: ray hits a floor plane -> drawing pixel -> smallest element outline under it
+  const els = p.elements ?? null;
+  const elPart = (e: PlanElement) => {
+    const sub = shown.filter((x) => x.parent === p.active?.key);
+    if (sub.length <= 1) return sub[0] ?? null;
+    const cx = e.polygon.reduce((s, q) => s + q[0], 0) / Math.max(1, e.polygon.length), cy = e.polygon.reduce((s, q) => s + q[1], 0) / Math.max(1, e.polygon.length);
+    return sub.find((x) => x.crop && cx >= x.crop[0] && cx <= x.crop[2] && cy >= x.crop[1] && cy <= x.crop[3]) ?? null;
+  };
+  elPointCb.current = (how, hit) => {
+    if (!els || !hit) return p.onElPick?.(null, how);
+    const part = shown.find((x) => x.key === hit.floor);
+    if (!part || part.parent !== p.active?.key) return p.onElPick?.(null, how);
+    const ox = part.crop?.[0] ?? 0, oy = part.crop?.[1] ?? 0;
+    p.onElPick?.(pickAt(els, hit.x + ox, hit.y + oy, 3)?.id ?? null, how);
+  };
+  useEffect(() => viewer.current?.setElementPicking(!!els && els.length > 0 && p.scale === "off"), [els, p.scale]);
+  useEffect(() => {
+    const id = p.elSelId ?? p.elHoverId;
+    const e = id && els ? els.find((x) => x.id === id) : null;
+    const part = e ? elPart(e) : null;
+    if (!e || !part) return viewer.current?.setElementOutline(null, null, false);
+    const ox = part.crop?.[0] ?? 0, oy = part.crop?.[1] ?? 0;
+    viewer.current?.setElementOutline(part.key, e.polygon.map(([x, y]) => [x - ox, y - oy] as [number, number]), !!p.elSelId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [p.elSelId, p.elHoverId, els, sig]);
   useEffect(() => viewer.current?.setDrawing(p.drawingOn), [p.drawingOn, sig, p.theme]);
   useEffect(() => viewer.current?.setStage(p.stage), [p.stage, sig, p.theme]);
 
@@ -294,6 +355,8 @@ export function ViewerPane(p: {
   return (
     <div className="viewer panel">
       <div ref={host} className="canvas" />
+      <ViewCube viewer={() => viewer.current} />
+      <LayerToggles viewer={() => viewer.current} layers={shown[0]?.geo?.layers} extra={p.layerExtra} />
       <div className="vtitle">
         <span className="vname">{a ? a.name : "No drawing open"}</span>
         {parts.length > 1 && <span className="pill">{parts.length} floors</span>}
@@ -325,7 +388,13 @@ export function ViewerPane(p: {
       {a && p.scale === "off" && (
         <div className="scalecta">
           <button className="ctabtn" onClick={p.onScaleStart}><Ruler {...ic} size={18} />{p.scaleKind === "specified" ? "Check real size" : p.scaleKind === "chosen" ? "Change real size" : "Set real size"}</button>
-          {p.scaleKind === "defaulted" ? <span>One real measurement unlocks every size.</span> : <span title={p.scaleSrc ?? undefined}>{p.scaleKind === "specified" ? "Sizes from measurements printed on the drawing" : "Sizes from your measurement"}</span>}
+          {p.scaleKind === "defaulted" ? <span>One real measurement unlocks every size.</span> : (
+            <span className="scalebadge" title={p.scaleSrc ?? undefined}>
+              <b>{p.scaleKind === "specified" ? "Scale read from the drawing" : "Scale from your measurement"}</b>
+              {p.scaleText ? <> · {p.scaleText}</> : null}
+              {p.onScaleWhere && <button className="linkbtn" onClick={p.onScaleWhere}>Where?</button>}
+            </span>
+          )}
         </div>
       )}
       {measuring && (
@@ -341,7 +410,8 @@ export function ViewerPane(p: {
               </form>
               {p.scaleIssue && (
                 <p className="issue" role="alert"><TierIcon tier="amber" /><span>Needs a look · {p.scaleIssue.message}{" "}
-                  {p.scaleIssue.label && p.scaleIssue.lengthM !== null && <button className="linkbtn" onClick={() => p.onApplyLength(p.scaleIssue!.lengthM!, { v: Number(len), unit: "cm" })}>{p.scaleIssue.label}</button>}</span></p>
+                  {p.scaleIssue.label && p.scaleIssue.lengthM !== null && <button className="linkbtn" onClick={() => p.onApplyLength(p.scaleIssue!.lengthM!, { v: Number(len), unit: "cm" })}>{p.scaleIssue.label}</button>}
+                  {" · "}<button className="linkbtn" onClick={() => { const n = Number(len); if (n > 0) p.onApplyLength(n / (unit === "cm" ? 100 : unit === "mm" ? 1000 : 1), { v: n, unit }, true); }}>Keep my measurement</button></span></p>
               )}
             </div>
           )}
@@ -401,7 +471,7 @@ export function ViewerPane(p: {
 }
 
 /* ---------- ask bar ---------- */
-export function Ask(p: { active: unknown; chips: string[]; selected: ProofObject | null; asking: boolean; err: string | null; onAsk: (q: string) => void; onWhy: () => void }) {
+export function Ask(p: { active: unknown; chips: string[]; selected: ProofObject | null; asking: boolean; err: string | null; onAsk: (q: string) => void; onWhy: () => void; scaleLine?: { text: string; conf: number } | null; selName?: string | null; onClearSel?: () => void }) {
   const [q, setQ] = useState("");
   const send = (t: string) => {
     setQ(t);
@@ -411,8 +481,13 @@ export function Ask(p: { active: unknown; chips: string[]; selected: ProofObject
   const v = pr ? verdict(pr) : null;
   return (
     <div className="ask">
+      {p.selName && (
+        <div className="selchip" title="Questions like 'what is the size of this room?' are about this element">
+          Selected: <b>{p.selName}</b> <button aria-label="Clear selection" onClick={p.onClearSel}>×</button>
+        </div>
+      )}
       <form className="askform" onSubmit={(e) => { e.preventDefault(); p.onAsk(q); }}>
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Ask anything about this drawing" aria-label="Question" disabled={!p.active} />
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={p.selName ? `Ask about ${p.selName}, e.g. what is the size of this room?` : "Ask anything about this drawing"} aria-label="Question" disabled={!p.active} />
         <button type="submit" className="primary" disabled={!p.active || p.asking || !q.trim()}>{p.asking ? "Asking…" : "Ask"}</button>
       </form>
       <div className="chips">
@@ -427,7 +502,9 @@ export function Ask(p: { active: unknown; chips: string[]; selected: ProofObject
           <p className="ameta">
             <span className={`status ${v.tier}`}><TierIcon tier={v.tier} />{reliabilityWord(pr)}</span>
             <span className="cost mono">{fmtCost(pr)}</span>
-            <button className="linkbtn" onClick={p.onWhy}>Why?</button>
+            <SeeProof onClick={p.onWhy} />
+            {p.scaleLine && sizeKinds.has(pr.kind) && <span className="scaleline mono" title="How sure the engine is about the scale these sizes use">from scale {p.scaleLine.text}, {pct(p.scaleLine.conf)}% sure</span>}
+            <span className="pv-gist">{verdictLine(pr).text}.</span>
           </p>
         </div>
       ) : (
@@ -464,6 +541,11 @@ export function Findings(p: {
   seg: ReactNode;
   flat: { path: string; typeWord: string; title: string; why: string | null; sheet: string | null; isSchedule: boolean } | null;
   onAskSchedule: () => void;
+  hoverIdx?: number | null;
+  onHover?: (i: number | null) => void;
+  imgUrl?: string;
+  checks?: ReactNode;
+  scaleLine?: { text: string; conf: number } | null;
 }) {
   const settledP = p.specs.map((s) => p.states[s.key]).filter((x) => x && (x.proof || x.err));
   const allGrey = p.specs.length >= 3 && settledP.length === p.specs.length && settledP.every((x) => x.proof && x.proof.tier === "grey");
@@ -493,12 +575,14 @@ export function Findings(p: {
           ))}
         </div>
       )}
+      {p.checks}
       <ul className="flist">
         {!p.active && <li className="muted pad">Findings appear here once a drawing is open.</li>}
         {sameRefusal && <li className="pad muted">Plumb's counters don't cover this kind of sheet yet. Ask a question below, or open a schedule/plan from the project.</li>}
         {!sameRefusal && p.specs.map((s) => {
           const st = p.states[s.key];
           if (!st) return null;
+          if (st.proof && (st.proof.tier === "grey" || (st.proof.kind === "count" && st.proof.value === 0))) return null;
           if (st.loading) return <li key={s.key} className="frow wait"><span className="ficon"><span className="spin sm" /></span><span className="ftext"><span className="fsent muted">Counting {s.noun}…</span></span></li>;
           if (st.err || !st.proof) return <li key={s.key} className="frow grey"><span className="ficon"><TierIcon tier="grey" /></span><span className="ftext"><span className="fsent">{s.noun}: can't answer.</span><small>{st.err}</small></span></li>;
           const pr = st.proof;
@@ -509,13 +593,26 @@ export function Findings(p: {
                 <span className={`ficon ${v.tier}`}><TierIcon tier={v.tier} /></span>
                 <span className="ftext">
                   <span className="fsent"><Sentence text={sentenceOf(pr)} /></span>
-                  <small>{reliabilityWord(pr)}{perFloor(p.active, pr)}</small>
+                  <small>{reliabilityWord(pr)}{perFloor(p.active, pr)}{p.scaleLine && sizeKinds.has(pr.kind) ? ` · from scale ${p.scaleLine.text}, ${pct(p.scaleLine.conf)}% sure` : ""}</small>
                 </span>
               </button>
-              <button className="linkbtn why" onClick={() => p.onWhy(pr)}>Why?</button>
+              <SeeProof onClick={() => p.onWhy(pr)} />
+              {pr.id === p.selectedId && (
+                <ProofCard proof={pr} src={p.imgUrl ?? ""} coords={p.active?.geo?.coords} hover={p.hoverIdx ?? null} onHover={p.onHover ?? (() => {})} onFull={() => p.onWhy(pr)} />
+              )}
             </li>
           );
         })}
+        {!sameRefusal && (() => {
+          const none = p.specs.filter((s) => { const pr = p.states[s.key]?.proof; return pr && (pr.tier === "grey" || (pr.kind === "count" && pr.value === 0)); });
+          return none.length ? (
+            <li className="pad muted sm nothere">
+              <details><summary>Not found on this sheet: {none.map((s) => s.noun).join(", ")}</summary>
+                {none.map((s) => <p key={s.key}>{s.noun}: {p.states[s.key]!.proof!.refusal ?? "none drawn"}</p>)}
+              </details>
+            </li>
+          ) : null;
+        })()}
       </ul>
     </div>
   );
@@ -657,7 +754,8 @@ export function Seg({ mode, onMode }: { mode: "findings" | "plan"; onMode: (m: "
   return (
     <div className="seg" role="tablist" aria-label="Right column view">
       <button role="tab" aria-selected={mode === "findings"} className={mode === "findings" ? "on" : ""} onClick={() => onMode("findings")}>Findings</button>
-      <button role="tab" aria-selected={mode === "plan"} className={mode === "plan" ? "on" : ""} onClick={() => onMode("plan")}>Build plan</button>
+      <button role="tab" aria-selected={mode === "plan"} className={`${mode === "plan" ? "on" : ""} segplan`} onClick={() => onMode("plan")}>
+        <ClipboardList size={14} aria-hidden="true" className="segplan-ic" />Build plan <small>what to buy</small></button>
     </div>
   );
 }
@@ -735,9 +833,13 @@ export function BuildPanel(p: {
             </ol>
           ) : (
             <div className="flist">
+              <PlanHeadline basis={pl.basis as never} services={pl.services_map?.quantities ?? null} />
+              {pl.finishes_map && pl.finishes_map.rooms.length > 0 && <FinishesMap map={pl.finishes_map} />}
               {ordered.map(([g, items]) => (
                 <div key={g} className="cgroup">
                   <h3>{g}</h3>
+                  {pl.services_map && g === "Plumbing" && pl.services_map.piping.length > 0 && <ServiceMap map={pl.services_map} kind="piping" />}
+                  {pl.services_map && g === "Electrical" && pl.services_map.electrical.length > 0 && <ServiceMap map={pl.services_map} kind="electrical" />}
                   {items.map((c) => {
                     const needsIt = c.qty === null && (c.per === "it_load_kw" || /it.?load/i.test(c.basis));
                     const src = c.per ? pl.basis[c.per]?.source : null;

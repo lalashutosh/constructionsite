@@ -72,6 +72,46 @@ def views(img: np.ndarray) -> list[dict]:
     return out[:6]
 
 
+def _thick_ink(img: np.ndarray) -> np.ndarray:
+    """Thick dark strokes only (walls): thin lines, text, hatching and coloured frames are removed by an opening."""
+    g = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if img.ndim == 3 else img
+    dark = (g < 90).astype(np.uint8)
+    k = max(3, int(round(0.0055 * max(g.shape[:2]))))
+    return cv2.morphologyEx(dark, cv2.MORPH_OPEN, np.ones((k, k), np.uint8))
+
+
+def verify_cut(img: np.ndarray, box, axis: str, at: float) -> Optional[int]:
+    """A reviewer proposed 'two plans side by side, split at <at> (fraction of the image)'. Accept only if, within
+    +-6% of the box around that line, there is a line no wall crosses with real wall mass on both sides. Returns the
+    cut coordinate in image pixels, or None. (Inside one plan every line crosses the outer walls.)"""
+    x0, y0, x1, y1 = [int(v) for v in box]
+    h, w = img.shape[:2]
+    sub = _thick_ink(img[y0:y1, x0:x1])
+    if sub.size == 0 or sub.sum() == 0:
+        return None
+    ax = 0 if axis == "x" else 1
+    prof = sub.sum(axis=ax).astype(float)
+    n = len(prof)
+    c = int(at * (w if axis == "x" else h)) - (x0 if axis == "x" else y0)
+    if not (0.15 * n < c < 0.85 * n):
+        return None
+    r = max(3, int(0.06 * n))
+    lo, hi = max(1, c - r), min(n - 1, c + r)
+    k = lo + int(np.argmin(prof[lo:hi]))
+    tot = prof.sum()
+    if prof[k] > 0.01 * prof.max() or min(prof[:k].sum(), prof[k:].sum()) < 0.15 * tot:
+        return None
+    crop = img[y0:y1, x0:x1]
+    g = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY) if crop.ndim == 3 else crop
+    thin = (g < 110).sum(axis=ax) / max(1, g.shape[ax])        # a gutter is paper: almost no ink of any kind
+    zero = np.nonzero(prof <= 0.01 * prof.max())[0]
+    band = zero[np.abs(zero - k) <= r]
+    if thin[k] > 0.012 or len(band) < max(3, 0.01 * n):
+        return None
+    best = band[np.argmin(thin[band])]
+    return int(best) + (x0 if axis == "x" else y0)
+
+
 def _mask(walls: list[dict], shape) -> np.ndarray:
     m = np.zeros(shape[:2], np.uint8)
     for wl in walls:
@@ -86,6 +126,20 @@ def _iou(a: np.ndarray, b: np.ndarray, tol: int) -> Optional[float]:
     return None if u == 0 else float((a & b).sum() / u)
 
 
+import re as _re
+FLOOR_WORD = _re.compile(
+    r"\b(\d+\.?\s*(kerros|krs|floor|fl|etage|stock|og|v[åa]ning|plan|korrus)|(kerros|floor|etage|level|v[åa]ning|korrus)\s*\d+|"
+    r"(first|second|third|fourth|ground|basement|upper|lower|attic)\s+floor|kellari|ullakko|erdgeschoss|obergeschoss|"
+    r"untergeschoss|dachgeschoss|kellergeschoss|bottenv[åa]ning|k[äa]llare|vind|pohjakerros|maantasokerros|[EKOU]G\b)", _re.I)
+
+
+def _printed_levels(floors: list[dict]) -> bool:
+    """Several floors only when at least two plans carry DIFFERENT printed floor names (1. KERROS / 2. KERROS,
+    First floor / Second floor, Erdgeschoss / Obergeschoss ...). Separate-looking regions alone are one floor."""
+    names = {f.get("level_label", "").strip().lower() for f in floors if FLOOR_WORD.search(f.get("level_label") or "")}
+    return len(names) >= 2
+
+
 def _in_box(wl: dict, box) -> bool:
     xs = [p[0] for p in wl["outer"]]
     ys = [p[1] for p in wl["outer"]]
@@ -93,9 +147,9 @@ def _in_box(wl: dict, box) -> bool:
     return box[0] <= cx <= box[2] and box[1] <= cy <= box[3]
 
 
-def _review_image(img, vs, wa, wb) -> bytes:
+def _review_image(img, vs, wa, wb, px: float = 1800.0) -> bytes:
     h, w = img.shape[:2]
-    s = min(1.0, 1400.0 / max(h, w))
+    s = min(1.0, float(px) / max(h, w))
     canvas = cv2.resize(img, (int(w * s), int(h * s))) if s < 1 else img.copy()
     over = canvas.copy()
     for walls, col in ((wa, (230, 120, 30)), (wb, (30, 140, 255))):        # A blue, B orange (BGR)
@@ -123,11 +177,36 @@ def _parse(text: str) -> Optional[dict]:
             "notes": str(d.get("notes", ""))[:200]}
 
 
+def apply_cuts(img: np.ndarray, vs: list[dict], cuts: Optional[list]) -> tuple[list[dict], list[str]]:
+    """Split views where a reviewer said 'two plans side by side' AND verify_cut finds a wall-free gutter there."""
+    if not cuts:
+        return vs, []
+    h, w = img.shape[:2]
+    out, done = [], []
+    for v in vs:
+        parts = [list(v["box"])]
+        for c in cuts:
+            nxt = []
+            for b in parts:
+                k = verify_cut(img, b, c["axis"], c["at"])
+                if k is None:
+                    nxt.append(b)
+                    continue
+                done.append(f"split at {'x' if c['axis'] == 'x' else 'y'}={k}px (reviewer proposed, gutter verified)")
+                nxt += ([[b[0], b[1], k, b[3]], [k, b[1], b[2], b[3]]] if c["axis"] == "x"
+                        else [[b[0], b[1], b[2], k], [b[0], k, b[2], b[3]]])
+            parts = nxt
+        out += [{"box": b, "area_frac": round((b[2] - b[0]) * (b[3] - b[1]) / (w * h), 3)} for b in parts]
+    for i, v in enumerate(out, 1):
+        v["n"] = i
+    return out, done
+
+
 def check(img: np.ndarray, walls_cnn: Optional[list], walls_trace: list, rooms_cnn: Optional[np.ndarray] = None,
-          llm=None) -> dict:
+          llm=None, cuts: Optional[list] = None, plan_labels: Optional[list] = None, budget: Optional[dict] = None) -> dict:
     """Returns {views:[{n, box, type, type_source, reader, agreement, flags}], walls:[...chosen...], warnings,
     reviewer: {used, cost_usd, notes}}."""
-    vs = views(img)
+    vs, cut_notes = apply_cuts(img, views(img), cuts)
     wa, wb = walls_cnn or [], walls_trace or []
     tol = max(5, int(0.006 * max(img.shape[:2])))
     ma, mb = _mask(wa, img.shape), _mask(wb, img.shape)
@@ -135,18 +214,31 @@ def check(img: np.ndarray, walls_cnn: Optional[list], walls_trace: list, rooms_c
     llms = [x for x in (llm if isinstance(llm, (list, tuple)) else [llm]) if x is not None and hasattr(x, "complete_vision")]
     reviews = []
     if llms:
-        png = _review_image(img, vs, wa, wb)
-        for L in llms:                       # independent reviewers, same picture, same fixed form
+        bud = budget or {}                       # chosen from the sheet profile (engine/profile.review_budget)
+        png = _review_image(img, vs, wa, wb, bud.get("image_px", 1800))
+        from concurrent.futures import ThreadPoolExecutor
+
+        def ask(L):
+            import copy
+            Q = copy.copy(L)
+            think = int(bud.get("think_tokens", 0))
+            Q.no_think = think == 0 or getattr(L, "kind", "") == "fast"   # simple plan: no thinking; dense sheet: strong thinks
             try:
-                r = L.complete_vision(REVIEW_SYSTEM, f"There are {len(vs)} numbered views.", png, max_tokens=700)
-                cost += r.usd
-                used = True
-                p = _parse(r.text)
-                if p is not None:
-                    reviews.append(p)
-                    names.append(getattr(L, "kind", "reviewer"))
+                return L, Q.complete_vision(REVIEW_SYSTEM, f"There are {len(vs)} numbered views.", png,
+                                            max_tokens=700 + (min(think, 6000) if not Q.no_think else 0))
             except Exception:  # noqa: BLE001  (reviewers are optional; CV rules still decide)
-                pass
+                return L, None
+        with ThreadPoolExecutor(max_workers=len(llms)) as ex:      # independent reviewers, in parallel
+            done = list(ex.map(ask, llms))
+        for L, r in done:                    # same order as llms: strongest last
+            if r is None:
+                continue
+            cost += r.usd
+            used = True
+            p = _parse(r.text)
+            if p is not None:
+                reviews.append(p)
+                names.append(getattr(L, "kind", "reviewer"))
     disputed: set[int] = set()
     if reviews:
         two = len(reviews) >= 2                         # a consensus needs at least two reviewers' answers
@@ -223,11 +315,18 @@ def check(img: np.ndarray, walls_cnn: Optional[list], walls_trace: list, rooms_c
                                                        v["box"][1] // 200, v["box"][0]))):
         idx = [i for i, wl in enumerate(chosen) if _in_box(wl, v["box"])]
         lv = v.get("level")
+        if not v.get("level_label") and plan_labels and len(plan_labels) == len(plans) and cut_notes:
+            v["level_label"] = plan_labels[k]
         floors.append({"view": v["n"], "box": v["box"], "level": lv, "level_label": v.get("level_label") or "",
                        "label": v.get("level_label") or (f"Level {lv}" if isinstance(lv, int) else f"Floor {k + 1}"),
                        "wall_indices": idx, "level_source": "read by AI reviewers" if isinstance(lv, int) else "position on sheet"})
+    if len(floors) > 1 and not _printed_levels(floors):
+        warnings.append(f"{len(floors)} plan regions looked separate, but the sheet does not print distinct floor names: "
+                        "read as ONE floor")
+        floors = []
     if len(floors) > 1:
         warnings.append(f"{len(floors)} floor plans on one sheet: shown as {len(floors)} floors")
+    warnings += [f"Views: {c}" for c in cut_notes]
     return {"views": vs, "walls": chosen, "warnings": warnings, "floors": floors,
             "reviewer": {"used": used, "models": names, "answered": len(reviews), "asked": len(llms),
                          "cost_usd": round(cost, 5), "notes": (review or {}).get("notes", "")}}

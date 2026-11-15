@@ -169,7 +169,34 @@ def model(img: np.ndarray, facts: Optional[Any] = None, coords: str = "pixels", 
                 out["windows"].append(_el(e))
             elif e.kind not in ("label", "floor_blob"):
                 out["fixtures"].append(_el(e))
+    if coords == "pixels":
+        try:                                   # stair flights from tread lines; never breaks the 3D
+            from engine.raster import stairs as _stairs
+            for k, f in enumerate(_stairs.detect(img, walls=None)):
+                out["fixtures"].append({"id": f"stairs-{k}", "kind": "stairs", "subtype": None,
+                                        "label": f"stairs ({f['attrs']['treads']} treads)",
+                                        "polygon": f["polygon"], "conf": f["conf"], "attrs": f["attrs"]})
+        except Exception:
+            pass
     return out
+
+
+def _drop_stairs_in_walls(out: dict, shape) -> None:
+    """Hatching inside thick walls looks like treads: a 'flight' that lies mostly inside the chosen walls is not one."""
+    st = [f for f in out["fixtures"] if f.get("kind") == "stairs"]
+    if not st or not out.get("walls"):
+        return
+    m = np.zeros(shape[:2], np.uint8)
+    for wl in out["walls"]:                 # outer ring minus holes (the rooms) = the wall itself
+        cv2.fillPoly(m, [np.array(wl["outer"], np.int32)] + [np.array(h, np.int32) for h in wl.get("holes", [])], 1)
+    keep_ids = set()
+    for f in st:
+        b = np.zeros(shape[:2], np.uint8)
+        cv2.fillPoly(b, [np.array(f["polygon"], np.int32)], 1)
+        area = int(b.sum())
+        if area and (b & m).sum() / area < 0.4:
+            keep_ids.add(f["id"])
+    out["fixtures"] = [f for f in out["fixtures"] if f.get("kind") != "stairs" or f["id"] in keep_ids]
 
 
 def _trace_full(img: np.ndarray) -> tuple[list, str]:
@@ -183,17 +210,99 @@ def _trace_full(img: np.ndarray) -> tuple[list, str]:
     return walls, note
 
 
+def _cad_model(img, facts, coords) -> Optional[dict]:
+    """Construction sheet (title block, border, several views): walls from LINE GEOMETRY of the main plan view only
+    (engine/bigsheet.py). No CubiCasa CNN, no vision reviewer: the sheet profile already says what each region is."""
+    prof = (facts.extras.get("profile") if facts is not None else None) or {}
+    if prof.get("sheet_type") != "cad_sheet" or facts.extras.get("route") != "cad" or coords != "pixels":
+        return None
+    from engine import bigsheet, profile as P
+    from engine.pipeline import _abs
+    h, w = img.shape[:2]
+    try:
+        words = P.words_for(_abs(facts.provenance.file), facts.provenance.sha256, img)
+    except Exception:  # noqa: BLE001
+        words = []
+    fp = next((e for e in facts.elements if e.kind == "footprint" and e.attrs.get("source") == "outline"), None)
+    if fp is not None:         # verified outline: ONE clean slab-edge / outer-wall ring, zones as labelled floors
+        from shapely.geometry import Polygon
+        ppm = float(fp.attrs.get("px_per_m") or 50.0)
+        outer = Polygon(fp.polygon).buffer(0)
+        inner = outer.buffer(-max(2.0, 0.3 * ppm), join_style=2)
+        walls = [{"outer": [list(map(float, c)) for c in outer.exterior.coords],
+                  "holes": [[list(map(float, c)) for c in inner.exterior.coords]] if not inner.is_empty and inner.geom_type == "Polygon" else []}]
+        note = (f"construction sheet: outline {fp.attrs.get('bbox_m', ['?', '?'])[0]} x {fp.attrs.get('bbox_m', ['?', '?'])[1]} m "
+                f"from {fp.attrs.get('method')}; notes, legends, title block and dimension chains excluded")
+    else:
+        walls = bigsheet.walls(img, {**prof, "width_px": w, "height_px": h}, words)
+        note = (f"construction sheet: walls read from line geometry of the main plan view ({len(walls)} pieces); "
+                "title block, notes, schedules and dimension chains excluded")
+    out = {"width": w, "height": h, "walls": walls, "rooms": [], "doors": [], "windows": [], "fixtures": [],
+           "elements_aligned": True, "wall_note": note}
+    for e in facts.elements:
+        if e.kind in ("room", "zone", "region") and len(e.polygon) >= 3:
+            out["rooms"].append(_el(e))
+    views = []
+    for v in prof.get("views", []):
+        views.append({"n": v["n"], "box": v["box"], "type": "floor_plan" if v["kind"] == "plan" else
+                      {"notes": "other", "schedule": "legend", "legend": "legend", "key_plan": "other", "detail": "other"}.get(v["kind"], "other"),
+                      "type_source": "sheet profile", "reader": "line geometry" if v["kind"] == "plan" else None,
+                      "flags": [], "title": v.get("title"), "kind": v["kind"]})
+    warns = [f"Construction sheet: {len(views)} regions found; walls read only inside the main plan view"]
+    if prof.get("title_block"):
+        warns.append("Title block excluded from the model")
+    out["check"] = {"views": views, "walls": walls, "warnings": warns, "floors": [], "profile": {
+        k: prof.get(k) for k in ("sheet_type", "route", "complexity", "main_view", "title_block", "border")},
+        "reviewer": {"used": False, "models": [], "answered": 0, "asked": 0, "cost_usd": 0.0,
+                     "notes": "the sheet profile decided; no vision reviewer was needed"}}
+    return out
+
+
 def _checked(img, facts, coords, use_cnn, llm) -> dict:
     """Both wall readers + engine.scancheck (views, agreement, optional vision reviewer) decide the walls."""
+    cad = _cad_model(img, facts, coords)
+    if cad is not None:
+        if llm and cad["rooms"]:          # construction sheets get the same two-reviewer audit of every zone/room
+            try:
+                from engine import room_audit
+                aud = room_audit.audit(img, cad["rooms"], llm if isinstance(llm, (list, tuple)) else [llm])
+                if aud["drop"]:
+                    cad["rooms"] = [r for r in cad["rooms"] if r["id"] not in set(aud["drop"])]
+                cad["check"]["audit"] = {k: aud[k] for k in ("used", "answered", "cost_usd", "drop", "actions", "issues")}
+                cad["check"]["audit"]["added"] = []
+                cad["check"]["warnings"] += [f"AI audit: {a}" for a in aud["actions"]]
+                cad["check"]["reviewer"]["notes"] = ("the sheet profile decided the views; two vision reviewers audited "
+                                                     "every zone (a zone is removed only when BOTH reject it)")
+            except Exception:  # noqa: BLE001  (the audit is optional)
+                pass
+        return cad
     from engine import scancheck
     global _LAST_ROOMS
     _LAST_ROOMS = None
     got = cnn_walls(img) if use_cnn else None
     wa = got[0] if got else []
     wb, _ = _trace_full(img)
-    chk = scancheck.check(img, wa, wb, _LAST_ROOMS, llm)
     out = model(img, facts, coords, use_cnn=False)          # elements + shape; walls replaced below
+    aud = None
+    try:                                                    # AI audit of the built rooms; code verifies each action
+        from engine import room_audit
+        aud = room_audit.audit(img, out["rooms"], llm if isinstance(llm, (list, tuple)) else [llm],
+                               stairs=[f for f in out["fixtures"] if f.get("kind") == "stairs"])
+        if aud["drop"] or aud["add"]:
+            out["rooms"] = [r for r in out["rooms"] if r["id"] not in set(aud["drop"])] + aud["add"]
+    except Exception:  # noqa: BLE001  (the audit is optional)
+        aud = None
+    bud = ((facts.extras.get("profile") or {}).get("review") if facts is not None else None) or None
+    chk = scancheck.check(img, wa, wb, _LAST_ROOMS, llm, cuts=(aud or {}).get("cuts"),
+                          plan_labels=(aud or {}).get("plan_labels"), budget=bud)
+    if aud:
+        chk["audit"] = {k: aud[k] for k in ("used", "answered", "cost_usd", "drop", "actions", "issues", "drop_stairs")}
+        chk["audit"]["added"] = [r["id"] for r in aud["add"]]
+        chk["warnings"] += [f"AI audit: {a}" for a in aud["actions"]]
     out["walls"] = chk.pop("walls")
+    _drop_stairs_in_walls(out, img.shape)
+    if aud and aud.get("drop_stairs"):
+        out["fixtures"] = [f for f in out["fixtures"] if f.get("id") not in set(aud["drop_stairs"])]
     out["wall_note"] = "walls chosen per view by the scan check (two readers + reviewer)"
     out["check"] = chk
     return out

@@ -267,6 +267,8 @@ COMPLEX = re.compile(
     r"\b(average|mean|median|per\s+(room|apartment|floor)|each|which|largest|biggest|smallest|widest|longest|"
     r"facing|front|back\s+of|north|south|east|west|left|right|next\s+to|near(est)?|beside|opposite|adjacent|"
     r"more\s+(\w+\s+)?than|fewer\s+(\w+\s+)?than|less\s+(\w+\s+)?than|compared?|minus|difference|ratio|percent|%|"
+    r"(more|fewer|less)\s+(\w+\s+){0,2}or|or\s+(more|fewer|less)|vs\.?|versus|as\s+many\s+\w+(\s+\w+)?\s+as|"
+    r"enemmän|vähemmän|"
     r"share|proportion|fraction|how\s+much\s+of|"
     r"contain(s|ing)?|with\s+(a|an|no|at\s+least)|without\s+(a|an|any)|that\s+have|ha(ve|s)\s+(no|a|an|at\s+least|more|fewer)|"
     r"and\s+(the\s+)?\w+\s+(in\s+total|together|combined)|in\s+total|combined|"
@@ -286,15 +288,67 @@ def is_complex(q: str) -> bool:
     return bool(COMPLEX.search(unicodedata.normalize("NFKC", q))) and not _known_template(q)
 
 
+# a COUNT answer only for wording that asks to count; "size of both bedrooms" mentions bedrooms but is not a count
+COUNT_CUE = re.compile(
+    r"\b(how\s+many|number\s+of|count|counts|is\s+there|are\s+there|any|total\s+number|quantity|"
+    r"montako|kuinka\s+monta|onko|wie\s+viele|anzahl|gibt\s+es|combien|nombre\s+de|y\s+a-t-il|quant[ie]|ci\s+sono|"
+    r"hur\s+många|hvor\s+mange|mitu|kui\s+palju|kas\s+on|hoeveel|aantal|cu[aá]nt[oa]s|hay)\b", re.I)
+
+
+def _not_a_count(question: str, name: str) -> bool:
+    return kind_of(name) == "count" and not COUNT_CUE.search(question) and not _known_template(question)
+
+
+# ----------------------------------------------------------------------------- sheet-level intents
+SHEET_TABLE = pathlib.Path(__file__).with_name("router_sheet.yaml")
+_SHEET: Optional[dict] = None
+
+
+def _sheet_table() -> dict:
+    global _SHEET
+    if _SHEET is None:
+        import yaml
+        d = yaml.safe_load(SHEET_TABLE.read_text(encoding="utf-8")) if SHEET_TABLE.exists() else {}
+        spec = re.compile(re.sub(r"\s+", "", d.get("specific", "") or "(?!x)x"), re.I)
+        _SHEET = {"specific": spec, "intents": [(n, v["kind"], [re.compile(p, re.I) for p in v["patterns"]])
+                                               for n, v in (d.get("intents") or {}).items()]}
+    return _SHEET
+
+
+# "<adjective> room(s)": dining room, guest room, utility room ... = a typed room, not "all rooms"
+_TYPED_ROOM = re.compile(r"\b(?!(?:all|every|each|the|whole|entire|total|this|these|those|of|other|same|any|an?|in|many|my|our|"
+                         r"their|how|are|is|there|common|enclosed|individual|separate|different|drawn|shown|rooms?|sum|combined|"
+                         r"overall|floor|per|and|or|for|big|large|small)\b)[a-zäöåüõ]+\s+rooms?\b", re.I)
+
+
+def sheet_intent(question: str) -> Optional[tuple[str, str]]:
+    """(intent, kind) for sheet-level questions (total area of all rooms, largest room, scale ...), else None.
+    A question naming a room type ('total area of the bedrooms') is not sheet-level."""
+    t = _sheet_table()
+    q = unicodedata.normalize("NFKC", question)
+    for name, kind, rxs in t["intents"]:
+        if any(rx.search(q) for rx in rxs):
+            if name in ("largest_room", "smallest_room", "scale_info", "overall_size") or not (
+                    t["specific"].search(q) or _TYPED_ROOM.search(q)):
+                return name, kind
+    return None
+
+
 # ----------------------------------------------------------------------------- public
 def route(question: str, path: str, *, classifier: Optional[TemplateClassifier] = None) -> Route:
     from evalkit import intents as I
 
     r = I.classify(question, path)
+    if not _known_template(question):          # dataset templates keep their fixed intents; new wording is sheet-level
+        sh = sheet_intent(question)
+        if sh is not None:
+            return Route(sh[0], {}, sh[1], r.lang, "sheet")
     lex = _lexicon()
     cue = lex.explicit_kind(normalise(question)) if lex is not None else None
     kind_clash = (r.name != "unknown" and cue is not None and cue != kind_of(r.name)
                   and not _known_template(question))      # "total AREA of bedrooms" is not the bedroom COUNT
+    if r.name != "unknown" and _not_a_count(question, r.name):
+        kind_clash = True
     if is_complex(question) or kind_clash:
         if classifier is not None:
             return Route("unknown", {}, "count", r.lang, "complex")      # planner drafts a query for it
@@ -312,9 +366,12 @@ def route(question: str, path: str, *, classifier: Optional[TemplateClassifier] 
         name, sim = idx.nearest(norm, _src(path))
         cue = lex.explicit_kind(norm) if lex is not None else None
         kind_ok = cue is None or cue == kind_of(name)  # "area of the kitchen" is not the kitchen count
-        if sim >= NGRAM_THRESHOLD and kind_ok and (kw_name is None or kw_name == name):
+        if sim >= NGRAM_THRESHOLD and kind_ok and (kw_name is None or kw_name == name) and \
+                not (classifier is not None and _not_a_count(question, name)):
             params = _params_from_quotes(name, question)
             return Route(name, params, kind_of(name), r.lang, "ngram")
+    if kw_name is not None and classifier is not None and _not_a_count(question, kw_name):
+        return Route("unknown", {}, "count", r.lang, "complex")       # mentions a room type, asks something else
     if kw_name is not None:
         return Route(kw_name, _params_from_quotes(kw_name, question), kind_of(kw_name), r.lang, "lexicon")
     if classifier is not None:

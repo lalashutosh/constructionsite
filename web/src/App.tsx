@@ -1,8 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ask, buildProject, fetchPlan, fetchSamples, setScale, ScaleError, geometry, imageUrl, upload, type Geometry, type Sample, type BuildPlan, type BuildingResult } from "./api";
+import { answerCheck, fetchChecks, MOCK_CHECKS, ask, buildProject, fetchPlan, fetchSamples, setScale, ScaleError, geometry, imageUrl, upload, type Geometry, type Sample, type BuildPlan, type BuildingResult, type Check, type PlanElement, fetchElements, overrideElement, undoElement, ElementsUnavailable } from "./api";
+import { ChecksBlock, kindWord, scaleBrief, pct as pctNum } from "./checks";
+import { Inspector, kindName } from "./inspector";
 import { chipsFor, findingSpecs } from "./logic";
 import type { ProofObject } from "./types";
 import { HowPage } from "./how";
+import { ChecklistPanel, Tour, LAYER_COLOURS } from "./deepui";
+import type { PlumbViewer } from "./viewer3d";
 import { ProjectDrawer, flattenProject, noFloorsNote, typeWord, type FileStatus, type ProjFile } from "./project";
 import { Ask, BuildPanel, Findings, Know, Rail, Drawer, Seg, ViewerPane, type BannerItem, type ProgressInfo, type ScaleState, type ThemeName, type Floor, type FindingState, type Upload } from "./panels";
 
@@ -66,6 +70,22 @@ export default function App() {
   const [measureTyped, setMeasureTyped] = useState<string | null>(null);
   const [measuredPx, setMeasuredPx] = useState<number | null>(null);
   const [planExtra, setPlanExtra] = useState<Record<string, number>>({});
+  const [checks, setChecks] = useState<Record<string, Check[]>>({});
+  const [hoverCheck, setHoverCheck] = useState<Check | null>(null);
+  const [checkBusy, setCheckBusy] = useState<string | null>(null);
+  const [checkNote, setCheckNote] = useState<string | null>(null);
+  const [checkErr, setCheckErr] = useState<string | null>(null);
+  // element inspector
+  const [elems, setElems] = useState<Record<string, PlanElement[] | "na">>({});
+  const [elSel, setElSel] = useState<string | null>(null);
+  const vref = useRef<PlumbViewer | null>(null);
+  const [ckN, setCkN] = useState<Record<string, number>>({});
+  const [elHover, setElHover] = useState<string | null>(null);
+  const [elLocal, setElLocal] = useState<Record<string, Set<string>>>({});
+  const [elUndo, setElUndo] = useState<Record<string, number>>({});
+  const [elBusy, setElBusy] = useState(false);
+  const [elNote, setElNote] = useState<string | null>(null);
+  const [elErr, setElErr] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const dirRef = useRef<HTMLInputElement>(null);
   const runId = useRef(0);
@@ -112,7 +132,9 @@ export default function App() {
   }, [floors, activeKey]);
 
   // findings for the active drawing, asked in sequence
-  const specs = useMemo(() => (active ? findingSpecs(active.path, samples) : []), [active, samples]);
+  // construction sheets: the deep read (checklist) is the finding list; residential counters (bedrooms, kitchens) don't apply
+  const isCad = !!active?.geo?.wall_note?.startsWith("construction sheet");
+  const specs = useMemo(() => (active && !isCad ? findingSpecs(active.path, samples) : []), [active, samples, isCad]);
   useEffect(() => {
     if (!active || !specs.length) return;
     const path = active.path;
@@ -136,13 +158,33 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active?.path, specs.length, epoch]);
 
+  // checks (scale, sheet type, plan view, units): fetched once the drawing is read
+  const geoReady = !!active?.geo;
+  useEffect(() => {
+    if (!active || !active.geo || checks[active.path]) return;
+    const path = active.path;
+    const dims = { w: active.geo.width, h: active.geo.height };
+    setCheckNote(null);
+    setCheckErr(null);
+    fetchChecks(path, dims).then((it) => setChecks((c) => ({ ...c, [path]: it }))).catch(() => { /* endpoint missing: no Checks block, nothing invented */ });
+  }, [active?.path, geoReady]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // elements (rooms, walls, doors, windows, fixtures, stairs, labels): fetched once the drawing is read
+  useEffect(() => {
+    if (!active || !active.geo || elems[active.path]) return;
+    const path = active.path;
+    setElSel(null);
+    setElHover(null);
+    fetchElements(path).then((it) => setElems((m) => ({ ...m, [path]: it }))).catch((e) => { if (e instanceof ElementsUnavailable) setElems((m) => ({ ...m, [path]: "na" })); });
+  }, [active?.path, geoReady]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const askPath = flat?.path ?? active?.path ?? null;
   const submit = async (q: string) => {
     if (!askPath || !q.trim()) return;
     setAsking(true);
     setAskErr(null);
     try {
-      const p = await ask(askPath, q.trim());
+      const p = await ask(askPath, q.trim(), elSel);
       setSelected({ path: askPath, proof: p });
     } catch (e) {
       setAskErr((e as Error).message);
@@ -150,6 +192,110 @@ export default function App() {
       setAsking(false);
     }
   };
+
+  // re-ask every standard question (and the selected one) without blanking the rows: sizes update in place
+  const reask = async (path: string) => {
+    const qs = new Map<string, string>(specs.map((s) => [s.key, s.q]));
+    const selQ = selected && selected.path === path ? selected.proof.question : null;
+    await Promise.all([...qs.entries()].map(async ([k, q]) => {
+      try {
+        const proof = await ask(path, q);
+        setFindings((f) => ({ ...f, [path]: { ...(f[path] ?? {}), [k]: { proof } } }));
+      } catch { /* keep the previous answer */ }
+    }));
+    if (selQ) {
+      try {
+        const proof = await ask(path, selQ);
+        setSelected((cur) => (cur && cur.path === path ? { path, proof } : cur));
+      } catch { /* keep */ }
+    } else {
+      setSelected((cur) => {
+        if (!cur || cur.path !== path) return cur;
+        const hit = specs.map((s) => findingsRef.current[path]?.[s.key]?.proof).find((x) => x && x.question === cur.proof.question);
+        return hit ? { path, proof: hit } : cur;
+      });
+    }
+  };
+  const findingsRef = useRef(findings);
+  findingsRef.current = findings;
+  const onCheckAnswer = async (c: Check, a: "yes" | "no") => {
+    if (!active) return;
+    const path = active.path;
+    setCheckBusy(c.id);
+    setCheckErr(null);
+    setCheckNote(null);
+    try {
+      let items = await answerCheck(path, c.id, a);
+      if (!MOCK_CHECKS) items = await fetchChecks(path).catch(() => items);
+      setChecks((m) => ({ ...m, [path]: items }));
+      setHoverCheck(null);
+      if (c.kind === "scale" || c.kind === "units") {
+        const g = await geometry(path).catch(() => null);
+        if (g) setFloors((fs) => fs.map((f) => (f.path === path ? { ...f, geo: g } : f)));
+      }
+      await reask(path);
+      setCheckNote(a === "yes" ? `${kindWord(c.kind)} confirmed: ${c.kind === "scale" || c.kind === "units" ? "areas and lengths updated" : "numbers updated"}` : `${kindWord(c.kind)}: noted, that one is ruled out`);
+      window.setTimeout(() => setCheckNote(null), 6000);
+    } catch (e) {
+      setCheckErr((e as Error).message);
+    } finally {
+      setCheckBusy(null);
+    }
+  };
+  /** after any element change: re-read elements, the 3D geometry, the checks, and every answer, in place */
+  const refreshAfterElement = async (path: string) => {
+    const [it, g, ck] = await Promise.all([fetchElements(path).catch(() => null), geometry(path).catch(() => null), fetchChecks(path).catch(() => null)]);
+    if (it) setElems((m) => ({ ...m, [path]: it }));
+    if (g) setFloors((fs) => fs.map((f) => (f.path === path ? { ...f, geo: g } : f)));
+    if (ck) setChecks((m) => ({ ...m, [path]: ck }));
+    await reask(path);
+  };
+  const runElement = async (what: string, fn: (path: string) => Promise<{ affected?: string[]; id?: string } | void>, undo = 0) => {
+    if (!active) return;
+    const path = active.path;
+    setElBusy(true);
+    setElErr(null);
+    try {
+      const r = await fn(path);
+      if (r && r.id) setElLocal((m) => ({ ...m, [path]: new Set([...(m[path] ?? []), r.id!]) }));
+      setElUndo((m) => ({ ...m, [path]: Math.max(0, (m[path] ?? 0) + undo) }));
+      await refreshAfterElement(path);
+      const aff = r && r.affected && r.affected.length ? ` Updated: ${r.affected.join(", ")}.` : "";
+      setElNote(`${what}.${aff}`);
+      window.setTimeout(() => setElNote(null), 6000);
+    } catch (e) {
+      setElErr((e as Error).message);
+    } finally {
+      setElBusy(false);
+    }
+  };
+  const elList = active && Array.isArray(elems[active.path]) ? (elems[active.path] as PlanElement[]) : null;
+  const inspector = active ? (
+    <Inspector
+      path={active.path}
+      els={elList}
+      unavailable={elems[active.path] === "na"}
+      selId={elSel}
+      hoverId={elHover}
+      local={elLocal[active.path] ?? new Set()}
+      busy={elBusy}
+      note={elNote}
+      err={elErr}
+      canUndo={(elUndo[active.path] ?? 0) > 0 || !!elList?.some((e) => e.user_changed)}
+      imgSrc={imageUrl(active.path)}
+      dims={active.geo ? { w: active.geo.width, h: active.geo.height } : null}
+      credit={active.geo?.credit || active.credit || ""}
+      synthetic={/synthetic/i.test(active.geo?.credit || active.credit || "")}
+      onSelect={setElSel}
+      onHover={setElHover}
+      onRetype={(e, kind, subtype) => void runElement(`Changed to ${subtype ?? kindName(kind)}`, async (path) => { const r = await overrideElement(path, { element_id: e.id, action: "retype", kind, subtype }); return { affected: r.affected, id: e.id }; }, 1)}
+      onRemove={(e) => void runElement(`Removed (not a ${kindName(e.kind)})`, async (path) => { const r = await overrideElement(path, { element_id: e.id, action: "remove" }); return { affected: r.affected, id: e.id }; }, 1)}
+      onRestore={(e) => void runElement("Restored", async (path) => { const r = await overrideElement(path, { element_id: e.id, action: "restore" }); return { affected: r.affected, id: e.id }; }, 1)}
+      onUndo={() => void runElement("Undone", async (path) => { await undoElement(path); }, -1)}
+    />
+  ) : null;
+  const activeChecks = active ? (checks[active.path] ?? null) : null;
+  const scaleLine = scaleBrief(activeChecks ?? undefined);
 
   const flatName = (f: File) => (f as File & { webkitRelativePath?: string }).webkitRelativePath || f.name;
   const levelName = (f: { level?: number | null; level_label?: string | null; sheet?: string | null; display_label?: string | null }) =>
@@ -256,7 +402,7 @@ export default function App() {
     setScaleState("pick");
   };
   const cancelScale = () => setScaleState("off");
-  const applyLength = async (m: number, typed?: { v: number; unit: string }) => {
+  const applyLength = async (m: number, typed?: { v: number; unit: string }, force = false) => {
     if (!active || measuredPx === null) return;
     const q = selected?.proof.question ?? specs[0]?.q;
     if (!q) return;
@@ -265,7 +411,7 @@ export default function App() {
     setScaleIssue(null);
     try {
       const before = plans[planKey] ?? (await fetchPlan(path, vibe, planExtra));
-      const [pr] = await setScale(path, measuredPx, m, [q]);
+      const [pr] = await setScale(path, measuredPx, m, [q], force);
       if (pr) setSelected({ path, proof: pr });
       const after = await fetchPlan(path, vibe, planExtra);
       setPlans({ [planKey]: after });
@@ -313,7 +459,8 @@ export default function App() {
   const planBasis = plan?.basis?.scale_px_per_m;
   const scaleTag = active && ppmByPath[active.path] ? "chosen" : (scaleAsm?.tag ?? planBasis?.tag ?? "defaulted");
   const scaleSrc = scaleAsm?.source ?? planBasis?.source ?? null;
-  const scaleKind: "defaulted" | "specified" | "chosen" = scaleTag === "specified" ? "specified" : scaleTag === "chosen" ? "chosen" : "defaulted";
+  const scaleRead = !!scaleLine && scaleLine.conf >= 0.5 && activeChecks?.some((c) => c.kind === "scale" && !/no scale/i.test(c.question ?? ""));
+  const scaleKind: "defaulted" | "specified" | "chosen" = scaleTag === "chosen" ? "chosen" : (scaleTag === "specified" || scaleRead) ? "specified" : "defaulted";
   const settled = (path: string) => specs.filter((s) => findings[path]?.[s.key]?.proof || findings[path]?.[s.key]?.err).length;
   const nowMs = Date.now();
   let progress: ProgressInfo | null = null;
@@ -453,7 +600,36 @@ export default function App() {
       ) : (
       <main className="grid">
         <section className="col left">
+          {active?.geo && (
+            <Tour k={active.path} steps={[
+              { title: "Welcome to Plumb: drawings that show their work",
+                body: "In 3D on the left: the building read from your drawing. On the right: everything on the sheet, counted, with a receipt for every number. Below: ask anything. Build plan tab: what to buy, with quantities.",
+                act: () => vref.current?.setView("3d") },
+              { title: "We read the scale from the sheet itself",
+                body: scaleLine ? `${scaleLine.text} The pins on the drawing show exactly where: the printed scale note, the graphic bar and the dimension strings we measured.` : "No printed scale was found; one real length you measure unlocks every size.",
+                act: () => { const sc = activeChecks?.find((c) => c.kind === "scale"); setHoverCheck(sc ?? null); vref.current?.setView("top"); } },
+              { title: "Every number says where it came from",
+                body: "Drawn = measured on the drawing, specified = printed on it, chosen = you decided, defaulted = an assumption we had to make. Open 'See proof' on any answer for the receipt.",
+                act: () => setHoverCheck(null) },
+              { title: "What's on this sheet",
+                body: active.geo.deep?.on ? `This sheet is very detailed: the deep read counts every bed, door, chair and fixture and names every room. It takes about ${Math.max(1, Math.round((active.geo.deep.eta_s || 60) / 60))} min and we tell you before it starts.` : "The checklist on the right counts every element and names every room. Click a row to light up all of them.",
+                act: () => document.querySelector(".cklist")?.scrollIntoView({ behavior: "smooth", block: "center" }) },
+              { title: "Layers, like a body",
+                body: "Envelope, walls, rooms, furniture, piping and electrical are separate layers (bottom-left). Where the set has no plumbing or electrical sheet, we estimate them by European rules (EN 806-3, EN 12056-2, EN 12464-1) and say so.",
+                act: () => vref.current?.setView("top") },
+              { title: "The build plan: what to buy",
+                body: "The Build plan tab turns the counts into a shopping list: concrete, walls, doors, fixtures, pipework and cable, each with its quantity, how it was worked out and a drawing of the runs.",
+                act: () => document.querySelector(".seg button:nth-child(2)")?.scrollIntoView({ behavior: "smooth", block: "nearest" }) },
+              { title: "Look around, click anything, ask",
+                body: "The octagon top-right switches 2D / 3D (tap) and rotates (drag); the wheel zooms where your cursor is. Click a room, then ask 'what is the size of this room?'.",
+                act: () => vref.current?.setView("3d") },
+            ]} />
+          )}
           <ViewerPane
+            vref={vref}
+            layerExtra={active ? { furniture: ckN[active.path] ?? 0, equipment: ckN[`${active.path}#eq`] ?? 0 } : undefined}
+            scaleText={scaleLine ? `${scaleLine.text.split(":")[0]} · ${pctNum(scaleLine.conf)}% sure` : null}
+            onScaleWhere={() => { const sc = activeChecks?.find((c) => c.kind === "scale"); setHoverCheck(sc ?? null); vref.current?.setView("top"); }}
             floors={floors}
             active={active}
             selected={selected}
@@ -473,7 +649,7 @@ export default function App() {
             scaleKind={scaleKind}
             scaleSrc={scaleSrc}
             scaleIssue={scaleIssue}
-            ppm={active ? (ppmByPath[active.path] ?? null) : null}
+            ppm={active ? (ppmByPath[active.path] ?? active.geo?.px_per_m ?? null) : null}
             banner={banner}
             applying={asking}
             onScaleStart={startScale}
@@ -482,13 +658,18 @@ export default function App() {
               setMeasuredPx(Math.hypot(px[1][0] - px[0][0], px[1][1] - px[0][1]));
               setScaleState("enter");
             }}
-            onApplyLength={(m, typed) => void applyLength(m, typed)}
+            onApplyLength={(m, typed, force) => void applyLength(m, typed, force)}
             progress={progress}
             measureTyped={measureTyped}
             flat={flat}
             onCloseFlat={() => setFlat(null)}
             projectNote={projectNote}
             onRetryGeo={() => setFloors((fs) => fs.map((f) => (f.key === activeKey ? { ...f, geoErr: null } : f)))}
+            checkEv={hoverCheck?.evidence ?? null}
+            elements={elList}
+            elSelId={elSel}
+            elHoverId={elHover}
+            onElPick={(id, how) => (how === "click" ? setElSel(id) : setElHover(id))}
             onWhyRead={() => {
               setSelected(null);
               setWhy(true);
@@ -496,12 +677,16 @@ export default function App() {
           />
           <Ask
             active={askPath}
-            chips={askPath ? (flat ? chipsFor(flat.path).slice(0, 2) : chipsFor(askPath)) : []}
+            chips={askPath ? (flat ? chipsFor(flat.path).slice(0, 2) : isCad ? ["How many doors?", "How many staircases?", "How much pipework?",
+              "Are there more doors or toilets and sinks?", "What is the scale of this drawing?"] : chipsFor(askPath)) : []}
             selected={selected && askPath && selected.path === askPath ? selected.proof : null}
             asking={asking}
             err={askErr}
             onAsk={(q) => void submit(q)}
+            selName={elSel ? (() => { const e = elList?.find((x) => x.id === elSel); return e ? (e.label || kindName(e.kind)) : elSel; })() : null}
+            onClearSel={() => { setElSel(null); vref.current?.setMulti(null, []); }}
             onWhy={() => setWhy(true)}
+            scaleLine={scaleLine}
           />
         </section>
         <section className="col right">
@@ -543,6 +728,21 @@ export default function App() {
               activeKey={activeKey}
               onPickFloor={setActiveKey}
               selectedId={selected?.proof.id ?? null}
+              hoverIdx={hoverIdx}
+              onHover={setHoverIdx}
+              imgUrl={active ? imageUrl(active.path) : ""}
+              scaleLine={scaleLine}
+              checks={<>{active && <ChecklistPanel path={active.path} deepHint={active.geo?.deep ?? null}
+                services={active.geo?.layers?.quantities ?? null}
+                onShow={(polys) => vref.current?.setMulti(active.key, polys)}
+                onRoom={(id, poly) => { setElSel(id); vref.current?.setMulti(active.key, [poly]); }}
+                onLoaded={(c) => {
+                  const equipment = c.elements.filter((e) => e.kind.startsWith("tag ")).map((e) => ({ label: e.kind.slice(4), polygon: e.polygon }));
+                  const furniture = c.elements.filter((e) => !e.kind.startsWith("tag "));
+                  setCkN((m) => ({ ...m, [active.path]: furniture.length, [`${active.path}#eq`]: equipment.length }));
+                  vref.current?.setLayers(active.key, { ...(active.geo?.layers ?? {}), rooms: active.geo?.rooms.map((r) => r.polygon),
+                    furniture, equipment } as never, LAYER_COLOURS); }} />}
+                <ChecksBlock items={activeChecks} busyId={checkBusy} note={checkNote} err={checkErr} onAnswer={(c, ans) => void onCheckAnswer(c, ans)} onType={startScale} onHover={setHoverCheck} />{inspector}</>}
               onSelect={(p) => active && setSelected({ path: active.path, proof: p })}
               onWhy={(p) => {
                 if (active) setSelected({ path: active.path, proof: p });
