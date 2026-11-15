@@ -164,13 +164,13 @@ tag(ax, "symbol pictures: cut from the sheet by the app")
 save(fig, 7)
 
 # 8 hard sheets, honest answers -------------------------------------------------------------------------------
-fig, ax = slide("Hard sheets, honest answers", "accuracy · M-101A piping plan")
+fig, ax = slide("Hard sheets, honest answers", "accuracy · M-101A piping + S-100F foundation")
 tagb = [e["polygon"] for e in pipe["elements"] if e["kind"].startswith("tag ")]
 img(ax, crop(str(ROOT / f"cache/uploads/{PIPE}.png"), (2500, 1600, 6400, 4200), tagb, BLUE, 6), 110, 230, 1020, 680)
 dk.panel(ax, 1210, 230, 600, 680, PANEL)
 for k, (lab, big, note, col) in enumerate([("VALVES", "12", "every tag listed", BLUE),
                                            ("CHECK VALVES", "5", 'prints "TYP. OF 5";\n4 tags legible: says so', ORANGE),
-                                           ("TVs", "none", "shapes first named TV\nwere parts of beds", GREY)]):
+                                           ("TRENCH LENGTH", "4275", "quoted from the note\n(foundation sheet S-100F)", GREY)]):
     y = 300 + k * 205
     dk.T(ax, 1250, y, lab, 20, GREY, bold=True)
     dk.T(ax, 1250, y + 60, big, 50, col, bold=True)
